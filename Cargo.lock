@@ -129,11 +129,18 @@ dependencies = [
  "axum",
  "budget-core",
  "budget-jobs",
+ "budget-providers",
+ "chrono",
+ "http",
+ "rust_decimal",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -296,11 +303,14 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "confy",
+ "regex",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
@@ -309,8 +319,16 @@ name = "budget-jobs"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "budget-core",
+ "budget-providers",
+ "chrono",
+ "rust_decimal",
+ "rust_decimal_macros",
  "serde",
+ "sqlx",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

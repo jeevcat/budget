@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 pub mod budget;
+pub mod db;
 pub mod error;
 pub mod models;
+pub mod rules;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
