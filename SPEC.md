@@ -30,6 +30,38 @@ Existing budgeting tools fail because they impose rigid categorization, use cale
 - Support multiple accounts per user.
 - **Unified view**: The main UI shows all transactions merged across all accounts. Account is metadata on each transaction, not an organizing principle. There are no per-account views or tabs in the primary interface.
 
+#### Provider Authorization Flow
+Bank aggregators (Enable Banking, Plaid, etc.) require an OAuth-like redirect to establish a connection. The system handles this as a multi-step flow:
+
+1. **User picks a bank**: The frontend shows a searchable list of supported banks (ASPSPs). The API exposes a search/list endpoint that queries the provider.
+2. **Start authorization**: The API creates an authorization request with the provider and returns a redirect URL. The frontend opens this URL (new tab or full redirect). The API generates a random `state` token and stores it server-side to validate the callback.
+3. **User authenticates at the bank**: The user logs into their bank, selects accounts, and grants consent. This happens entirely on the bank's domain.
+4. **Callback**: The bank redirects back to the budget app's callback URL (`/api/connections/callback`). The API validates the `state` token, exchanges the authorization code for a session, and receives the list of accounts.
+5. **Session stored**: The session ID, account list, and expiry are persisted in a `connections` table. The accounts are upserted into the `accounts` table with a foreign key to the connection.
+
+#### Connection Persistence
+A **connection** represents an authenticated session with a bank provider:
+- `id` — internal UUID
+- `provider` — which provider (e.g., `enable_banking`)
+- `provider_session_id` — the provider's session identifier
+- `institution_name` — human-readable bank name
+- `valid_until` — session expiry (set at authorization time)
+- `status` — `active`, `expired`, `revoked`
+- `created_at`, `updated_at`
+
+Each account in the `accounts` table has a `connection_id` foreign key. Multiple accounts can belong to one connection (e.g., checking + savings at the same bank).
+
+#### Session Expiry and Renewal
+- **PSD2 mandates a maximum consent duration of 180 days** for European bank connections via Enable Banking. Other providers may have different limits.
+- The system tracks `valid_until` on each connection. A **background job** checks for connections approaching expiry (e.g., 7 days out) and flags them.
+- **Renewal requires user action**: the user must re-do the bank redirect (PSD2 requires explicit re-consent). The system surfaces a "reconnect" prompt in the UI and on the dashboard. It does not silently fail — the sync job for an expired connection returns `SessionExpired`, and the UI shows a clear "connection expired, reconnect" state.
+- When the user reconnects, the existing connection is updated in place (new session ID, new expiry). Account IDs from the provider are stable, so historical transactions remain linked.
+
+#### Callback URL
+- The callback URL must be reachable by the user's browser after the bank redirect. For local-network use, this is `http://<server-ip>:<port>/api/connections/callback`. For internet access via Cloudflare Tunnel, it's `https://<budget-domain>/api/connections/callback`.
+- The callback URL is configured in the server config (`redirect_url`). It must match what the provider expects — mismatches will cause the redirect to fail.
+- The callback endpoint is **unauthenticated** (the bank's redirect can't include our bearer token), but is protected by the `state` token: only requests with a valid, unexpired, previously-issued state token are accepted. State tokens are single-use and expire after 10 minutes.
+
 ### 2. Salary-Anchored Budget Month
 - Salary detection uses the **same layered categorization system** as all other transactions (Section 3). A salary transaction is simply one that lands in a user-defined "Salary" category (or subcategories like "Salary:Employer A"). The user distinguishes salary from bonuses, tax refunds, etc. using the same deterministic rules (merchant name, amount range, regex, etc.).
 - **Only monthly income triggers budget months.** Quarterly, annual, or other irregular income is categorized and tracked but does not gate the start of a budget month. These are just income transactions that happen to land at longer intervals.
