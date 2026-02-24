@@ -20,20 +20,13 @@ use crate::state::AppState;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn require_enable_banking(state: &AppState) -> Result<(&Arc<EnableBankingAuth>, &str), AppError> {
-    let auth = state.enable_banking_auth.as_ref().ok_or_else(|| {
+fn require_enable_banking(state: &AppState) -> Result<&Arc<EnableBankingAuth>, AppError> {
+    state.enable_banking_auth.as_ref().ok_or_else(|| {
         AppError(
             StatusCode::NOT_IMPLEMENTED,
             "Enable Banking provider not configured".to_owned(),
         )
-    })?;
-    let redirect_url = state.redirect_url.as_deref().ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_IMPLEMENTED,
-            "redirect_url not configured".to_owned(),
-        )
-    })?;
-    Ok((auth, redirect_url))
+    })
 }
 
 /// Generate a 64-hex-char state token from two UUIDs (256 bits CSPRNG).
@@ -107,10 +100,11 @@ async fn search_aspsps(
     State(state): State<AppState>,
     Query(query): Query<AspspsQuery>,
 ) -> Result<Json<Vec<AspspEntry>>, AppError> {
-    let (auth, _) = require_enable_banking(&state)?;
+    let auth = require_enable_banking(&state)?;
 
+    let country = query.country.as_deref().map(str::to_uppercase);
     let aspsps = auth
-        .get_aspsps(query.country.as_deref())
+        .get_aspsps(country.as_deref())
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e.to_string()))?;
 
@@ -122,7 +116,8 @@ async fn authorize(
     State(state): State<AppState>,
     Json(body): Json<AuthorizeRequest>,
 ) -> Result<Json<AuthorizeResponse>, AppError> {
-    let (auth, redirect_url) = require_enable_banking(&state)?;
+    let auth = require_enable_banking(&state)?;
+    let redirect_url = format!("{}/api/connections/callback", state.host);
 
     let valid_until = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(i64::from(body.valid_days)))
@@ -158,7 +153,7 @@ async fn authorize(
         .start_authorization(
             &body.aspsp_name,
             &body.aspsp_country,
-            redirect_url,
+            &redirect_url,
             &token,
             &valid_until,
         )
@@ -173,7 +168,7 @@ async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
 ) -> Result<(StatusCode, Json<Connection>), AppError> {
-    let (auth, _) = require_enable_banking(&state)?;
+    let auth = require_enable_banking(&state)?;
 
     let user_data = db::consume_state_token(&state.pool, &query.state)
         .await

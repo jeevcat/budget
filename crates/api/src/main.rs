@@ -84,7 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
         enable_banking_auth,
-        redirect_url: config.redirect_url,
+        host: config
+            .host
+            .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),
     };
 
     // Protected API routes require a valid bearer token

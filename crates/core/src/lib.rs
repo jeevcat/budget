@@ -18,7 +18,7 @@ pub struct Config {
     pub server_port: u16,
     pub enable_banking_app_id: Option<String>,
     pub enable_banking_private_key_path: Option<String>,
-    pub redirect_url: Option<String>,
+    pub host: Option<String>,
     pub log_path: Option<String>,
 }
 
@@ -35,7 +35,7 @@ impl Default for Config {
             server_port: 3000,
             enable_banking_app_id: None,
             enable_banking_private_key_path: None,
-            redirect_url: None,
+            host: None,
             log_path: None,
         }
     }

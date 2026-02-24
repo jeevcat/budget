@@ -81,6 +81,7 @@ pub struct AppState {
     pub recompute_storage: JobStorage<BudgetRecomputeJob>,
     /// Enable Banking auth provider (None if not configured).
     pub enable_banking_auth: Option<Arc<EnableBankingAuth>>,
-    /// Callback URL for OAuth redirect flow.
-    pub redirect_url: Option<String>,
+    /// Public base URL (e.g. `https://budget.example.com`). Derived from
+    /// `server_port` when not explicitly configured.
+    pub host: String,
 }
