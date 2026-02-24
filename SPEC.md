@@ -89,6 +89,14 @@ Existing budgeting tools fail because they impose rigid categorization, use cale
 - The **original currency and amount are stored as metadata** on each transaction for reference/display, but all budget math operates in the budget currency only.
 - No equity conversion accounts, no market price revaluation, no gain/loss tracking — this is a budgeting tool, not an accounting ledger.
 
+### 8. Authentication
+- **Single user, no accounts.** The system is designed for one person. There is no registration, login, or user management.
+- **Static bearer token**: The server config contains a `secret_key` (a random token, e.g., generated via `openssl rand -hex 32`). All API requests must include `Authorization: Bearer <token>`. Requests with a missing or invalid token receive a `401 Unauthorized` response.
+- **Frontend auth flow**: On first visit (or when the stored token is invalid), the UI shows a simple "enter your key" screen. The token is stored in an `HttpOnly` cookie and sent automatically on subsequent requests. No session management, no expiry — the token is valid until rotated in config.
+- **Health check is unauthenticated**: The `/health` endpoint does not require a token, enabling uptime monitoring from external services.
+- **HTTPS is a deployment concern**: The server itself speaks plain HTTP. TLS termination is handled by a reverse proxy (e.g., Caddy, nginx with Let's Encrypt) when exposed beyond localhost. The token must not travel in the clear — HTTPS is required for any non-localhost access.
+- **No user accounts, no OAuth, no sessions.** These add complexity with zero benefit for a single-user tool.
+
 ---
 
 ## Tech Stack
@@ -120,6 +128,35 @@ Existing budgeting tools fail because they impose rigid categorization, use cale
 **Serialization**: serde + serde_json throughout
 
 **Frontend**: Deferred — backend-only for now.
+
+---
+
+## Deployment
+
+**Model**: Single-binary NixOS service on the home server (`tank`).
+
+**Nix flake**: The budget repo exposes a NixOS module as a flake output. The home server's nix config (`~/nix`) imports it as a flake input:
+- Input: `git+ssh://git@github.com/jeevcat/budget` (private repo access via SSH key on the server).
+- Service config lives at `machines/tank/budget.nix`, following the existing per-service file pattern.
+
+**What the flake provides**:
+- `packages.${system}.default` — the compiled Rust binary
+- `nixosModules.default` — a NixOS module with `services.budget.*` options (enable, port, data dir, config)
+
+**Runtime environment**:
+- Runs as a systemd service with `DynamicUser=true` (no dedicated system user needed).
+- SQLite database stored in a persistent directory (defined in `persist.nix`, e.g., `/persist/apps/budget/`). Survives ephemeral root rollback.
+- Config values (LLM model, provider choice, port) are NixOS module options, wired from `secrets.toml` and module config.
+- `secret_key` for API auth is read from `secrets.toml` and passed via environment variable.
+
+**Networking**:
+- Caddy reverse proxy terminates TLS and forwards to the budget service's localhost port.
+- Cloudflare Tunnel exposes the service to the internet (existing pattern for all services on `tank`).
+- Local network access works directly via the LAN IP + Caddy.
+
+**Health monitoring**: Integrated with healthchecks.io via the existing `mkHealthcheckOverride` helper. The `/health` endpoint (unauthenticated) is the check target.
+
+**Backups**: SQLite database file included in the existing Restic-to-Backblaze-B2 backup jobs.
 
 ---
 
