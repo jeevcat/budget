@@ -964,6 +964,36 @@ async fn jobs_recompute_returns_202() {
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
+#[tokio::test]
+async fn jobs_list_returns_empty_array() {
+    let (app, _pool) = setup().await;
+
+    let (status, body) = send(app, get("/api/jobs")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let jobs: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert!(jobs.is_empty());
+}
+
+#[tokio::test]
+async fn jobs_list_returns_enqueued_job() {
+    let (app, _pool) = setup().await;
+
+    // Enqueue a categorize job
+    let (status, _body) = send(app.clone(), post_empty("/api/jobs/categorize")).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    // List jobs and verify it appears
+    let (status, body) = send(app, get("/api/jobs")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let jobs: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["job_type"], "budget_jobs::CategorizeJob");
+    assert_eq!(jobs[0]["status"], "Pending");
+    assert!(jobs[0]["run_at"].is_string());
+}
+
 // ===========================================================================
 // Additional edge case tests
 // ===========================================================================

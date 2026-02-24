@@ -54,7 +54,7 @@ impl BankProvider for MockBankProvider {
     async fn fetch_transactions(
         &self,
         account_id: &AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> Result<Vec<Transaction>, ProviderError> {
         let all = match account_id.as_str() {
             CHECKING_ID => checking_transactions(),
@@ -67,7 +67,10 @@ impl BankProvider for MockBankProvider {
             }
         };
 
-        Ok(all.into_iter().filter(|t| t.posted_date >= since).collect())
+        Ok(match since {
+            Some(d) => all.into_iter().filter(|t| t.posted_date >= d).collect(),
+            None => all,
+        })
     }
 
     async fn get_balances(&self, account_id: &AccountId) -> Result<AccountBalance, ProviderError> {
@@ -255,7 +258,7 @@ mod tests {
     async fn fetch_checking_transactions_returns_all_when_since_is_old() {
         let provider = MockBankProvider::new();
         let account_id = AccountId(CHECKING_ID.to_owned());
-        let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let since = NaiveDate::from_ymd_opt(2020, 1, 1);
         let txns = provider
             .fetch_transactions(&account_id, since)
             .await
@@ -267,7 +270,7 @@ mod tests {
     async fn fetch_credit_card_transactions_returns_all_when_since_is_old() {
         let provider = MockBankProvider::new();
         let account_id = AccountId(CREDIT_CARD_ID.to_owned());
-        let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let since = NaiveDate::from_ymd_opt(2020, 1, 1);
         let txns = provider
             .fetch_transactions(&account_id, since)
             .await
@@ -281,7 +284,7 @@ mod tests {
         let account_id = AccountId(CHECKING_ID.to_owned());
         // Only include transactions from the last 12 days.
         // Should include: chk-009 (10 days ago) and chk-002 (1 day ago)
-        let since = days_ago(12);
+        let since = Some(days_ago(12));
         let txns = provider
             .fetch_transactions(&account_id, since)
             .await
@@ -293,7 +296,7 @@ mod tests {
     async fn fetch_transactions_unknown_account_returns_not_found() {
         let provider = MockBankProvider::new();
         let account_id = AccountId("nonexistent".to_owned());
-        let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let since = NaiveDate::from_ymd_opt(2020, 1, 1);
         let result = provider.fetch_transactions(&account_id, since).await;
         assert!(result.is_err());
     }
@@ -328,7 +331,7 @@ mod tests {
     async fn checking_has_salary_deposits() {
         let provider = MockBankProvider::new();
         let account_id = AccountId(CHECKING_ID.to_owned());
-        let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let since = NaiveDate::from_ymd_opt(2020, 1, 1);
         let txns = provider
             .fetch_transactions(&account_id, since)
             .await
@@ -344,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn transfer_pair_exists_between_accounts() {
         let provider = MockBankProvider::new();
-        let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let since = NaiveDate::from_ymd_opt(2020, 1, 1);
 
         let checking_txns = provider
             .fetch_transactions(&AccountId(CHECKING_ID.to_owned()), since)

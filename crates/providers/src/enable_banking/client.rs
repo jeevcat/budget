@@ -255,8 +255,8 @@ impl Client {
     pub(crate) async fn get_transactions(
         &self,
         account_id: &str,
-        date_from: NaiveDate,
-        date_to: NaiveDate,
+        date_from: Option<NaiveDate>,
+        date_to: Option<NaiveDate>,
         continuation_key: Option<&str>,
     ) -> Result<TransactionResponse, ProviderError> {
         let token = self.sign_jwt()?;
@@ -265,10 +265,24 @@ impl Client {
             self.config.base_url
         );
 
-        let mut req = self.http.get(&url).bearer_auth(&token).query(&[
-            ("date_from", date_from.to_string()),
-            ("date_to", date_to.to_string()),
-        ]);
+        tracing::debug!(
+            %url,
+            %account_id,
+            date_from = ?date_from,
+            date_to = ?date_to,
+            has_continuation = continuation_key.is_some(),
+            "requesting transactions from Enable Banking"
+        );
+
+        let mut req = self.http.get(&url).bearer_auth(&token);
+
+        if let Some(to) = date_to {
+            req = req.query(&[("date_to", to.to_string())]);
+        }
+
+        if let Some(from) = date_from {
+            req = req.query(&[("date_from", from.to_string())]);
+        }
 
         if let Some(key) = continuation_key {
             req = req.query(&[("continuation_key", key)]);
@@ -279,11 +293,21 @@ impl Client {
             .await
             .map_err(|e| ProviderError::ConnectionFailed(e.to_string()))?;
 
+        let status = response.status();
         let response = self.handle_error_response(response).await?;
-        response
+        let parsed: TransactionResponse = response
             .json()
             .await
-            .map_err(|e| ProviderError::Other(format!("failed to parse transactions: {e}")))
+            .map_err(|e| ProviderError::Other(format!("failed to parse transactions: {e}")))?;
+
+        tracing::debug!(
+            http_status = %status,
+            transaction_count = parsed.transactions.len(),
+            has_continuation = parsed.continuation_key.is_some(),
+            "Enable Banking transactions response"
+        );
+
+        Ok(parsed)
     }
 }
 

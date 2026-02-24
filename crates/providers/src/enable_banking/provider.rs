@@ -36,11 +36,13 @@ impl BankProvider for EnableBankingProvider {
     async fn fetch_transactions(
         &self,
         account_id: &AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> Result<Vec<Transaction>, ProviderError> {
-        let today = Utc::now().date_naive();
+        let date_to = since.map(|_| Utc::now().date_naive());
         let mut all_transactions = Vec::new();
         let mut continuation_key: Option<String> = None;
+        let mut pages: u32 = 0;
+        let mut skipped_pending: u32 = 0;
 
         loop {
             let response = self
@@ -48,14 +50,16 @@ impl BankProvider for EnableBankingProvider {
                 .get_transactions(
                     account_id.as_str(),
                     since,
-                    today,
+                    date_to,
                     continuation_key.as_deref(),
                 )
                 .await?;
 
+            pages += 1;
             for api_txn in response.transactions {
-                if let Some(txn) = convert_transaction(&api_txn)? {
-                    all_transactions.push(txn);
+                match convert_transaction(&api_txn)? {
+                    Some(txn) => all_transactions.push(txn),
+                    None => skipped_pending += 1,
                 }
             }
 
@@ -64,6 +68,15 @@ impl BankProvider for EnableBankingProvider {
                 _ => break,
             }
         }
+
+        tracing::info!(
+            account_id = account_id.as_str(),
+            since = ?since,
+            pages,
+            fetched = all_transactions.len(),
+            skipped_pending,
+            "Enable Banking fetch_transactions complete"
+        );
 
         Ok(all_transactions)
     }

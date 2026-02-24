@@ -77,7 +77,7 @@ async fn single_page_transactions() {
 
     let provider = provider_with(&server.uri());
     let account_id = AccountId("acct-001".to_owned());
-    let since = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
+    let since = NaiveDate::from_ymd_opt(2025, 3, 1);
     let txns = provider
         .fetch_transactions(&account_id, since)
         .await
@@ -136,7 +136,7 @@ async fn multi_page_pagination() {
 
     let provider = provider_with(&server.uri());
     let account_id = AccountId("acct-001".to_owned());
-    let since = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
+    let since = NaiveDate::from_ymd_opt(2025, 3, 1);
     let txns = provider
         .fetch_transactions(&account_id, since)
         .await
@@ -178,7 +178,7 @@ async fn pending_transactions_filtered_out() {
 
     let provider = provider_with(&server.uri());
     let account_id = AccountId("acct-001".to_owned());
-    let since = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
+    let since = NaiveDate::from_ymd_opt(2025, 3, 1);
     let txns = provider
         .fetch_transactions(&account_id, since)
         .await
@@ -202,7 +202,7 @@ async fn unauthorized_maps_to_session_expired() {
 
     let provider = provider_with(&server.uri());
     let account_id = AccountId("acct-001".to_owned());
-    let since = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
+    let since = NaiveDate::from_ymd_opt(2025, 3, 1);
     let err = provider
         .fetch_transactions(&account_id, since)
         .await

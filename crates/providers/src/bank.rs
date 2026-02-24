@@ -56,7 +56,7 @@ pub trait BankProvider {
     async fn fetch_transactions(
         &self,
         account_id: &AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> Result<Vec<Transaction>, ProviderError>;
 
     async fn get_balances(&self, account_id: &AccountId) -> Result<AccountBalance, ProviderError>;

@@ -346,6 +346,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tracing",
  "trait-variant",
  "wiremock",
 ]

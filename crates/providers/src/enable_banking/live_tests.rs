@@ -226,7 +226,7 @@ async fn sandbox_fetch_transactions() {
     println!("session: {session_id}, account: {account_uid}");
     let provider = provider_from_session(&session_id).await;
     let account_id = AccountId(account_uid);
-    let since = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+    let since = NaiveDate::from_ymd_opt(2020, 1, 1);
 
     let txns = provider
         .fetch_transactions(&account_id, since)

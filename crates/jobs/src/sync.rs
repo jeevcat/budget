@@ -2,7 +2,6 @@
 //! into the local database.
 
 use apalis::prelude::*;
-use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -42,12 +41,28 @@ pub async fn handle_sync_job(
         .await?
         .ok_or_else(|| format!("account {account_id} not found"))?;
 
+    tracing::info!(
+        account_id = %account.id,
+        provider_account_id = %account.provider_account_id,
+        institution = %account.institution,
+        connection_id = ?account.connection_id,
+        "starting sync"
+    );
+
     // Resolve the bank provider from the account's connection
     let provider_name = match account.connection_id {
         Some(conn_id) => {
             let connection = db::get_connection(&pool, conn_id).await?.ok_or_else(|| {
                 format!("connection {conn_id} not found for account {account_id}")
             })?;
+
+            tracing::debug!(
+                connection_id = %conn_id,
+                provider = %connection.provider,
+                status = %connection.status,
+                valid_until = %connection.valid_until,
+                "resolved connection"
+            );
 
             if connection.status != ConnectionStatus::Active {
                 return Err(format!(
@@ -66,8 +81,11 @@ pub async fn handle_sync_job(
 
     let provider_account_id = budget_providers::AccountId(account.provider_account_id.clone());
 
-    // Fetch the last 90 days of transactions
-    let since = Utc::now().date_naive() - chrono::Duration::days(90);
+    // Use the most recent transaction date as a starting point (with overlap),
+    // or fetch all available history for the initial sync.
+    let latest = db::get_latest_transaction_date(&pool, account.id).await?;
+    let since = latest.map(|date| date - chrono::Duration::days(7));
+    tracing::debug!(since = ?since, latest_in_db = ?latest, provider_account_id = %account.provider_account_id, "fetching transactions");
     let provider_txns = bank.fetch_transactions(&provider_account_id, since).await?;
 
     let count = provider_txns.len();

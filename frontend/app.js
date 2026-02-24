@@ -1228,6 +1228,174 @@ function Connections() {
 }
 
 // ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+function Jobs() {
+  const [jobs, setJobs] = useState(null);
+  const [accounts, setAccounts] = useState(null);
+  const [error, setError] = useState(null);
+  const [syncAccountId, setSyncAccountId] = useState("");
+  const [triggering, setTriggering] = useState(null);
+
+  function load() {
+    Promise.all([api.get("/jobs"), api.get("/accounts")])
+      .then(([j, a]) => {
+        setJobs(j);
+        setAccounts(a);
+      })
+      .catch(setError);
+  }
+
+  useEffect(load, []);
+
+  async function trigger(path, name) {
+    setTriggering(name);
+    setError(null);
+    try {
+      await api.post(path);
+      load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setTriggering(null);
+    }
+  }
+
+  async function triggerSync() {
+    if (!syncAccountId) return;
+    await trigger(`/jobs/sync/${syncAccountId}`, "sync");
+  }
+
+  function statusBadge(status) {
+    if (status === "Done") return "success";
+    if (status === "Failed" || status === "Killed") return "danger";
+    if (status === "Running") return "primary";
+    return "";
+  }
+
+  function friendlyType(jobType) {
+    const name = jobType.includes("::") ? jobType.split("::").pop() : jobType;
+    if (name === "SyncJob") return "Sync";
+    if (name === "CategorizeJob") return "Categorize";
+    if (name === "CorrelateJob") return "Correlate";
+    if (name === "BudgetRecomputeJob") return "Recompute";
+    return name;
+  }
+
+  function formatTs(iso) {
+    if (!iso) return "\u2014";
+    const d = new Date(iso);
+    return d.toLocaleString();
+  }
+
+  if (error && !jobs) return html`<p class="muted">${error.message}</p>`;
+  if (!jobs) return html`<p class="muted">Loading...</p>`;
+
+  return html`
+    <h2>Jobs</h2>
+
+    ${error && html`<p role="alert" data-variant="error">${error.message}</p>`}
+
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1.5rem">
+      <button
+        data-variant="primary"
+        onClick=${() => trigger("/jobs/categorize", "categorize")}
+        disabled=${triggering === "categorize"}
+      >
+        ${triggering === "categorize" ? "Queuing..." : "Categorize"}
+      </button>
+      <button
+        data-variant="primary"
+        onClick=${() => trigger("/jobs/correlate", "correlate")}
+        disabled=${triggering === "correlate"}
+      >
+        ${triggering === "correlate" ? "Queuing..." : "Correlate"}
+      </button>
+      <button
+        data-variant="primary"
+        onClick=${() => trigger("/jobs/recompute", "recompute")}
+        disabled=${triggering === "recompute"}
+      >
+        ${triggering === "recompute" ? "Queuing..." : "Recompute"}
+      </button>
+
+      <span class="muted" style="margin:0 0.25rem">|</span>
+
+      <select
+        value=${syncAccountId}
+        onChange=${(e) => setSyncAccountId(e.target.value)}
+      >
+        <option value="">Select account...</option>
+        ${(accounts ?? []).map(
+          (a) => html`<option value=${a.id}>${a.name}</option>`,
+        )}
+      </select>
+      <button
+        data-variant="primary"
+        onClick=${triggerSync}
+        disabled=${!syncAccountId || triggering === "sync"}
+      >
+        ${triggering === "sync" ? "Queuing..." : "Sync"}
+      </button>
+
+      <span style="flex:1"></span>
+      <button onClick=${load}>Refresh</button>
+    </div>
+
+    ${
+      jobs.length === 0
+        ? html`<p class="muted">No jobs yet. Trigger one above to get started.</p>`
+        : html`
+          <p class="muted" style="margin-bottom:1rem">
+            ${jobs.length} job${jobs.length !== 1 ? "s" : ""} (latest 100)
+          </p>
+          <div class="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Attempts</th>
+                  <th>Queued</th>
+                  <th>Completed</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${jobs.map(
+                  (j) => html`
+                    <tr>
+                      <td class="mono" title=${j.id}>${j.id.slice(0, 8)}</td>
+                      <td>${friendlyType(j.job_type)}</td>
+                      <td>
+                        <span class="badge ${statusBadge(j.status)}">${j.status}</span>
+                      </td>
+                      <td class="mono">${j.attempts}/${j.max_attempts}</td>
+                      <td class="mono" style="font-size:0.85rem">${formatTs(j.run_at)}</td>
+                      <td class="mono" style="font-size:0.85rem">${formatTs(j.done_at)}</td>
+                      <td>
+                        ${
+                          j.last_result
+                            ? html`<span class="muted" style="font-size:0.85rem" title=${j.last_result}>
+                                ${j.last_result.length > 60 ? j.last_result.slice(0, 60) + "..." : j.last_result}
+                              </span>`
+                            : null
+                        }
+                      </td>
+                    </tr>
+                  `,
+                )}
+              </tbody>
+            </table>
+          </div>
+        `
+    }
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Auth gate
 // ---------------------------------------------------------------------------
 
@@ -1287,6 +1455,7 @@ function App() {
     if (route === "/budgets") return html`<${Budgets} />`;
     if (route === "/projects") return html`<${Projects} />`;
     if (route === "/connections") return html`<${Connections} />`;
+    if (route === "/jobs") return html`<${Jobs} />`;
     return html`<p class="muted">Not found.</p>`;
   };
 
@@ -1302,6 +1471,7 @@ function App() {
           <${NavLink} href="/budgets">Budgets<//>
           <${NavLink} href="/projects">Projects<//>
           <${NavLink} href="/connections">Connections<//>
+          <${NavLink} href="/jobs">Jobs<//>
         </nav>
         <a
           href="#"

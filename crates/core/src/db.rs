@@ -464,6 +464,24 @@ pub async fn list_transactions_by_account(
     rows.iter().map(row_to_transaction).collect()
 }
 
+/// Get the most recent `posted_date` for a given account, or `None` if the
+/// account has no transactions yet.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_latest_transaction_date(
+    pool: &SqlitePool,
+    account_id: AccountId,
+) -> Result<Option<NaiveDate>, sqlx::Error> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT MAX(posted_date) FROM transactions WHERE account_id = ?1")
+            .bind(account_id.to_string())
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.and_then(|(s,)| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()))
+}
+
 // ---------------------------------------------------------------------------
 // Categories
 // ---------------------------------------------------------------------------

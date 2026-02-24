@@ -61,7 +61,7 @@ impl BankClient {
     pub async fn fetch_transactions(
         &self,
         account_id: &budget_providers::AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> Result<Vec<budget_providers::Transaction>, ProviderError> {
         self.inner
             .fetch_transactions_erased(account_id, since)
@@ -74,7 +74,7 @@ trait ErasedBankProvider {
     fn fetch_transactions_erased<'a>(
         &'a self,
         account_id: &'a budget_providers::AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> BoxFuture<'a, Result<Vec<budget_providers::Transaction>, ProviderError>>;
 }
 
@@ -82,7 +82,7 @@ impl<T: budget_providers::BankProvider + Sync> ErasedBankProvider for T {
     fn fetch_transactions_erased<'a>(
         &'a self,
         account_id: &'a budget_providers::AccountId,
-        since: NaiveDate,
+        since: Option<NaiveDate>,
     ) -> BoxFuture<'a, Result<Vec<budget_providers::Transaction>, ProviderError>> {
         Box::pin(self.fetch_transactions(account_id, since))
     }
