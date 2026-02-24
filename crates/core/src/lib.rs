@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+pub mod budget;
+pub mod error;
+pub mod models;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub database_url: String,
