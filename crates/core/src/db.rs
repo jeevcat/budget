@@ -335,7 +335,8 @@ pub async fn list_transactions(pool: &SqlitePool) -> Result<Vec<Transaction>, sq
         "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                 merchant_name, description, posted_date, budget_month_id, project_id,
                 correlation_id, correlation_type
-         FROM transactions",
+         FROM transactions
+         ORDER BY posted_date DESC, merchant_name ASC",
     )
     .fetch_all(pool)
     .await?;

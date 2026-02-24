@@ -1,9 +1,14 @@
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
 use crate::bank::{Account, AccountBalance, AccountId, BankProvider, Transaction};
 use crate::error::ProviderError;
+
+/// Generate a date relative to today. Positive values mean days ago.
+fn days_ago(n: i64) -> NaiveDate {
+    Utc::now().date_naive() - chrono::Duration::days(n)
+}
 
 const CHECKING_ID: &str = "mock-checking-001";
 const CREDIT_CARD_ID: &str = "mock-credit-001";
@@ -87,15 +92,14 @@ impl BankProvider for MockBankProvider {
     }
 }
 
-fn txn(id: &str, amount: Decimal, merchant: &str, desc: Option<&str>, date: &str) -> Transaction {
+fn txn(id: &str, amount: Decimal, merchant: &str, desc: Option<&str>, ago: i64) -> Transaction {
     Transaction {
         provider_transaction_id: id.to_owned(),
         amount,
         currency: "USD".to_owned(),
         merchant_name: merchant.to_owned(),
         description: desc.map(ToOwned::to_owned),
-        posted_date: NaiveDate::parse_from_str(date, "%Y-%m-%d")
-            .expect("hardcoded date must be valid"),
+        posted_date: days_ago(ago),
         counterparty_name: None,
         merchant_category_code: None,
         original_amount: None,
@@ -111,14 +115,14 @@ fn checking_transactions() -> Vec<Transaction> {
             dec!(3_500.00),
             "ACME CORP PAYROLL",
             Some("Salary deposit"),
-            "2025-01-15",
+            30,
         ),
         txn(
             "chk-002",
             dec!(3_500.00),
             "ACME CORP PAYROLL",
             Some("Salary deposit"),
-            "2025-01-31",
+            1,
         ),
         // Regular expenses
         txn(
@@ -126,21 +130,21 @@ fn checking_transactions() -> Vec<Transaction> {
             dec!(-85.50),
             "CITY WATER UTILITY",
             Some("Monthly water bill"),
-            "2025-01-10",
+            35,
         ),
         txn(
             "chk-004",
             dec!(-120.00),
             "STATE FARM INSURANCE",
             Some("Auto insurance premium"),
-            "2025-01-12",
+            33,
         ),
         txn(
             "chk-005",
             dec!(-1_200.00),
             "PARKVIEW APARTMENTS",
             Some("Rent payment"),
-            "2025-01-01",
+            40,
         ),
         // Transfer to credit card (matches a credit card payment)
         txn(
@@ -148,30 +152,24 @@ fn checking_transactions() -> Vec<Transaction> {
             dec!(-1_500.00),
             "CHASE CREDIT CRD AUTOPAY",
             Some("Credit card payment"),
-            "2025-01-20",
+            18,
         ),
         // ATM withdrawal
-        txn(
-            "chk-007",
-            dec!(-60.00),
-            "ATM WITHDRAWAL",
-            None,
-            "2025-01-18",
-        ),
+        txn("chk-007", dec!(-60.00), "ATM WITHDRAWAL", None, 22),
         // Miscellaneous
         txn(
             "chk-008",
             dec!(-45.99),
             "AMAZON.COM",
             Some("Household supplies"),
-            "2025-01-22",
+            15,
         ),
         txn(
             "chk-009",
             dec!(250.00),
             "VENMO PAYMENT",
             Some("Reimbursement from friend"),
-            "2025-01-25",
+            10,
         ),
     ]
 }
@@ -184,59 +182,41 @@ fn credit_card_transactions() -> Vec<Transaction> {
             dec!(-72.34),
             "WHOLE FOODS MARKET",
             Some("Weekly groceries"),
-            "2025-01-05",
+            38,
         ),
-        txn(
-            "cc-002",
-            dec!(-58.12),
-            "TRADER JOES",
-            Some("Groceries"),
-            "2025-01-12",
-        ),
+        txn("cc-002", dec!(-58.12), "TRADER JOES", Some("Groceries"), 28),
         txn(
             "cc-003",
             dec!(-134.56),
             "COSTCO WHOLESALE",
             Some("Bulk groceries"),
-            "2025-01-19",
+            20,
         ),
         // Dining
-        txn(
-            "cc-004",
-            dec!(-42.50),
-            "CHIPOTLE MEXICAN GRILL",
-            None,
-            "2025-01-08",
-        ),
+        txn("cc-004", dec!(-42.50), "CHIPOTLE MEXICAN GRILL", None, 36),
         txn(
             "cc-005",
             dec!(-87.25),
             "THE CHEESECAKE FACTORY",
             Some("Dinner out"),
-            "2025-01-14",
+            26,
         ),
         // Gas
-        txn(
-            "cc-006",
-            dec!(-52.10),
-            "SHELL OIL",
-            Some("Gas"),
-            "2025-01-11",
-        ),
+        txn("cc-006", dec!(-52.10), "SHELL OIL", Some("Gas"), 32),
         // Subscriptions
         txn(
             "cc-007",
             dec!(-15.99),
             "NETFLIX.COM",
             Some("Monthly subscription"),
-            "2025-01-03",
+            42,
         ),
         txn(
             "cc-008",
             dec!(-9.99),
             "SPOTIFY USA",
             Some("Monthly subscription"),
-            "2025-01-03",
+            42,
         ),
         // Shopping
         txn(
@@ -244,22 +224,16 @@ fn credit_card_transactions() -> Vec<Transaction> {
             dec!(-199.99),
             "AMAZON.COM",
             Some("Electronics purchase"),
-            "2025-01-16",
+            24,
         ),
-        txn(
-            "cc-010",
-            dec!(-65.00),
-            "TARGET",
-            Some("Clothing"),
-            "2025-01-21",
-        ),
+        txn("cc-010", dec!(-65.00), "TARGET", Some("Clothing"), 16),
         // Credit card payment received (matches checking transfer)
         txn(
             "cc-011",
             dec!(1_500.00),
             "PAYMENT RECEIVED",
             Some("Thank you for your payment"),
-            "2025-01-20",
+            18,
         ),
     ]
 }
@@ -305,13 +279,14 @@ mod tests {
     async fn fetch_transactions_filters_by_date() {
         let provider = MockBankProvider::new();
         let account_id = AccountId(CHECKING_ID.to_owned());
-        let since = NaiveDate::from_ymd_opt(2025, 1, 20).unwrap();
+        // Only include transactions from the last 12 days.
+        // Should include: chk-009 (10 days ago) and chk-002 (1 day ago)
+        let since = days_ago(12);
         let txns = provider
             .fetch_transactions(&account_id, since)
             .await
             .unwrap();
-        // Should include: chk-006 (Jan 20), chk-008 (Jan 22), chk-009 (Jan 25), chk-002 (Jan 31)
-        assert_eq!(txns.len(), 4);
+        assert_eq!(txns.len(), 2);
     }
 
     #[tokio::test]

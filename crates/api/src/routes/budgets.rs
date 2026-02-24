@@ -1,6 +1,6 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use chrono::Utc;
 use rust_decimal::Decimal;
@@ -42,7 +42,7 @@ pub struct CreateBudgetPeriod {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/status", get(status))
-        .route("/periods", post(create_period))
+        .route("/periods", get(list_periods).post(create_period))
         .route(
             "/periods/{id}",
             axum::routing::put(update_period).delete(delete_period),
@@ -105,6 +105,12 @@ fn parse_budget_period_body(
         period_type,
         amount,
     })
+}
+
+/// List all budget periods.
+async fn list_periods(State(state): State<AppState>) -> Result<Json<Vec<BudgetPeriod>>, AppError> {
+    let periods = db::list_budget_periods(&state.pool).await?;
+    Ok(Json(periods))
 }
 
 /// Create a new budget period.
