@@ -7,7 +7,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use budget_providers::{
-    CategorizeResult, CorrelationResult, ProposedRule, ProviderError, TransactionSummary,
+    CategorizeResult, CorrelationResult, EnableBankingConfig, EnableBankingProvider, ProposedRule,
+    ProviderError, TransactionSummary,
 };
 
 pub mod categorize;
@@ -84,6 +85,77 @@ impl<T: budget_providers::BankProvider + Sync> ErasedBankProvider for T {
         since: NaiveDate,
     ) -> BoxFuture<'a, Result<Vec<budget_providers::Transaction>, ProviderError>> {
         Box::pin(self.fetch_transactions(account_id, since))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bank provider factory
+//
+// The sync job needs to construct the right `BankProvider` based on which bank
+// connection an account belongs to. Rather than injecting a single static
+// provider, we inject a factory that creates a provider per-connection.
+// ---------------------------------------------------------------------------
+
+/// Factory for creating bank providers based on a connection's provider type.
+///
+/// Holds the configuration needed to construct provider-specific clients
+/// (e.g. Enable Banking API credentials). Injected into the sync worker via
+/// `Data<BankProviderFactory>`.
+///
+/// For testing, a `fallback` provider handles accounts without a connection.
+#[derive(Clone)]
+pub struct BankProviderFactory {
+    eb_config: Option<EnableBankingConfig>,
+    fallback: Option<BankClient>,
+}
+
+impl BankProviderFactory {
+    /// Create a factory with optional Enable Banking credentials.
+    #[must_use]
+    pub fn new(eb_config: Option<EnableBankingConfig>) -> Self {
+        Self {
+            eb_config,
+            fallback: None,
+        }
+    }
+
+    /// Set a fallback provider for accounts without a connection (testing).
+    #[must_use]
+    pub fn with_fallback(mut self, fallback: BankClient) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    /// Create a `BankClient` for the given provider name.
+    ///
+    /// `provider` is the `connection.provider` value from the database
+    /// (e.g. `"enable_banking"`), or `None` for accounts without a connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the provider is unsupported or not configured.
+    pub fn create(&self, provider: Option<&str>) -> Result<BankClient, String> {
+        match provider {
+            Some("enable_banking") => {
+                // clone() justified: EnableBankingConfig is small (app ID + PEM
+                // bytes + base URL), and this runs at most once per sync job
+                let config = self
+                    .eb_config
+                    .clone()
+                    .ok_or("Enable Banking provider not configured")?;
+                let client = budget_providers::EnableBankingClient::new(config);
+                Ok(BankClient::new(EnableBankingProvider::new(
+                    client,
+                    String::new(),
+                    vec![],
+                )))
+            }
+            Some(other) => Err(format!("unsupported bank provider: {other}")),
+            None => self
+                .fallback
+                .clone()
+                .ok_or_else(|| "account has no connection".to_owned()),
+        }
     }
 }
 

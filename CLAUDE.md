@@ -11,6 +11,12 @@ ln -sf ../../.github/hooks/pre-commit .git/hooks/pre-commit
 
 Path is determined by `confy` via the `directories` crate. Run `cargo run -- config` to print the resolved path. On this machine: `~/.config/budget/default-config.toml`.
 
+## Testing
+
+- Live backend tests (Enable Banking sandbox, Gemini API) use `#[ignore = "hits live ..."]`
+- Run them explicitly with: `cargo test -p budget-providers -- --ignored`
+- All other tests use in-memory SQLite + mock providers and run fast
+
 ## Coding Standards
 
 - **Never suppress clippy lints** without explicit human approval

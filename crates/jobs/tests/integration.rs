@@ -13,12 +13,13 @@ use uuid::Uuid;
 
 use budget_core::db;
 use budget_core::models::{
-    Account, AccountId, AccountType, Category, CategoryId, CorrelationType, MatchField, Rule,
-    RuleId, RuleType, Transaction, TransactionId,
+    Account, AccountId, AccountType, Category, CategoryId, Connection, ConnectionId,
+    ConnectionStatus, CorrelationType, MatchField, Rule, RuleId, RuleType, Transaction,
+    TransactionId,
 };
 use budget_jobs::{
-    BankClient, CategorizeJob, CorrelateJob, LlmClient, SyncJob, handle_categorize_job,
-    handle_correlate_job, handle_sync_job,
+    BankClient, BankProviderFactory, CategorizeJob, CorrelateJob, LlmClient, SyncJob,
+    handle_categorize_job, handle_correlate_job, handle_sync_job,
 };
 use budget_providers::{MockBankProvider, MockLlmProvider};
 
@@ -119,8 +120,46 @@ async fn seed_transaction(
     txn
 }
 
-fn make_bank_client() -> BankClient {
-    BankClient::new(MockBankProvider::new())
+fn make_bank_factory() -> BankProviderFactory {
+    BankProviderFactory::new(None).with_fallback(BankClient::new(MockBankProvider::new()))
+}
+
+/// Factory with no fallback — only connection-based providers work.
+fn make_bank_factory_no_fallback() -> BankProviderFactory {
+    BankProviderFactory::new(None)
+}
+
+/// Seed an active connection and return it.
+async fn seed_connection(pool: &SqlitePool, status: ConnectionStatus) -> Connection {
+    let connection = Connection {
+        id: ConnectionId::new(),
+        provider: "enable_banking".to_owned(),
+        provider_session_id: "test-session-123".to_owned(),
+        institution_name: "Test Bank".to_owned(),
+        valid_until: "2099-12-31".to_owned(),
+        status,
+    };
+    db::insert_connection(pool, &connection)
+        .await
+        .expect("seed connection");
+    connection
+}
+
+/// Seed an account linked to a connection.
+async fn seed_connected_account(pool: &SqlitePool, connection_id: ConnectionId) -> Account {
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "mock-checking-001".to_owned(),
+        name: "Connected Checking".to_owned(),
+        institution: "Test Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "EUR".to_owned(),
+        connection_id: Some(connection_id),
+    };
+    db::upsert_account(pool, &account)
+        .await
+        .expect("seed connected account");
+    account
 }
 
 fn make_llm_client() -> LlmClient {
@@ -135,7 +174,7 @@ fn make_llm_client() -> LlmClient {
 async fn sync_valid_account_upserts_transactions() {
     let pool = setup_pool().await;
     let account = seed_checking_account(&pool).await;
-    let bank = make_bank_client();
+    let bank = make_bank_factory();
 
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
@@ -163,7 +202,7 @@ async fn sync_valid_account_upserts_transactions() {
 #[tokio::test]
 async fn sync_nonexistent_account_returns_error() {
     let pool = setup_pool().await;
-    let bank = make_bank_client();
+    let bank = make_bank_factory();
 
     // Valid UUID but no matching row in the accounts table
     let job = SyncJob {
@@ -183,7 +222,7 @@ async fn sync_nonexistent_account_returns_error() {
 #[tokio::test]
 async fn sync_invalid_uuid_returns_error() {
     let pool = setup_pool().await;
-    let bank = make_bank_client();
+    let bank = make_bank_factory();
 
     let job = SyncJob {
         account_id: "not-a-uuid".to_owned(),
@@ -203,7 +242,7 @@ async fn sync_invalid_uuid_returns_error() {
 async fn sync_deduplicates_on_rerun() {
     let pool = setup_pool().await;
     let account = seed_checking_account(&pool).await;
-    let bank = make_bank_client();
+    let bank = make_bank_factory();
 
     // Run sync twice
     for _ in 0..2 {
@@ -241,6 +280,140 @@ async fn sync_deduplicates_on_rerun() {
         count_after_two,
         txns_after_three.len(),
         "third sync run should not create duplicate transactions"
+    );
+}
+
+// ===========================================================================
+// sync.rs — connection-aware tests
+// ===========================================================================
+
+#[tokio::test]
+async fn sync_with_active_connection_uses_factory() {
+    let pool = setup_pool().await;
+    let connection = seed_connection(&pool, ConnectionStatus::Active).await;
+    let account = seed_connected_account(&pool, connection.id).await;
+
+    // Factory with mock as the Enable Banking provider stand-in.
+    // The account's connection.provider is "enable_banking", but since we
+    // don't have real EB credentials in tests, we verify the factory path
+    // returns an error about missing config rather than silently using a
+    // fallback.
+    let factory = make_bank_factory_no_fallback();
+
+    let job = SyncJob {
+        account_id: account.id.as_uuid().to_string(),
+    };
+
+    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not configured"),
+        "should fail because Enable Banking config is missing, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn sync_expired_connection_returns_error() {
+    let pool = setup_pool().await;
+    let connection = seed_connection(&pool, ConnectionStatus::Expired).await;
+    let account = seed_connected_account(&pool, connection.id).await;
+    let factory = make_bank_factory();
+
+    let job = SyncJob {
+        account_id: account.id.as_uuid().to_string(),
+    };
+
+    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    assert!(result.is_err(), "sync with expired connection should fail");
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("expired"),
+        "error should mention 'expired', got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn sync_revoked_connection_returns_error() {
+    let pool = setup_pool().await;
+    let connection = seed_connection(&pool, ConnectionStatus::Revoked).await;
+    let account = seed_connected_account(&pool, connection.id).await;
+    let factory = make_bank_factory();
+
+    let job = SyncJob {
+        account_id: account.id.as_uuid().to_string(),
+    };
+
+    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    assert!(result.is_err(), "sync with revoked connection should fail");
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("revoked"),
+        "error should mention 'revoked', got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn sync_unsupported_provider_returns_error() {
+    let pool = setup_pool().await;
+
+    // Connection with an unknown provider type
+    let connection = Connection {
+        id: ConnectionId::new(),
+        provider: "unknown_provider".to_owned(),
+        provider_session_id: "session-xyz".to_owned(),
+        institution_name: "Mystery Bank".to_owned(),
+        valid_until: "2099-12-31".to_owned(),
+        status: ConnectionStatus::Active,
+    };
+    db::insert_connection(&pool, &connection)
+        .await
+        .expect("seed connection");
+
+    let account = seed_connected_account(&pool, connection.id).await;
+    let factory = make_bank_factory();
+
+    let job = SyncJob {
+        account_id: account.id.as_uuid().to_string(),
+    };
+
+    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    assert!(
+        result.is_err(),
+        "sync with unsupported provider should fail"
+    );
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("unsupported"),
+        "error should mention 'unsupported', got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn sync_no_connection_no_fallback_returns_error() {
+    let pool = setup_pool().await;
+    let account = seed_checking_account(&pool).await;
+
+    // Factory without a fallback provider
+    let factory = make_bank_factory_no_fallback();
+
+    let job = SyncJob {
+        account_id: account.id.as_uuid().to_string(),
+    };
+
+    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    assert!(
+        result.is_err(),
+        "sync without connection or fallback should fail"
+    );
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("no connection"),
+        "error should mention 'no connection', got: {err_msg}"
     );
 }
 

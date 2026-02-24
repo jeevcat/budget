@@ -7,28 +7,30 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use budget_core::db;
-use budget_core::models::{AccountId, Transaction, TransactionId};
+use budget_core::models::{AccountId, ConnectionStatus, Transaction, TransactionId};
 
-use super::{BankClient, SyncJob};
+use super::{BankProviderFactory, SyncJob};
 
 /// Fetch transactions from the bank provider for the account specified in
 /// `job.account_id` and upsert them into the database.
 ///
-/// The handler pulls the last 90 days of transactions from the provider,
-/// converts each to a domain `Transaction`, and upserts with provider-level
-/// deduplication so re-syncs are safe.
+/// The handler looks up the account's bank connection, constructs the
+/// appropriate provider via [`BankProviderFactory`], then pulls the last 90
+/// days of transactions. Each is converted to a domain `Transaction` and
+/// upserted with provider-level deduplication so re-syncs are safe.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - `job.account_id` is not a valid UUID.
 /// - The account does not exist in the database.
+/// - The account's connection is missing, expired, or revoked.
 /// - The bank provider call fails.
 /// - Any database write fails.
 pub async fn handle_sync_job(
     job: SyncJob,
     pool: Data<SqlitePool>,
-    bank: Data<BankClient>,
+    factory: Data<BankProviderFactory>,
 ) -> Result<(), BoxDynError> {
     let uuid: Uuid = job
         .account_id
@@ -39,6 +41,28 @@ pub async fn handle_sync_job(
     let account = db::get_account(&pool, account_id)
         .await?
         .ok_or_else(|| format!("account {account_id} not found"))?;
+
+    // Resolve the bank provider from the account's connection
+    let provider_name = match account.connection_id {
+        Some(conn_id) => {
+            let connection = db::get_connection(&pool, conn_id).await?.ok_or_else(|| {
+                format!("connection {conn_id} not found for account {account_id}")
+            })?;
+
+            if connection.status != ConnectionStatus::Active {
+                return Err(format!(
+                    "connection {} is {}, cannot sync",
+                    conn_id, connection.status
+                )
+                .into());
+            }
+
+            Some(connection.provider)
+        }
+        None => None,
+    };
+
+    let bank = factory.create(provider_name.as_deref())?;
 
     let provider_account_id = budget_providers::AccountId(account.provider_account_id.clone());
 

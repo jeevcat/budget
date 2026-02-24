@@ -6,11 +6,11 @@ use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_jobs::{
-    BankClient, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob, SyncJob,
+    BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob,
+    SyncJob,
 };
 use budget_providers::{
-    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
-    MockLlmProvider,
+    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockLlmProvider,
 };
 use sqlx::SqlitePool;
 use tracing_subscriber::EnvFilter;
@@ -45,19 +45,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     migrator.run(&pool).await?;
     tracing::info!("migrations applied");
 
-    // Type-erased provider wrappers for apalis Data injection
-    // clone() on BankClient/LlmClient is cheap: they wrap Arc internally
-    let bank = BankClient::new(MockBankProvider::new());
+    // Provider wrappers for apalis Data injection
+    let (enable_banking_auth, eb_config) = init_enable_banking(&config);
+    let bank_factory = BankProviderFactory::new(eb_config);
     let llm = init_llm_provider(&config);
-
-    let enable_banking_auth = init_enable_banking(&config);
 
     // Workers for each job type (backend first, then data injection)
     // clone() on pool and storages is justified: they are Arc-based handles
     let sync_worker = WorkerBuilder::new("budget-sync")
         .backend(SqliteStorage::<SyncJob, _, _>::new(&pool))
         .data(pool.clone())
-        .data(bank)
+        .data(bank_factory)
         .build(budget_jobs::handle_sync_job);
 
     let categorize_worker = WorkerBuilder::new("budget-categorize")
@@ -185,24 +183,37 @@ fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
     }
 }
 
-/// Build the Enable Banking auth provider from config, or return `None` if
-/// credentials are missing or the private key cannot be read.
-fn init_enable_banking(config: &budget_core::Config) -> Option<Arc<EnableBankingAuth>> {
-    let (app_id, key_path) = config
+/// Build the Enable Banking auth provider and config from settings.
+///
+/// Returns `(None, None)` if credentials are missing or the private key
+/// cannot be read. The auth handle is for the OAuth redirect flow; the
+/// config is for the `BankProviderFactory` to create data-fetching clients.
+fn init_enable_banking(
+    config: &budget_core::Config,
+) -> (Option<Arc<EnableBankingAuth>>, Option<EnableBankingConfig>) {
+    let Some((app_id, key_path)) = config
         .enable_banking_app_id
         .as_ref()
-        .zip(config.enable_banking_private_key_path.as_ref())?;
+        .zip(config.enable_banking_private_key_path.as_ref())
+    else {
+        return (None, None);
+    };
 
     match std::fs::read(key_path) {
         Ok(pem) => {
             let eb_config = EnableBankingConfig::new(app_id.clone(), pem);
-            let client = EnableBankingClient::new(eb_config);
-            tracing::info!("Enable Banking auth provider configured");
-            Some(Arc::new(EnableBankingAuth::new(client)))
+            // clone() justified: EnableBankingConfig is small and we need two
+            // independent owners (auth client and provider factory)
+            let auth_client = EnableBankingClient::new(eb_config.clone());
+            tracing::info!("Enable Banking provider configured");
+            (
+                Some(Arc::new(EnableBankingAuth::new(auth_client))),
+                Some(eb_config),
+            )
         }
         Err(e) => {
             tracing::warn!(path = %key_path, error = %e, "failed to read Enable Banking private key, provider disabled");
-            None
+            (None, None)
         }
     }
 }
