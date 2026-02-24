@@ -17,6 +17,13 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Run them explicitly with: `cargo test -p budget-providers -- --ignored`
 - All other tests use in-memory SQLite + mock providers and run fast
 
+## Logging
+
+- Logs go to stderr and optionally to a file (when `log_path` is set in config)
+- Read logs: `tail -f ~/.config/budget/budget.log` (via Bash tool)
+- Change verbosity: set `RUST_LOG` env var (default: `budget=debug,tower_http=debug,info`)
+- `cargo run -- config` prints both the config path and log path
+
 ## Coding Standards
 
 - **Never suppress clippy lints** without explicit human approval

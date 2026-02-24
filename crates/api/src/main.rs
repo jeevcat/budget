@@ -15,7 +15,10 @@ use budget_providers::{
 };
 use sqlx::SqlitePool;
 use tower_http::services::ServeDir;
-use tracing_subscriber::EnvFilter;
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 use api::auth;
 use api::routes;
@@ -27,13 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return dispatch_subcommand(&cmd);
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let config = budget_core::load_config()?;
+    init_tracing(&config);
     tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
 
     let pool = SqlitePool::connect(&config.database_url).await?;
@@ -113,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
         .fallback_service(ServeDir::new(frontend_dir))
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
@@ -145,11 +144,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         "config" => {
-            let path = budget_core::config_path()?;
-            let exists = path.exists();
-            println!("{}", path.display());
-            if !exists {
-                eprintln!("(file does not exist yet — will be created on first run)");
+            let config_path = budget_core::config_path()?;
+            println!(
+                "config: {} {}",
+                config_path.display(),
+                if config_path.exists() {
+                    ""
+                } else {
+                    "(not found)"
+                }
+            );
+
+            match budget_core::load_config() {
+                Ok(config) => {
+                    if let Some(ref log_path) = config.log_path {
+                        let exists = std::path::Path::new(log_path).exists();
+                        println!(
+                            "log:    {log_path} {}",
+                            if exists { "" } else { "(not yet created)" }
+                        );
+                    } else {
+                        println!("log:    (not configured — logs go to stderr only)");
+                    }
+                }
+                Err(e) => eprintln!("failed to load config: {e}"),
             }
             Ok(())
         }
@@ -191,6 +209,43 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Err
 /// Health check endpoint (unauthenticated).
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
+}
+
+/// Set up tracing with stderr output and an optional log file.
+fn init_tracing(config: &budget_core::Config) {
+    let default_filter = "budget=debug,tower_http=debug,info";
+    let stderr_layer = tracing_subscriber::fmt::layer().with_filter(
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter)),
+    );
+
+    let file_layer = config.log_path.as_ref().and_then(|path| {
+        let parent = std::path::Path::new(path).parent()?;
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("failed to create log directory {}: {e}", parent.display());
+            return None;
+        }
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            Ok(file) => Some(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(file)
+                    .with_filter(EnvFilter::new(default_filter)),
+            ),
+            Err(e) => {
+                eprintln!("failed to open log file {path}: {e}");
+                None
+            }
+        }
+    });
+
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
 }
 
 /// Build the LLM provider from config. Uses Gemini when an API key is

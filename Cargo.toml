@@ -21,7 +21,7 @@ rust_decimal = { version = "1", features = ["serde-str"] }
 regex = "1"
 http = "1"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
 rust_decimal_macros = "1"
 thiserror = "2"
 trait-variant = "0.1"
