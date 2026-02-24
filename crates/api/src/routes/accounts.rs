@@ -76,6 +76,7 @@ async fn create(
         institution: body.institution,
         account_type,
         currency: body.currency,
+        connection_id: None,
     };
 
     db::upsert_account(&state.pool, &account).await?;

@@ -51,6 +51,7 @@ async fn seed_checking_account(pool: &SqlitePool) -> Account {
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),
+        connection_id: None,
     };
     db::upsert_account(pool, &account)
         .await
@@ -67,6 +68,7 @@ async fn seed_credit_card_account(pool: &SqlitePool) -> Account {
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::CreditCard,
         currency: "USD".to_owned(),
+        connection_id: None,
     };
     db::upsert_account(pool, &account)
         .await

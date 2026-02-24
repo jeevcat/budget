@@ -60,15 +60,13 @@ pub struct SessionAccount {
 
 // ── ASPSPs ────────────────────────────────────────────────────────
 
-#[cfg(test)]
-#[derive(Debug, Deserialize)]
-pub(crate) struct AspspsResponse {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AspspsResponse {
     pub aspsps: Vec<AspspEntry>,
 }
 
-#[cfg(test)]
-#[derive(Debug, Deserialize)]
-pub(crate) struct AspspEntry {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AspspEntry {
     pub name: String,
     pub country: String,
     #[serde(default)]

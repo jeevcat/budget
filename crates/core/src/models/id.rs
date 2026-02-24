@@ -58,6 +58,7 @@ define_id!(RuleId);
 define_id!(BudgetPeriodId);
 define_id!(BudgetMonthId);
 define_id!(ProjectId);
+define_id!(ConnectionId);
 
 #[cfg(test)]
 mod tests {

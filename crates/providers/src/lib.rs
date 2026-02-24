@@ -6,8 +6,8 @@ pub mod mock;
 
 pub use bank::{Account, AccountBalance, AccountId, BankProvider, Transaction};
 pub use enable_banking::{
-    Client as EnableBankingClient, EnableBankingAuth, EnableBankingConfig, EnableBankingProvider,
-    SessionAccount, SessionResponse,
+    AspspEntry, Client as EnableBankingClient, EnableBankingAuth, EnableBankingConfig,
+    EnableBankingProvider, SessionAccount, SessionResponse,
 };
 pub use error::ProviderError;
 pub use llm::{

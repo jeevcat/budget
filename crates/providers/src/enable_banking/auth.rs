@@ -1,5 +1,7 @@
 use super::client::Client;
-use super::types::{AccessRequest, AspspRequest, AuthorizationRequest, SessionResponse};
+use super::types::{
+    AccessRequest, AspspEntry, AspspRequest, AuthorizationRequest, SessionResponse,
+};
 use crate::error::ProviderError;
 
 /// Handles the Enable Banking OAuth-like authorization flow.
@@ -62,5 +64,17 @@ impl EnableBankingAuth {
     /// Returns `ProviderError` if the API request fails.
     pub async fn revoke_session(&self, session_id: &str) -> Result<(), ProviderError> {
         self.client.delete_session(session_id).await
+    }
+
+    /// List supported ASPSPs (banks), optionally filtered by country.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError` if the API request fails.
+    pub async fn get_aspsps(
+        &self,
+        country: Option<&str>,
+    ) -> Result<Vec<AspspEntry>, ProviderError> {
+        self.client.get_aspsps(country).await
     }
 }

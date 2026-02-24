@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod budgets;
 pub mod categories;
+pub mod connections;
 pub mod jobs;
 pub mod projects;
 pub mod rules;

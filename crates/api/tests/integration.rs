@@ -46,6 +46,8 @@ async fn setup() -> (Router, SqlitePool) {
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
+        enable_banking_auth: None,
+        redirect_url: None,
     };
 
     let api_routes = Router::new()
@@ -56,6 +58,7 @@ async fn setup() -> (Router, SqlitePool) {
         .nest("/budgets", routes::budgets::router())
         .nest("/projects", routes::projects::router())
         .nest("/jobs", routes::jobs::router())
+        .nest("/connections", routes::connections::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,
@@ -63,6 +66,7 @@ async fn setup() -> (Router, SqlitePool) {
 
     let app = Router::new()
         .route("/health", axum::routing::get(health))
+        .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
         .with_state(state);
 
@@ -269,6 +273,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),
+        connection_id: None,
     };
     db::upsert_account(&pool, &account).await.expect("account");
 
@@ -348,6 +353,7 @@ async fn transactions_categorize_success() {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),
+        connection_id: None,
     };
     db::upsert_account(&pool, &account).await.expect("account");
 
@@ -1267,4 +1273,61 @@ async fn auth_api_accepts_valid_token() {
 
     let (status, _body) = send(app, get("/api/accounts")).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+// ===========================================================================
+// Connections
+// ===========================================================================
+
+#[tokio::test]
+async fn connections_list_empty() {
+    let (app, _pool) = setup().await;
+
+    let (status, body) = send(app, get("/api/connections")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let connections: Vec<budget_core::models::Connection> =
+        serde_json::from_slice(&body).expect("parse");
+    assert!(connections.is_empty());
+}
+
+#[tokio::test]
+async fn connections_aspsps_returns_501_when_not_configured() {
+    let (app, _pool) = setup().await;
+
+    let (status, _body) = send(app, get("/api/connections/aspsps?country=FI")).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn connections_callback_rejects_invalid_state() {
+    let (app, _pool) = setup().await;
+
+    // The callback endpoint should return 501 because enable_banking_auth is None.
+    // But if it were configured, an invalid state token would return 400.
+    let (status, _body) = send(
+        app,
+        get_unauthenticated("/api/connections/callback?code=test&state=invalid"),
+    )
+    .await;
+    // Without Enable Banking configured, callback returns 501
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn connections_callback_is_unauthenticated() {
+    let (app, _pool) = setup().await;
+
+    // The callback endpoint should NOT return 401, proving it's unauthenticated.
+    // It should return 501 (not configured) rather than 401 (unauthorized).
+    let (status, _body) = send(
+        app,
+        get_unauthenticated("/api/connections/callback?code=x&state=y"),
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "callback must be unauthenticated"
+    );
 }

@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetPeriodId,
-    Category, CategoryId, CorrelationType, MatchField, PeriodType, Project, ProjectId, Rule,
-    RuleId, RuleType, Transaction, TransactionId,
+    Category, CategoryId, Connection, ConnectionId, ConnectionStatus, CorrelationType, MatchField,
+    PeriodType, Project, ProjectId, Rule, RuleId, RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,6 +111,18 @@ fn row_to_account(row: &SqliteRow) -> Result<Account, sqlx::Error> {
         institution: row.try_get("institution")?,
         account_type: parse_enum::<AccountType>(row, "account_type")?,
         currency: row.try_get("currency")?,
+        connection_id: parse_uuid_opt(row, "connection_id")?.map(ConnectionId::from_uuid),
+    })
+}
+
+fn row_to_connection(row: &SqliteRow) -> Result<Connection, sqlx::Error> {
+    Ok(Connection {
+        id: ConnectionId::from_uuid(parse_uuid(row, "id")?),
+        provider: row.try_get("provider")?,
+        provider_session_id: row.try_get("provider_session_id")?,
+        institution_name: row.try_get("institution_name")?,
+        valid_until: row.try_get("valid_until")?,
+        status: parse_enum::<ConnectionStatus>(row, "status")?,
     })
 }
 
@@ -194,8 +206,8 @@ fn row_to_project(row: &SqliteRow) -> Result<Project, sqlx::Error> {
 /// Returns `sqlx::Error` if the query fails.
 pub async fn upsert_account(pool: &SqlitePool, account: &Account) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT OR REPLACE INTO accounts (id, provider_account_id, name, institution, account_type, currency)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO accounts (id, provider_account_id, name, institution, account_type, currency, connection_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
     .bind(account.id.to_string())
     .bind(&account.provider_account_id)
@@ -203,6 +215,7 @@ pub async fn upsert_account(pool: &SqlitePool, account: &Account) -> Result<(), 
     .bind(&account.institution)
     .bind(account.account_type.to_string())
     .bind(&account.currency)
+    .bind(account.connection_id.map(|id| id.to_string()))
     .execute(pool)
     .await?;
     Ok(())
@@ -215,7 +228,7 @@ pub async fn upsert_account(pool: &SqlitePool, account: &Account) -> Result<(), 
 /// Returns `sqlx::Error` if the query fails.
 pub async fn list_accounts(pool: &SqlitePool) -> Result<Vec<Account>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, provider_account_id, name, institution, account_type, currency FROM accounts",
+        "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts",
     )
     .fetch_all(pool)
     .await?;
@@ -231,9 +244,30 @@ pub async fn list_accounts(pool: &SqlitePool) -> Result<Vec<Account>, sqlx::Erro
 /// Returns `sqlx::Error` if the query fails.
 pub async fn get_account(pool: &SqlitePool, id: AccountId) -> Result<Option<Account>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT id, provider_account_id, name, institution, account_type, currency FROM accounts WHERE id = ?1",
+        "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts WHERE id = ?1",
     )
     .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(row_to_account).transpose()
+}
+
+/// Find an account by its provider account ID.
+///
+/// Returns `None` if no account with the given provider ID exists.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_account_by_provider_id(
+    pool: &SqlitePool,
+    provider_account_id: &str,
+) -> Result<Option<Account>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id
+         FROM accounts WHERE provider_account_id = ?1",
+    )
+    .bind(provider_account_id)
     .fetch_optional(pool)
     .await?;
     row.as_ref().map(row_to_account).transpose()
@@ -859,6 +893,161 @@ pub async fn delete_project(pool: &SqlitePool, id: ProjectId) -> Result<(), sqlx
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Connections
+// ---------------------------------------------------------------------------
+
+/// Insert a new connection.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn insert_connection(
+    pool: &SqlitePool,
+    connection: &Connection,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO connections (id, provider, provider_session_id, institution_name, valid_until, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )
+    .bind(connection.id.to_string())
+    .bind(&connection.provider)
+    .bind(&connection.provider_session_id)
+    .bind(&connection.institution_name)
+    .bind(&connection.valid_until)
+    .bind(connection.status.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List all connections.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn list_connections(pool: &SqlitePool) -> Result<Vec<Connection>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, provider, provider_session_id, institution_name, valid_until, status
+         FROM connections ORDER BY created_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(row_to_connection).collect()
+}
+
+/// Get a single connection by its ID.
+///
+/// Returns `None` if no connection with the given ID exists.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_connection(
+    pool: &SqlitePool,
+    id: ConnectionId,
+) -> Result<Option<Connection>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, provider, provider_session_id, institution_name, valid_until, status
+         FROM connections WHERE id = ?1",
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(row_to_connection).transpose()
+}
+
+/// Update the status of an existing connection.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn update_connection_status(
+    pool: &SqlitePool,
+    id: ConnectionId,
+    status: ConnectionStatus,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE connections SET status = ?1, updated_at = datetime('now') WHERE id = ?2")
+        .bind(status.to_string())
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Delete a connection by its ID.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn delete_connection(pool: &SqlitePool, id: ConnectionId) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM connections WHERE id = ?1")
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// State Tokens
+// ---------------------------------------------------------------------------
+
+/// Insert a new state token for the OAuth callback flow.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn insert_state_token(
+    pool: &SqlitePool,
+    token: &str,
+    user_data: &str,
+    expires_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO state_tokens (token, user_data, expires_at) VALUES (?1, ?2, ?3)")
+        .bind(token)
+        .bind(user_data)
+        .bind(expires_at)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Atomically consume a state token, returning its user data if valid.
+///
+/// Uses `UPDATE ... RETURNING` to mark the token as used in a single
+/// statement, preventing replay attacks. Returns `None` if the token
+/// does not exist, has already been used, or has expired.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn consume_state_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "UPDATE state_tokens SET used = 1
+         WHERE token = ?1 AND used = 0 AND expires_at > datetime('now')
+         RETURNING user_data",
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(data,)| data))
+}
+
+/// Delete expired state tokens.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn prune_expired_state_tokens(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM state_tokens WHERE expires_at <= datetime('now')")
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -890,6 +1079,7 @@ mod tests {
             institution: "Test Bank".into(),
             account_type: AccountType::Checking,
             currency: "EUR".into(),
+            connection_id: None,
         }
     }
 

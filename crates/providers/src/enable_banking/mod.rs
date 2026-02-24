@@ -11,4 +11,4 @@ mod tests;
 pub use auth::EnableBankingAuth;
 pub use client::{Client, EnableBankingConfig};
 pub use provider::EnableBankingProvider;
-pub use types::{SessionAccount, SessionResponse};
+pub use types::{AspspEntry, SessionAccount, SessionResponse};

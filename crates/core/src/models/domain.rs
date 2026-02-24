@@ -2,9 +2,12 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use super::enums::{AccountType, CorrelationType, MatchField, PaceIndicator, PeriodType, RuleType};
+use super::enums::{
+    AccountType, ConnectionStatus, CorrelationType, MatchField, PaceIndicator, PeriodType, RuleType,
+};
 use super::id::{
-    AccountId, BudgetMonthId, BudgetPeriodId, CategoryId, ProjectId, RuleId, TransactionId,
+    AccountId, BudgetMonthId, BudgetPeriodId, CategoryId, ConnectionId, ProjectId, RuleId,
+    TransactionId,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +18,17 @@ pub struct Account {
     pub institution: String,
     pub account_type: AccountType,
     pub currency: String,
+    pub connection_id: Option<ConnectionId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Connection {
+    pub id: ConnectionId,
+    pub provider: String,
+    pub provider_session_id: String,
+    pub institution_name: String,
+    pub valid_until: String,
+    pub status: ConnectionStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::ProviderError;
 
 use super::types::{
-    ApiErrorResponse, AuthorizationRequest, AuthorizationResponse, BalanceResponse,
-    SessionCreateRequest, SessionResponse, TransactionResponse,
+    ApiErrorResponse, AspspEntry, AspspsResponse, AuthorizationRequest, AuthorizationResponse,
+    BalanceResponse, SessionCreateRequest, SessionResponse, TransactionResponse,
 };
-#[cfg(test)]
-use super::types::{AspspEntry, AspspsResponse};
 
 /// Configuration for connecting to the Enable Banking API.
 #[derive(Debug, Clone)]
@@ -183,7 +181,6 @@ impl Client {
 
     // ── Data fetching ─────────────────────────────────────────────
 
-    #[cfg(test)]
     pub(crate) async fn get_aspsps(
         &self,
         country: Option<&str>,

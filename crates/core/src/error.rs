@@ -23,6 +23,9 @@ pub enum Error {
     #[error("invalid account type: {0}")]
     InvalidAccountType(String),
 
+    #[error("invalid connection status: {0}")]
+    InvalidConnectionStatus(String),
+
     #[error("invalid rule pattern: {0}")]
     InvalidRulePattern(String),
 }

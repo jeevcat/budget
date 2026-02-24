@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
 use budget_jobs::{BudgetRecomputeJob, CategorizeJob, CorrelateJob, SyncJob};
+use budget_providers::EnableBankingAuth;
 use sqlx::SqlitePool;
 
 /// Wrapper around a `SqlitePool` that provides a typed `push` method for
@@ -76,4 +79,8 @@ pub struct AppState {
     pub correlate_storage: JobStorage<CorrelateJob>,
     /// Job queue storage for budget recomputation jobs.
     pub recompute_storage: JobStorage<BudgetRecomputeJob>,
+    /// Enable Banking auth provider (None if not configured).
+    pub enable_banking_auth: Option<Arc<EnableBankingAuth>>,
+    /// Callback URL for OAuth redirect flow.
+    pub redirect_url: Option<String>,
 }

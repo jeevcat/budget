@@ -159,6 +159,37 @@ impl std::str::FromStr for CorrelationType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionStatus {
+    Active,
+    Expired,
+    Revoked,
+}
+
+impl fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Active => write!(f, "active"),
+            Self::Expired => write!(f, "expired"),
+            Self::Revoked => write!(f, "revoked"),
+        }
+    }
+}
+
+impl std::str::FromStr for ConnectionStatus {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(Self::Active),
+            "expired" => Ok(Self::Expired),
+            "revoked" => Ok(Self::Revoked),
+            _ => Err(Error::InvalidConnectionStatus(s.to_owned())),
+        }
+    }
+}
+
 /// Budget status pace indicator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

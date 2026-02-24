@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
 use axum::middleware;
@@ -6,7 +8,9 @@ use axum::{Json, Router};
 use budget_jobs::{
     BankClient, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob, SyncJob,
 };
-use budget_providers::{MockBankProvider, MockLlmProvider};
+use budget_providers::{
+    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, MockBankProvider, MockLlmProvider,
+};
 use sqlx::SqlitePool;
 use tracing_subscriber::EnvFilter;
 
@@ -40,6 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // clone() on BankClient/LlmClient is cheap: they wrap Arc internally
     let bank = BankClient::new(MockBankProvider::new());
     let llm = LlmClient::new(MockLlmProvider::new());
+
+    let enable_banking_auth = init_enable_banking(&config);
 
     // Workers for each job type (backend first, then data injection)
     // clone() on pool and storages is justified: they are Arc-based handles
@@ -79,6 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
+        enable_banking_auth,
+        redirect_url: config.redirect_url,
     };
 
     // Protected API routes require a valid bearer token
@@ -90,13 +98,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/budgets", routes::budgets::router())
         .nest("/projects", routes::projects::router())
         .nest("/jobs", routes::jobs::router())
+        .nest("/connections", routes::connections::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,
         ));
 
+    // Callback is unauthenticated — mounted before the /api nest
     let app = Router::new()
         .route("/health", get(health))
+        .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
         .with_state(state);
 
@@ -130,4 +141,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Health check endpoint (unauthenticated).
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
+}
+
+/// Build the Enable Banking auth provider from config, or return `None` if
+/// credentials are missing or the private key cannot be read.
+fn init_enable_banking(config: &budget_core::Config) -> Option<Arc<EnableBankingAuth>> {
+    let (app_id, key_path) = config
+        .enable_banking_app_id
+        .as_ref()
+        .zip(config.enable_banking_private_key_path.as_ref())?;
+
+    match std::fs::read(key_path) {
+        Ok(pem) => {
+            let eb_config = EnableBankingConfig::new(app_id.clone(), pem);
+            let client = EnableBankingClient::new(eb_config);
+            tracing::info!("Enable Banking auth provider configured");
+            Some(Arc::new(EnableBankingAuth::new(client)))
+        }
+        Err(e) => {
+            tracing::warn!(path = %key_path, error = %e, "failed to read Enable Banking private key, provider disabled");
+            None
+        }
+    }
 }
