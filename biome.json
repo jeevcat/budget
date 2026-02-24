@@ -1,0 +1,21 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.3.6/schema.json",
+  "files": {
+    "includes": ["frontend/**"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "rules": {
+      "recommended": true
+    }
+  },
+  "css": {
+    "formatter": {
+      "indentStyle": "space",
+      "indentWidth": 2
+    }
+  }
+}

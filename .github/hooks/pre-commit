@@ -23,4 +23,12 @@ if ! cargo clippy --all-targets --all-features -- -D warnings > /dev/null 2>&1; 
 fi
 echo -e "${GREEN}OK${NC}"
 
+echo -n "Checking Biome (frontend)... "
+if ! biome check frontend/ > /dev/null 2>&1; then
+    echo -e "${RED}FAILED${NC}"
+    echo "Run 'biome check --write frontend/' to fix issues."
+    exit 1
+fi
+echo -e "${GREEN}OK${NC}"
+
 echo -e "${GREEN}All pre-commit checks passed!${NC}"

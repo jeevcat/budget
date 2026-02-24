@@ -13,6 +13,7 @@ use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockLlmProvider,
 };
 use sqlx::SqlitePool;
+use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use api::auth;
@@ -107,11 +108,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth::require_bearer_token,
         ));
 
+    // Static frontend assets (served from workspace-root/frontend/)
+    let frontend_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend");
+
     // Callback is unauthenticated — mounted before the /api nest
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
+        .fallback_service(ServeDir::new(frontend_dir))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
