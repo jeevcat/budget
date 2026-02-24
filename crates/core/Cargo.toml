@@ -1,0 +1,11 @@
+[package]
+name = "budget-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+confy = { workspace = true }
+serde = { workspace = true }
+
+[lints]
+workspace = true
