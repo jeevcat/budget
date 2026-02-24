@@ -30,10 +30,11 @@ async fn setup() -> (Router, SqlitePool) {
         .await
         .expect("in-memory pool");
 
-    // Apalis tables must exist before the domain migrations
-    apalis_sqlite::SqliteStorage::setup(&pool)
-        .await
-        .expect("apalis setup");
+    // Both migrators share the _sqlx_migrations table and must tolerate
+    // each other's entries so restarts on persistent databases work.
+    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator.run(&pool).await.expect("apalis migrations");
 
     let mut migrator = sqlx::migrate!("../../migrations");
     migrator.set_ignore_missing(true);
@@ -1330,4 +1331,87 @@ async fn connections_callback_is_unauthenticated() {
         StatusCode::UNAUTHORIZED,
         "callback must be unauthenticated"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Migrations
+// ---------------------------------------------------------------------------
+
+/// The startup migration sequence (apalis then domain) must be idempotent.
+/// Running it twice on the same database — as happens on every server
+/// restart — must not produce `VersionMissing` or any other error.
+#[tokio::test]
+async fn migrations_are_idempotent_with_apalis() {
+    let pool = SqlitePool::connect("sqlite::memory:")
+        .await
+        .expect("in-memory pool");
+
+    // First pass: normal startup sequence
+    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator
+        .run(&pool)
+        .await
+        .expect("apalis migrations (first pass)");
+
+    let mut migrator = sqlx::migrate!("../../migrations");
+    migrator.set_ignore_missing(true);
+    migrator
+        .run(&pool)
+        .await
+        .expect("domain migrations (first pass)");
+
+    // Second pass: simulates a server restart
+    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator
+        .run(&pool)
+        .await
+        .expect("apalis migrations (second pass)");
+
+    let mut migrator = sqlx::migrate!("../../migrations");
+    migrator.set_ignore_missing(true);
+    migrator
+        .run(&pool)
+        .await
+        .expect("domain migrations must succeed on second run (simulates restart)");
+}
+
+/// Domain migrations must apply cleanly to a database where only apalis
+/// migrations have run.  This is the scenario where a persistent DB had
+/// apalis tables created (via an older binary or manual setup) before
+/// any domain migrations were added.
+///
+/// Without `ignore_missing` on both migrators, sqlx rejects low-numbered
+/// domain versions when higher-numbered apalis entries already exist.
+#[tokio::test]
+async fn domain_migrations_apply_after_only_apalis() {
+    let pool = SqlitePool::connect("sqlite::memory:")
+        .await
+        .expect("in-memory pool");
+
+    // Only apalis migrations applied (simulates a DB from before any
+    // domain schema existed, or where domain records were lost)
+    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator.run(&pool).await.expect("apalis migrations");
+
+    // Verify apalis versions are present (they use timestamps > 20220000000000)
+    let apalis_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version > 1000000")
+            .fetch_one(&pool)
+            .await
+            .expect("count apalis migrations");
+    assert!(
+        apalis_count > 0,
+        "apalis should have recorded its migrations"
+    );
+
+    // Now domain migrations must apply even though higher versions exist
+    let mut migrator = sqlx::migrate!("../../migrations");
+    migrator.set_ignore_missing(true);
+    migrator
+        .run(&pool)
+        .await
+        .expect("domain migrations must apply after apalis-only DB");
 }

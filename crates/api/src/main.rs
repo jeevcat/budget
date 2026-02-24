@@ -10,7 +10,8 @@ use budget_jobs::{
     SyncJob,
 };
 use budget_providers::{
-    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockLlmProvider,
+    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
+    MockLlmProvider,
 };
 use sqlx::SqlitePool;
 use tower_http::services::ServeDir;
@@ -37,18 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = SqlitePool::connect(&config.database_url).await?;
 
-    // Apalis migrations first (creates job queue tables)
-    SqliteStorage::setup(&pool).await?;
-
-    // Application migrations (ignore apalis-owned entries already in _sqlx_migrations)
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator.run(&pool).await?;
+    run_migrations(&pool).await?;
     tracing::info!("migrations applied");
 
     // Provider wrappers for apalis Data injection
     let (enable_banking_auth, eb_config) = init_enable_banking(&config);
-    let bank_factory = BankProviderFactory::new(eb_config);
+    let bank_factory = BankProviderFactory::new(eb_config)
+        .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = init_llm_provider(&config);
 
     // Workers for each job type (backend first, then data injection)
@@ -163,6 +159,33 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     }
+}
+
+/// Configure `SQLite` PRAGMAs and run both apalis and domain migrations.
+///
+/// Both migrators share the `_sqlx_migrations` table.  Each must tolerate
+/// the other's entries (`ignore_missing`) so that restarts and incremental
+/// migrations work on persistent databases.
+async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    sqlx::query("PRAGMA journal_mode = 'WAL'")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA synchronous = NORMAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA cache_size = 64000")
+        .execute(pool)
+        .await?;
+
+    let mut apalis_migrator = SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator.run(pool).await?;
+
+    let mut migrator = sqlx::migrate!("../../migrations");
+    migrator.set_ignore_missing(true);
+    migrator.run(pool).await?;
+
+    Ok(())
 }
 
 /// Health check endpoint (unauthenticated).
