@@ -23,6 +23,10 @@ pub struct Transaction {
     pub merchant_name: String,
     pub description: Option<String>,
     pub posted_date: NaiveDate,
+    pub counterparty_name: Option<String>,
+    pub merchant_category_code: Option<String>,
+    pub original_amount: Option<Decimal>,
+    pub original_currency: Option<String>,
 }
 
 /// Account balance as reported by the provider.

@@ -96,6 +96,10 @@ fn txn(id: &str, amount: Decimal, merchant: &str, desc: Option<&str>, date: &str
         description: desc.map(ToOwned::to_owned),
         posted_date: NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .expect("hardcoded date must be valid"),
+        counterparty_name: None,
+        merchant_category_code: None,
+        original_amount: None,
+        original_currency: None,
     }
 }
 

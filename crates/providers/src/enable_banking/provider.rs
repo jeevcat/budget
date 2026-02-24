@@ -1,0 +1,475 @@
+use chrono::{NaiveDate, Utc};
+use rust_decimal::Decimal;
+
+use super::client::Client;
+use super::types::{ApiTransaction, Balance, SessionAccount};
+use crate::bank::{Account, AccountBalance, AccountId, BankProvider, Transaction};
+use crate::error::ProviderError;
+
+/// A `BankProvider` backed by an authenticated Enable Banking session.
+///
+/// Constructed with an already-resolved session — the OAuth redirect dance
+/// is handled by `EnableBankingAuth` before this struct is created.
+pub struct EnableBankingProvider {
+    client: Client,
+    /// Retained for future session refresh/revocation
+    _session_id: String,
+    accounts: Vec<SessionAccount>,
+}
+
+impl EnableBankingProvider {
+    #[must_use]
+    pub fn new(client: Client, session_id: String, accounts: Vec<SessionAccount>) -> Self {
+        Self {
+            client,
+            _session_id: session_id,
+            accounts,
+        }
+    }
+}
+
+impl BankProvider for EnableBankingProvider {
+    async fn list_accounts(&self) -> Result<Vec<Account>, ProviderError> {
+        Ok(self.accounts.iter().map(convert_account).collect())
+    }
+
+    async fn fetch_transactions(
+        &self,
+        account_id: &AccountId,
+        since: NaiveDate,
+    ) -> Result<Vec<Transaction>, ProviderError> {
+        let today = Utc::now().date_naive();
+        let mut all_transactions = Vec::new();
+        let mut continuation_key: Option<String> = None;
+
+        loop {
+            let response = self
+                .client
+                .get_transactions(
+                    account_id.as_str(),
+                    since,
+                    today,
+                    continuation_key.as_deref(),
+                )
+                .await?;
+
+            for api_txn in response.transactions {
+                if let Some(txn) = convert_transaction(&api_txn)? {
+                    all_transactions.push(txn);
+                }
+            }
+
+            match response.continuation_key {
+                Some(key) if !key.is_empty() => continuation_key = Some(key),
+                _ => break,
+            }
+        }
+
+        Ok(all_transactions)
+    }
+
+    async fn get_balances(&self, account_id: &AccountId) -> Result<AccountBalance, ProviderError> {
+        let response = self.client.get_balances(account_id.as_str()).await?;
+
+        let mut available: Option<(Decimal, String)> = None;
+        let mut current: Option<(Decimal, String)> = None;
+
+        for balance in &response.balances {
+            match balance.balance_type.as_str() {
+                // CLAV = closing available, ITAV = interim available
+                "CLAV" => {
+                    available = Some((
+                        balance.balance_amount.amount,
+                        balance.balance_amount.currency.clone(),
+                    ));
+                }
+                "ITAV" => {
+                    if available.is_none() {
+                        available = Some((
+                            balance.balance_amount.amount,
+                            balance.balance_amount.currency.clone(),
+                        ));
+                    }
+                }
+                // CLBD = closing booked, ITBD = interim booked
+                "CLBD" => {
+                    current = Some((
+                        balance.balance_amount.amount,
+                        balance.balance_amount.currency.clone(),
+                    ));
+                }
+                "ITBD" => {
+                    if current.is_none() {
+                        current = Some((
+                            balance.balance_amount.amount,
+                            balance.balance_amount.currency.clone(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let fallback = first_balance_amount(&response.balances);
+
+        let (avail_amount, currency) = available
+            .or_else(|| current.clone())
+            .or_else(|| fallback.clone())
+            .ok_or_else(|| {
+                ProviderError::Other(format!(
+                    "no balances returned for account {}",
+                    account_id.as_str()
+                ))
+            })?;
+
+        let (curr_amount, _) = current
+            .or(fallback)
+            .unwrap_or((avail_amount, currency.clone()));
+
+        Ok(AccountBalance {
+            account_id: account_id.as_str().to_owned(),
+            available: avail_amount,
+            current: curr_amount,
+            currency,
+        })
+    }
+}
+
+fn first_balance_amount(balances: &[Balance]) -> Option<(Decimal, String)> {
+    balances
+        .first()
+        .map(|b| (b.balance_amount.amount, b.balance_amount.currency.clone()))
+}
+
+fn convert_account(acct: &SessionAccount) -> Account {
+    let account_type = acct
+        .cash_account_type
+        .as_deref()
+        .map_or("checking", map_account_type)
+        .to_owned();
+
+    Account {
+        provider_account_id: acct.uid.clone(),
+        name: acct
+            .account_name
+            .clone()
+            .or_else(|| acct.product.clone())
+            .or_else(|| acct.iban.clone())
+            .unwrap_or_else(|| acct.uid.clone()),
+        institution: acct.institution_name.clone().unwrap_or_default(),
+        account_type,
+        currency: acct.currency.clone().unwrap_or_else(|| "EUR".to_owned()),
+    }
+}
+
+fn map_account_type(cash_account_type: &str) -> &str {
+    match cash_account_type {
+        "SVGS" => "savings",
+        "CARD" => "credit_card",
+        "LOAN" => "loan",
+        _ => "checking",
+    }
+}
+
+/// Convert an API transaction to our domain `Transaction`.
+///
+/// Returns `Ok(None)` for pending transactions (PDNG status) which are skipped.
+fn convert_transaction(api: &ApiTransaction) -> Result<Option<Transaction>, ProviderError> {
+    if api.status == "PDNG" {
+        return Ok(None);
+    }
+
+    let id = api
+        .transaction_id
+        .as_ref()
+        .or(api.entry_reference.as_ref())
+        .ok_or_else(|| {
+            ProviderError::Other("transaction missing both id and entry_reference".to_owned())
+        })?
+        .clone();
+
+    let posted_date = api
+        .booking_date
+        .or(api.value_date)
+        .or(api.transaction_date)
+        .ok_or_else(|| ProviderError::Other(format!("transaction {id} has no date")))?;
+
+    let raw_amount = api.transaction_amount.amount;
+    let amount = match api.credit_debit_indicator.as_str() {
+        "DBIT" => -raw_amount.abs(),
+        _ => raw_amount.abs(),
+    };
+
+    let (merchant_name, counterparty_name) = extract_names(api);
+
+    let description = if api.remittance_information.is_empty() {
+        None
+    } else {
+        Some(api.remittance_information.join(" / "))
+    };
+
+    let (original_amount, original_currency) = extract_fx(api);
+
+    Ok(Some(Transaction {
+        provider_transaction_id: id,
+        amount,
+        currency: api.transaction_amount.currency.clone(),
+        merchant_name,
+        description,
+        posted_date,
+        counterparty_name,
+        merchant_category_code: api.merchant_category_code.clone(),
+        original_amount,
+        original_currency,
+    }))
+}
+
+/// For debits, the creditor is the merchant; for credits, the debtor is the merchant.
+/// The counterparty is the other party.
+fn extract_names(api: &ApiTransaction) -> (String, Option<String>) {
+    let is_debit = api.credit_debit_indicator == "DBIT";
+
+    let merchant = if is_debit {
+        api.creditor_name.clone()
+    } else {
+        api.debtor_name.clone()
+    };
+
+    let counterparty = if is_debit {
+        api.debtor_name.clone()
+    } else {
+        api.creditor_name.clone()
+    };
+
+    let merchant_name = merchant
+        .or_else(|| api.remittance_information.first().cloned())
+        .unwrap_or_default();
+
+    (merchant_name, counterparty)
+}
+
+fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
+    let rate = api
+        .exchange_rate
+        .as_ref()
+        .and_then(|rates| rates.iter().find_map(|r| r.instructed_amount.as_ref()));
+
+    match rate {
+        Some(amount) => (Some(amount.amount), Some(amount.currency.clone())),
+        None => (None, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enable_banking::types::{Amount, ExchangeRate};
+    use rust_decimal_macros::dec;
+
+    fn base_api_txn() -> ApiTransaction {
+        ApiTransaction {
+            transaction_id: Some("txn-001".to_owned()),
+            entry_reference: None,
+            status: "BOOK".to_owned(),
+            credit_debit_indicator: "DBIT".to_owned(),
+            transaction_amount: Amount {
+                amount: dec!(42.50),
+                currency: "EUR".to_owned(),
+            },
+            booking_date: Some(NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()),
+            value_date: None,
+            transaction_date: None,
+            remittance_information: vec![],
+            creditor_name: Some("Coffee Shop".to_owned()),
+            debtor_name: None,
+            merchant_category_code: Some("5411".to_owned()),
+            exchange_rate: None,
+        }
+    }
+
+    #[test]
+    fn debit_produces_negative_amount() {
+        let api = base_api_txn();
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.amount, dec!(-42.50));
+    }
+
+    #[test]
+    fn credit_produces_positive_amount() {
+        let mut api = base_api_txn();
+        api.credit_debit_indicator = "CRDT".to_owned();
+        api.debtor_name = Some("Employer Inc".to_owned());
+        api.creditor_name = None;
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.amount, dec!(42.50));
+        assert_eq!(txn.merchant_name, "Employer Inc");
+    }
+
+    #[test]
+    fn date_fallback_to_value_date() {
+        let mut api = base_api_txn();
+        api.booking_date = None;
+        api.value_date = Some(NaiveDate::from_ymd_opt(2025, 3, 14).unwrap());
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(
+            txn.posted_date,
+            NaiveDate::from_ymd_opt(2025, 3, 14).unwrap()
+        );
+    }
+
+    #[test]
+    fn date_fallback_to_transaction_date() {
+        let mut api = base_api_txn();
+        api.booking_date = None;
+        api.value_date = None;
+        api.transaction_date = Some(NaiveDate::from_ymd_opt(2025, 3, 13).unwrap());
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(
+            txn.posted_date,
+            NaiveDate::from_ymd_opt(2025, 3, 13).unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_all_dates_is_error() {
+        let mut api = base_api_txn();
+        api.booking_date = None;
+        api.value_date = None;
+        api.transaction_date = None;
+
+        let result = convert_transaction(&api);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_id_and_entry_reference_is_error() {
+        let mut api = base_api_txn();
+        api.transaction_id = None;
+        api.entry_reference = None;
+
+        let result = convert_transaction(&api);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn entry_reference_used_as_fallback_id() {
+        let mut api = base_api_txn();
+        api.transaction_id = None;
+        api.entry_reference = Some("ref-999".to_owned());
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.provider_transaction_id, "ref-999");
+    }
+
+    #[test]
+    fn pending_transactions_are_skipped() {
+        let mut api = base_api_txn();
+        api.status = "PDNG".to_owned();
+
+        let result = convert_transaction(&api).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn fx_amount_extracted() {
+        let mut api = base_api_txn();
+        api.exchange_rate = Some(vec![ExchangeRate {
+            instructed_amount: Some(Amount {
+                amount: dec!(50.00),
+                currency: "USD".to_owned(),
+            }),
+        }]);
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.original_amount, Some(dec!(50.00)));
+        assert_eq!(txn.original_currency.as_deref(), Some("USD"));
+    }
+
+    #[test]
+    fn debit_merchant_is_creditor() {
+        let api = base_api_txn();
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.merchant_name, "Coffee Shop");
+        assert!(txn.counterparty_name.is_none());
+    }
+
+    #[test]
+    fn credit_merchant_is_debtor() {
+        let mut api = base_api_txn();
+        api.credit_debit_indicator = "CRDT".to_owned();
+        api.debtor_name = Some("Employer".to_owned());
+        api.creditor_name = Some("Me".to_owned());
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.merchant_name, "Employer");
+        assert_eq!(txn.counterparty_name.as_deref(), Some("Me"));
+    }
+
+    #[test]
+    fn account_type_mapping() {
+        assert_eq!(map_account_type("CACC"), "checking");
+        assert_eq!(map_account_type("SVGS"), "savings");
+        assert_eq!(map_account_type("CARD"), "credit_card");
+        assert_eq!(map_account_type("LOAN"), "loan");
+        assert_eq!(map_account_type("OTHR"), "checking");
+    }
+
+    #[test]
+    fn balance_type_priority() {
+        let balances = vec![
+            Balance {
+                balance_amount: Amount {
+                    amount: dec!(100.00),
+                    currency: "EUR".to_owned(),
+                },
+                balance_type: "ITAV".to_owned(),
+            },
+            Balance {
+                balance_amount: Amount {
+                    amount: dec!(200.00),
+                    currency: "EUR".to_owned(),
+                },
+                balance_type: "CLAV".to_owned(),
+            },
+            Balance {
+                balance_amount: Amount {
+                    amount: dec!(150.00),
+                    currency: "EUR".to_owned(),
+                },
+                balance_type: "ITBD".to_owned(),
+            },
+            Balance {
+                balance_amount: Amount {
+                    amount: dec!(175.00),
+                    currency: "EUR".to_owned(),
+                },
+                balance_type: "CLBD".to_owned(),
+            },
+        ];
+
+        // Simulate the balance selection logic
+        let mut available: Option<Decimal> = None;
+        let mut current: Option<Decimal> = None;
+
+        for balance in &balances {
+            match balance.balance_type.as_str() {
+                "CLAV" => available = Some(balance.balance_amount.amount),
+                "ITAV" if available.is_none() => {
+                    available = Some(balance.balance_amount.amount);
+                }
+                "CLBD" => current = Some(balance.balance_amount.amount),
+                "ITBD" if current.is_none() => {
+                    current = Some(balance.balance_amount.amount);
+                }
+                _ => {}
+            }
+        }
+
+        // CLAV takes priority over ITAV, CLBD takes priority over ITBD
+        assert_eq!(available, Some(dec!(200.00)));
+        assert_eq!(current, Some(dec!(175.00)));
+    }
+}

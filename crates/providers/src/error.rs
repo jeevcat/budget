@@ -14,6 +14,12 @@ pub enum ProviderError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    #[error("session expired")]
+    SessionExpired,
+
+    #[error("provider API error ({code}): {description}")]
+    ApiError { code: String, description: String },
+
     #[error("{0}")]
     Other(String),
 }

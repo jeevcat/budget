@@ -12,6 +12,8 @@ pub struct Config {
     pub budget_currency: String,
     pub expected_salary_count: u32,
     pub server_port: u16,
+    pub enable_banking_app_id: Option<String>,
+    pub enable_banking_private_key_path: Option<String>,
 }
 
 impl Default for Config {
@@ -23,6 +25,8 @@ impl Default for Config {
             budget_currency: "USD".to_owned(),
             expected_salary_count: 1,
             server_port: 3000,
+            enable_banking_app_id: None,
+            enable_banking_private_key_path: None,
         }
     }
 }
