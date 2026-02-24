@@ -1,10 +1,12 @@
 use axum::Router;
 use axum::body::Body;
+use axum::middleware;
 use http::Request;
 use http::StatusCode;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
+use api::auth;
 use api::routes;
 use api::state::{AppState, JobStorage};
 
@@ -13,6 +15,9 @@ use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
     CategoryId, Project, Rule, Transaction, TransactionId,
 };
+
+/// Bearer token used in all test requests.
+const TEST_SECRET: &str = "test-secret-key";
 
 // ---------------------------------------------------------------------------
 // Shared test setup
@@ -36,23 +41,37 @@ async fn setup() -> (Router, SqlitePool) {
 
     let state = AppState {
         pool: pool.clone(),
+        secret_key: TEST_SECRET.to_owned(),
         sync_storage: JobStorage::new(&pool),
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
     };
 
+    let api_routes = Router::new()
+        .nest("/accounts", routes::accounts::router())
+        .nest("/transactions", routes::transactions::router())
+        .nest("/categories", routes::categories::router())
+        .nest("/rules", routes::rules::router())
+        .nest("/budgets", routes::budgets::router())
+        .nest("/projects", routes::projects::router())
+        .nest("/jobs", routes::jobs::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer_token,
+        ));
+
     let app = Router::new()
-        .nest("/api/accounts", routes::accounts::router())
-        .nest("/api/transactions", routes::transactions::router())
-        .nest("/api/categories", routes::categories::router())
-        .nest("/api/rules", routes::rules::router())
-        .nest("/api/budgets", routes::budgets::router())
-        .nest("/api/projects", routes::projects::router())
-        .nest("/api/jobs", routes::jobs::router())
+        .route("/health", axum::routing::get(health))
+        .nest("/api", api_routes)
         .with_state(state);
 
     (app, pool)
+}
+
+/// Health check handler (mirrors main.rs).
+async fn health() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({"status": "ok"}))
 }
 
 /// Helper: send a request and return status + body bytes.
@@ -65,49 +84,63 @@ async fn send(app: Router, request: Request<Body>) -> (StatusCode, Vec<u8>) {
     (status, body.to_vec())
 }
 
-/// Helper: build a JSON POST request.
+/// Helper: build a JSON POST request with bearer token.
 fn post_json(uri: &str, json: &serde_json::Value) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("POST")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
         .body(Body::from(serde_json::to_vec(json).expect("serialize")))
         .expect("build request")
 }
 
-/// Helper: build a JSON PUT request.
+/// Helper: build a JSON PUT request with bearer token.
 fn put_json(uri: &str, json: &serde_json::Value) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("PUT")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
         .body(Body::from(serde_json::to_vec(json).expect("serialize")))
         .expect("build request")
 }
 
-/// Helper: build a GET request.
+/// Helper: build a GET request with bearer token.
 fn get(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("GET")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
         .body(Body::empty())
         .expect("build request")
 }
 
-/// Helper: build a DELETE request.
+/// Helper: build a DELETE request with bearer token.
 fn delete(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("DELETE")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
         .body(Body::empty())
         .expect("build request")
 }
 
-/// Helper: build a POST request with empty body.
+/// Helper: build a POST request with empty body and bearer token.
 fn post_empty(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("POST")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
+        .body(Body::empty())
+        .expect("build request")
+}
+
+/// Helper: build a GET request without any auth header.
+fn get_unauthenticated(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("GET")
         .body(Body::empty())
         .expect("build request")
 }
@@ -1173,4 +1206,65 @@ async fn projects_create_invalid_category_uuid_returns_400() {
 
     let (status, _body) = send(app, post_json("/api/projects", &payload)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ===========================================================================
+// Authentication
+// ===========================================================================
+
+#[tokio::test]
+async fn auth_health_is_unauthenticated() {
+    let (app, _pool) = setup().await;
+
+    let (status, body) = send(app, get_unauthenticated("/health")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let parsed: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(parsed["status"], "ok");
+}
+
+#[tokio::test]
+async fn auth_api_rejects_missing_token() {
+    let (app, _pool) = setup().await;
+
+    let (status, _body) = send(app, get_unauthenticated("/api/accounts")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_api_rejects_wrong_token() {
+    let (app, _pool) = setup().await;
+
+    let request = Request::builder()
+        .uri("/api/accounts")
+        .method("GET")
+        .header("authorization", "Bearer wrong-key")
+        .body(Body::empty())
+        .expect("build request");
+
+    let (status, _body) = send(app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_api_rejects_malformed_header() {
+    let (app, _pool) = setup().await;
+
+    let request = Request::builder()
+        .uri("/api/accounts")
+        .method("GET")
+        .header("authorization", "Basic dXNlcjpwYXNz")
+        .body(Body::empty())
+        .expect("build request");
+
+    let (status, _body) = send(app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_api_accepts_valid_token() {
+    let (app, _pool) = setup().await;
+
+    let (status, _body) = send(app, get("/api/accounts")).await;
+    assert_eq!(status, StatusCode::OK);
 }

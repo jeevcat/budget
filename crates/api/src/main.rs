@@ -1,5 +1,6 @@
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
+use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_jobs::{
@@ -9,6 +10,7 @@ use budget_providers::{MockBankProvider, MockLlmProvider};
 use sqlx::SqlitePool;
 use tracing_subscriber::EnvFilter;
 
+use api::auth;
 use api::routes;
 use api::state::{AppState, JobStorage};
 
@@ -72,21 +74,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         pool: pool.clone(),
+        secret_key: config.secret_key,
         sync_storage: JobStorage::new(&pool),
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
     };
 
+    // Protected API routes require a valid bearer token
+    let api_routes = Router::new()
+        .nest("/accounts", routes::accounts::router())
+        .nest("/transactions", routes::transactions::router())
+        .nest("/categories", routes::categories::router())
+        .nest("/rules", routes::rules::router())
+        .nest("/budgets", routes::budgets::router())
+        .nest("/projects", routes::projects::router())
+        .nest("/jobs", routes::jobs::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer_token,
+        ));
+
     let app = Router::new()
         .route("/health", get(health))
-        .nest("/api/accounts", routes::accounts::router())
-        .nest("/api/transactions", routes::transactions::router())
-        .nest("/api/categories", routes::categories::router())
-        .nest("/api/rules", routes::rules::router())
-        .nest("/api/budgets", routes::budgets::router())
-        .nest("/api/projects", routes::projects::router())
-        .nest("/api/jobs", routes::jobs::router())
+        .nest("/api", api_routes)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;

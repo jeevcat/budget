@@ -66,6 +66,8 @@ impl_push!(BudgetRecomputeJob);
 pub struct AppState {
     /// Database connection pool for all queries.
     pub pool: SqlitePool,
+    /// Static bearer token for API authentication.
+    pub secret_key: String,
     /// Job queue storage for bank account sync jobs.
     pub sync_storage: JobStorage<SyncJob>,
     /// Job queue storage for transaction categorization jobs.
