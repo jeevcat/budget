@@ -148,15 +148,23 @@ fn convert_account(acct: &SessionAccount) -> Account {
         .map_or("checking", map_account_type)
         .to_owned();
 
+    let iban = acct.account_id.as_ref().and_then(|id| id.iban.clone());
+
+    let institution = acct
+        .account_servicer
+        .as_ref()
+        .and_then(|s| s.name.clone())
+        .unwrap_or_default();
+
     Account {
         provider_account_id: acct.uid.clone(),
         name: acct
-            .account_name
+            .name
             .clone()
             .or_else(|| acct.product.clone())
-            .or_else(|| acct.iban.clone())
+            .or(iban)
             .unwrap_or_else(|| acct.uid.clone()),
-        institution: acct.institution_name.clone().unwrap_or_default(),
+        institution,
         account_type,
         currency: acct.currency.clone().unwrap_or_else(|| "EUR".to_owned()),
     }
@@ -229,17 +237,16 @@ fn convert_transaction(api: &ApiTransaction) -> Result<Option<Transaction>, Prov
 fn extract_names(api: &ApiTransaction) -> (String, Option<String>) {
     let is_debit = api.credit_debit_indicator == "DBIT";
 
+    let creditor_name = api.creditor.as_ref().and_then(|p| p.name.clone());
+    let debtor_name = api.debtor.as_ref().and_then(|p| p.name.clone());
+
     let merchant = if is_debit {
-        api.creditor_name.clone()
+        creditor_name.clone()
     } else {
-        api.debtor_name.clone()
+        debtor_name.clone()
     };
 
-    let counterparty = if is_debit {
-        api.debtor_name.clone()
-    } else {
-        api.creditor_name.clone()
-    };
+    let counterparty = if is_debit { debtor_name } else { creditor_name };
 
     let merchant_name = merchant
         .or_else(|| api.remittance_information.first().cloned())
@@ -249,12 +256,12 @@ fn extract_names(api: &ApiTransaction) -> (String, Option<String>) {
 }
 
 fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
-    let rate = api
+    let instructed = api
         .exchange_rate
         .as_ref()
-        .and_then(|rates| rates.iter().find_map(|r| r.instructed_amount.as_ref()));
+        .and_then(|r| r.instructed_amount.as_ref());
 
-    match rate {
+    match instructed {
         Some(amount) => (Some(amount.amount), Some(amount.currency.clone())),
         None => (None, None),
     }
@@ -263,7 +270,7 @@ fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enable_banking::types::{Amount, ExchangeRate};
+    use crate::enable_banking::types::{Amount, ExchangeRate, PartyIdentification};
     use rust_decimal_macros::dec;
 
     fn base_api_txn() -> ApiTransaction {
@@ -280,8 +287,10 @@ mod tests {
             value_date: None,
             transaction_date: None,
             remittance_information: vec![],
-            creditor_name: Some("Coffee Shop".to_owned()),
-            debtor_name: None,
+            creditor: Some(PartyIdentification {
+                name: Some("Coffee Shop".to_owned()),
+            }),
+            debtor: None,
             merchant_category_code: Some("5411".to_owned()),
             exchange_rate: None,
         }
@@ -298,8 +307,10 @@ mod tests {
     fn credit_produces_positive_amount() {
         let mut api = base_api_txn();
         api.credit_debit_indicator = "CRDT".to_owned();
-        api.debtor_name = Some("Employer Inc".to_owned());
-        api.creditor_name = None;
+        api.debtor = Some(PartyIdentification {
+            name: Some("Employer Inc".to_owned()),
+        });
+        api.creditor = None;
 
         let txn = convert_transaction(&api).unwrap().unwrap();
         assert_eq!(txn.amount, dec!(42.50));
@@ -376,12 +387,12 @@ mod tests {
     #[test]
     fn fx_amount_extracted() {
         let mut api = base_api_txn();
-        api.exchange_rate = Some(vec![ExchangeRate {
+        api.exchange_rate = Some(ExchangeRate {
             instructed_amount: Some(Amount {
                 amount: dec!(50.00),
                 currency: "USD".to_owned(),
             }),
-        }]);
+        });
 
         let txn = convert_transaction(&api).unwrap().unwrap();
         assert_eq!(txn.original_amount, Some(dec!(50.00)));
@@ -400,8 +411,12 @@ mod tests {
     fn credit_merchant_is_debtor() {
         let mut api = base_api_txn();
         api.credit_debit_indicator = "CRDT".to_owned();
-        api.debtor_name = Some("Employer".to_owned());
-        api.creditor_name = Some("Me".to_owned());
+        api.debtor = Some(PartyIdentification {
+            name: Some("Employer".to_owned()),
+        });
+        api.creditor = Some(PartyIdentification {
+            name: Some("Me".to_owned()),
+        });
 
         let txn = convert_transaction(&api).unwrap().unwrap();
         assert_eq!(txn.merchant_name, "Employer");

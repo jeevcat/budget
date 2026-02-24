@@ -30,6 +30,7 @@ impl EnableBankingAuth {
         redirect_url: &str,
         state: &str,
         valid_until: &str,
+        psu_type: &str,
     ) -> Result<String, ProviderError> {
         let request = AuthorizationRequest {
             access: AccessRequest {
@@ -41,7 +42,7 @@ impl EnableBankingAuth {
             },
             state: state.to_owned(),
             redirect_url: redirect_url.to_owned(),
-            psu_type: None,
+            psu_type: psu_type.to_owned(),
         };
 
         let response = self.client.start_authorization(&request).await?;

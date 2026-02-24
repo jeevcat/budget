@@ -8,7 +8,7 @@ use crate::bank::{AccountId, BankProvider};
 use crate::enable_banking::EnableBankingConfig;
 use crate::enable_banking::client::Client;
 use crate::enable_banking::provider::EnableBankingProvider;
-use crate::enable_banking::types::SessionAccount;
+use crate::enable_banking::types::{AccountIdentification, AccountServicer, SessionAccount};
 use crate::error::ProviderError;
 
 use super::auth::EnableBankingAuth;
@@ -24,12 +24,17 @@ fn test_config(base_url: &str) -> EnableBankingConfig {
 fn test_session_account() -> SessionAccount {
     SessionAccount {
         uid: "acct-001".to_owned(),
-        account_name: Some("My Checking".to_owned()),
-        iban: Some("FI1234567890".to_owned()),
+        name: Some("My Checking".to_owned()),
+        account_id: Some(AccountIdentification {
+            iban: Some("FI1234567890".to_owned()),
+        }),
+        account_servicer: Some(AccountServicer {
+            name: Some("Test Bank".to_owned()),
+            bic_fi: None,
+        }),
         product: None,
         cash_account_type: Some("CACC".to_owned()),
         currency: Some("EUR".to_owned()),
-        institution_name: Some("Test Bank".to_owned()),
     }
 }
 
@@ -55,7 +60,7 @@ async fn single_page_transactions() {
                     "credit_debit_indicator": "DBIT",
                     "transaction_amount": { "amount": "25.00", "currency": "EUR" },
                     "booking_date": "2025-03-10",
-                    "creditor_name": "Shop A"
+                    "creditor": { "name": "Shop A" }
                 },
                 {
                     "transaction_id": "t2",
@@ -63,7 +68,7 @@ async fn single_page_transactions() {
                     "credit_debit_indicator": "CRDT",
                     "transaction_amount": { "amount": "100.00", "currency": "EUR" },
                     "booking_date": "2025-03-11",
-                    "debtor_name": "Employer"
+                    "debtor": { "name": "Employer" }
                 }
             ]
         })))
@@ -101,7 +106,7 @@ async fn multi_page_pagination() {
                     "credit_debit_indicator": "DBIT",
                     "transaction_amount": { "amount": "10.00", "currency": "EUR" },
                     "booking_date": "2025-03-01",
-                    "creditor_name": "Shop"
+                    "creditor": { "name": "Shop" }
                 }
             ],
             "continuation_key": "page2"
@@ -122,7 +127,7 @@ async fn multi_page_pagination() {
                     "credit_debit_indicator": "CRDT",
                     "transaction_amount": { "amount": "50.00", "currency": "EUR" },
                     "booking_date": "2025-03-02",
-                    "debtor_name": "Employer"
+                    "debtor": { "name": "Employer" }
                 }
             ]
         })))
@@ -156,7 +161,7 @@ async fn pending_transactions_filtered_out() {
                     "credit_debit_indicator": "DBIT",
                     "transaction_amount": { "amount": "10.00", "currency": "EUR" },
                     "booking_date": "2025-03-01",
-                    "creditor_name": "Shop"
+                    "creditor": { "name": "Shop" }
                 },
                 {
                     "transaction_id": "t2",
@@ -164,7 +169,7 @@ async fn pending_transactions_filtered_out() {
                     "credit_debit_indicator": "DBIT",
                     "transaction_amount": { "amount": "99.00", "currency": "EUR" },
                     "booking_date": "2025-03-02",
-                    "creditor_name": "Pending Shop"
+                    "creditor": { "name": "Pending Shop" }
                 }
             ]
         })))
@@ -310,7 +315,8 @@ async fn auth_start_authorization() {
             "FI",
             "https://app.example.com/callback",
             "state123",
-            "2025-12-31",
+            "2025-12-31T00:00:00Z",
+            "personal",
         )
         .await
         .unwrap();
@@ -329,7 +335,7 @@ async fn auth_exchange_code() {
             "accounts": [
                 {
                     "uid": "acct-new-001",
-                    "account_name": "Savings",
+                    "name": "Savings",
                     "currency": "EUR",
                     "cash_account_type": "SVGS"
                 }

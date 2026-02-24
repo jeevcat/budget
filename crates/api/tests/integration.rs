@@ -48,7 +48,7 @@ async fn setup() -> (Router, SqlitePool) {
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
         enable_banking_auth: None,
-        redirect_url: None,
+        host: "http://localhost:3000".to_owned(),
     };
 
     let api_routes = Router::new()

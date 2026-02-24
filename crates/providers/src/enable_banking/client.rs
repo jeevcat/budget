@@ -163,6 +163,29 @@ impl Client {
             .map_err(|e| ProviderError::Other(format!("failed to parse session response: {e}")))
     }
 
+    #[cfg(test)]
+    pub(crate) async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionResponse, ProviderError> {
+        let token = self.sign_jwt()?;
+        let url = format!("{}/sessions/{session_id}", self.config.base_url);
+
+        let response = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::ConnectionFailed(e.to_string()))?;
+
+        let response = self.handle_error_response(response).await?;
+        response
+            .json()
+            .await
+            .map_err(|e| ProviderError::Other(format!("failed to parse session response: {e}")))
+    }
+
     pub(crate) async fn delete_session(&self, session_id: &str) -> Result<(), ProviderError> {
         let token = self.sign_jwt()?;
         let url = format!("{}/sessions/{session_id}", self.config.base_url);

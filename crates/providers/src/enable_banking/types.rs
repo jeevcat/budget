@@ -10,8 +10,7 @@ pub(crate) struct AuthorizationRequest {
     pub aspsp: AspspRequest,
     pub state: String,
     pub redirect_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub psu_type: Option<String>,
+    pub psu_type: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,17 +44,31 @@ pub struct SessionResponse {
 pub struct SessionAccount {
     pub uid: String,
     #[serde(default)]
-    pub account_name: Option<String>,
+    pub name: Option<String>,
     #[serde(default)]
-    pub iban: Option<String>,
+    pub account_id: Option<AccountIdentification>,
+    #[serde(default)]
+    pub account_servicer: Option<AccountServicer>,
     #[serde(default)]
     pub product: Option<String>,
     #[serde(default)]
     pub cash_account_type: Option<String>,
     #[serde(default)]
     pub currency: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountIdentification {
     #[serde(default)]
-    pub institution_name: Option<String>,
+    pub iban: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountServicer {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub bic_fi: Option<String>,
 }
 
 // ── ASPSPs ────────────────────────────────────────────────────────
@@ -69,6 +82,12 @@ pub struct AspspsResponse {
 pub struct AspspEntry {
     pub name: String,
     pub country: String,
+    #[serde(default)]
+    pub logo: Option<String>,
+    #[serde(default)]
+    pub bic: Option<String>,
+    #[serde(default)]
+    pub beta: Option<bool>,
     #[serde(default)]
     pub sandbox: Option<serde_json::Value>,
 }
@@ -119,13 +138,19 @@ pub(crate) struct ApiTransaction {
     #[serde(default)]
     pub remittance_information: Vec<String>,
     #[serde(default)]
-    pub creditor_name: Option<String>,
+    pub creditor: Option<PartyIdentification>,
     #[serde(default)]
-    pub debtor_name: Option<String>,
+    pub debtor: Option<PartyIdentification>,
     #[serde(default)]
     pub merchant_category_code: Option<String>,
     #[serde(default)]
-    pub exchange_rate: Option<Vec<ExchangeRate>>,
+    pub exchange_rate: Option<ExchangeRate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct PartyIdentification {
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

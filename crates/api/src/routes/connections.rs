@@ -51,10 +51,16 @@ pub struct AuthorizeRequest {
     pub aspsp_country: String,
     #[serde(default = "default_valid_days")]
     pub valid_days: u32,
+    #[serde(default = "default_psu_type")]
+    pub psu_type: String,
 }
 
 fn default_valid_days() -> u32 {
     90
+}
+
+fn default_psu_type() -> String {
+    "personal".to_owned()
 }
 
 #[derive(Serialize)]
@@ -64,8 +70,10 @@ struct AuthorizeResponse {
 
 #[derive(Deserialize)]
 pub struct CallbackQuery {
-    pub code: String,
+    pub code: Option<String>,
     pub state: String,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -122,7 +130,7 @@ async fn authorize(
     let valid_until = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(i64::from(body.valid_days)))
         .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "invalid valid_days".to_owned()))?
-        .format("%Y-%m-%d")
+        .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
 
     let token = generate_state_token();
@@ -156,9 +164,19 @@ async fn authorize(
             &redirect_url,
             &token,
             &valid_until,
+            &body.psu_type,
         )
         .await
-        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(
+                aspsp_name = %body.aspsp_name,
+                aspsp_country = %body.aspsp_country,
+                redirect_url = %redirect_url,
+                error = %e,
+                "Enable Banking authorization failed"
+            );
+            AppError(StatusCode::BAD_GATEWAY, e.to_string())
+        })?;
 
     Ok(Json(AuthorizeResponse { authorization_url }))
 }
@@ -168,6 +186,24 @@ async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
 ) -> Result<(StatusCode, Json<Connection>), AppError> {
+    if let Some(err) = &query.error {
+        let desc = query
+            .error_description
+            .as_deref()
+            .unwrap_or("no description");
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!("authorization denied: {err} — {desc}"),
+        ));
+    }
+
+    let code = query.code.as_deref().ok_or_else(|| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            "missing authorization code".to_owned(),
+        )
+    })?;
+
     let auth = require_enable_banking(&state)?;
 
     let user_data = db::consume_state_token(&state.pool, &query.state)
@@ -188,7 +224,7 @@ async fn callback(
     })?;
 
     let session = auth
-        .exchange_code(&query.code)
+        .exchange_code(code)
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e.to_string()))?;
 
@@ -217,13 +253,14 @@ async fn callback(
             id: existing.as_ref().map_or_else(AccountId::new, |a| a.id),
             provider_account_id: session_account.uid.clone(),
             name: session_account
-                .account_name
+                .name
                 .clone()
                 .or_else(|| session_account.product.clone())
                 .unwrap_or_else(|| "Unknown Account".to_owned()),
             institution: session_account
-                .institution_name
-                .clone()
+                .account_servicer
+                .as_ref()
+                .and_then(|s| s.name.clone())
                 .unwrap_or_else(|| token_data.aspsp_name.clone()),
             account_type: parse_cash_account_type(session_account.cash_account_type.as_deref()),
             currency: session_account

@@ -159,14 +159,23 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             match budget_core::load_config() {
                 Ok(config) => {
+                    let host = config.host.as_deref().map_or_else(
+                        || format!("http://localhost:{} (default)", config.server_port),
+                        str::to_owned,
+                    );
+                    println!("host:     {host}");
+                    println!(
+                        "callback: {}/api/connections/callback",
+                        host.trim_end_matches(" (default)")
+                    );
                     if let Some(ref log_path) = config.log_path {
                         let exists = std::path::Path::new(log_path).exists();
                         println!(
-                            "log:    {log_path} {}",
+                            "log:      {log_path} {}",
                             if exists { "" } else { "(not yet created)" }
                         );
                     } else {
-                        println!("log:    (not configured — logs go to stderr only)");
+                        println!("log:      (not configured — logs go to stderr only)");
                     }
                 }
                 Err(e) => eprintln!("failed to load config: {e}"),
