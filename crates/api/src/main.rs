@@ -9,7 +9,8 @@ use budget_jobs::{
     BankClient, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob, SyncJob,
 };
 use budget_providers::{
-    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, MockBankProvider, MockLlmProvider,
+    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
+    MockLlmProvider,
 };
 use sqlx::SqlitePool;
 use tracing_subscriber::EnvFilter;
@@ -20,6 +21,10 @@ use api::state::{AppState, JobStorage};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(cmd) = std::env::args().nth(1) {
+        return dispatch_subcommand(&cmd);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -43,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Type-erased provider wrappers for apalis Data injection
     // clone() on BankClient/LlmClient is cheap: they wrap Arc internally
     let bank = BankClient::new(MockBankProvider::new());
-    let llm = LlmClient::new(MockLlmProvider::new());
+    let llm = init_llm_provider(&config);
 
     let enable_banking_auth = init_enable_banking(&config);
 
@@ -138,9 +143,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        "config" => {
+            let path = budget_core::config_path()?;
+            let exists = path.exists();
+            println!("{}", path.display());
+            if !exists {
+                eprintln!("(file does not exist yet — will be created on first run)");
+            }
+            Ok(())
+        }
+        other => {
+            eprintln!("unknown command: {other}");
+            eprintln!("usage: budget [config]");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Health check endpoint (unauthenticated).
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
+}
+
+/// Build the LLM provider from config. Uses Gemini when an API key is
+/// configured, otherwise falls back to the mock provider.
+fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
+    match config.gemini_api_key.as_ref() {
+        Some(api_key) if !api_key.is_empty() => {
+            tracing::info!(model = %config.llm_model, "using Gemini LLM provider");
+            LlmClient::new(GeminiProvider::new(
+                api_key.clone(),
+                config.llm_model.clone(),
+            ))
+        }
+        _ => {
+            tracing::info!("no Gemini API key configured, using mock LLM provider");
+            LlmClient::new(MockLlmProvider::new())
+        }
+    }
 }
 
 /// Build the Enable Banking auth provider from config, or return `None` if

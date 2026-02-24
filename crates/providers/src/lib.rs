@@ -1,6 +1,7 @@
 pub mod bank;
 pub mod enable_banking;
 pub mod error;
+pub mod gemini;
 pub mod llm;
 pub mod mock;
 
@@ -10,6 +11,7 @@ pub use enable_banking::{
     EnableBankingProvider, SessionAccount, SessionResponse,
 };
 pub use error::ProviderError;
+pub use gemini::GeminiProvider;
 pub use llm::{
     CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
     TransactionSummary,

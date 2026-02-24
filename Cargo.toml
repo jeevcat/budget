@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/*"]
+default-members = ["crates/api"]
 resolver = "2"
 
 [workspace.dependencies]

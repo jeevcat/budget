@@ -6,7 +6,9 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use budget_providers::{CategorizeResult, CorrelationResult, ProviderError, TransactionSummary};
+use budget_providers::{
+    CategorizeResult, CorrelationResult, ProposedRule, ProviderError, TransactionSummary,
+};
 
 pub mod categorize;
 pub mod correlate;
@@ -135,6 +137,22 @@ impl LlmClient {
     ) -> Result<CorrelationResult, ProviderError> {
         self.inner.propose_correlation_erased(txn_a, txn_b).await
     }
+
+    /// Ask the LLM to propose a deterministic rule based on a user's
+    /// manual categorization of a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`ProviderError`] from the underlying provider.
+    pub async fn propose_rule(
+        &self,
+        merchant_name: &str,
+        user_category: &str,
+    ) -> Result<ProposedRule, ProviderError> {
+        self.inner
+            .propose_rule_erased(merchant_name, user_category)
+            .await
+    }
 }
 
 // Manual dyn-compatible mirror of the subset of `LlmProvider` used by jobs.
@@ -151,6 +169,12 @@ trait ErasedLlmProvider {
         txn_a: &'a TransactionSummary,
         txn_b: &'a TransactionSummary,
     ) -> BoxFuture<'a, Result<CorrelationResult, ProviderError>>;
+
+    fn propose_rule_erased<'a>(
+        &'a self,
+        merchant_name: &'a str,
+        user_category: &'a str,
+    ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>>;
 }
 
 impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
@@ -169,6 +193,14 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
         txn_b: &'a TransactionSummary,
     ) -> BoxFuture<'a, Result<CorrelationResult, ProviderError>> {
         Box::pin(self.propose_correlation(txn_a, txn_b))
+    }
+
+    fn propose_rule_erased<'a>(
+        &'a self,
+        merchant_name: &'a str,
+        user_category: &'a str,
+    ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>> {
+        Box::pin(self.propose_rule(merchant_name, user_category))
     }
 }
 
