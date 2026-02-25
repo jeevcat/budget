@@ -20,8 +20,7 @@
         let
           cfg = config.services.budget;
 
-          # TOML config with non-secret values only
-          baseConfig = pkgs.writeText "budget-base-config.toml" ''
+          configFile = pkgs.writeText "budget-config.toml" ''
             database_url = "sqlite:budget.db?mode=rwc"
             llm_model = "${cfg.llmModel}"
             bank_provider = "enable_banking"
@@ -31,29 +30,17 @@
             host = "${cfg.host}"
             frontend_dir = "${cfg.package}/share/budget/frontend"
             gemini_api_key = "${cfg.geminiApiKey}"
+            secret_key = "${cfg.secretKey}"
+            enable_banking_app_id = "${cfg.enableBanking.appId}"
+            enable_banking_private_key_path = "${cfg.enableBanking.privateKeyFile}"
           '';
 
-          # Wrapper that writes config (merging secrets) and execs the binary.
-          # Uses $STATE_DIRECTORY (set by systemd) so it works with DynamicUser
-          # regardless of the actual dataDir path.
           startScript = pkgs.writeShellScript "budget-start" ''
             set -euo pipefail
             CONFIG_DIR="''${STATE_DIRECTORY:-${cfg.dataDir}}/config/budget"
             mkdir -p "$CONFIG_DIR"
-
-            SECRET_KEY="$(cat "$CREDENTIALS_DIRECTORY/secret-key")"
-            EB_KEY_PATH="$CREDENTIALS_DIRECTORY/eb-private-key"
-            EB_APP_ID="${cfg.enableBanking.appId}"
-
-            cp ${baseConfig} "$CONFIG_DIR/default-config.toml"
+            cp ${configFile} "$CONFIG_DIR/default-config.toml"
             chmod 600 "$CONFIG_DIR/default-config.toml"
-
-            cat >> "$CONFIG_DIR/default-config.toml" <<EOF
-            secret_key = "$SECRET_KEY"
-            enable_banking_app_id = "$EB_APP_ID"
-            enable_banking_private_key_path = "$EB_KEY_PATH"
-            EOF
-
             export XDG_CONFIG_HOME="''${STATE_DIRECTORY:-${cfg.dataDir}}/config"
             exec ${cfg.package}/bin/budget
           '';
@@ -85,9 +72,9 @@
               description = "Public URL for OAuth callbacks.";
             };
 
-            secretKeyFile = lib.mkOption {
-              type = lib.types.path;
-              description = "File containing the bearer token secret.";
+            secretKey = lib.mkOption {
+              type = lib.types.str;
+              description = "Bearer token secret for API authentication.";
             };
 
             enableBanking = {
@@ -138,11 +125,6 @@
                 StateDirectory = "budget";
                 ExecStart = startScript;
                 WorkingDirectory = cfg.dataDir;
-
-                LoadCredential = [
-                  "secret-key:${cfg.secretKeyFile}"
-                  "eb-private-key:${cfg.enableBanking.privateKeyFile}"
-                ];
 
                 # Hardening
                 NoNewPrivileges = true;
