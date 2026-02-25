@@ -139,7 +139,6 @@
                 StateDirectory = "budget";
                 ExecStart = startScript;
                 WorkingDirectory = cfg.dataDir;
-                ReadWritePaths = [ cfg.dataDir ];
 
                 LoadCredential = [
                   "secret-key:${cfg.secretKeyFile}"
