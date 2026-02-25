@@ -169,6 +169,7 @@
           fileset = lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./.)
             ./migrations
+            ./frontend
           ];
         };
         lib = pkgs.lib;
