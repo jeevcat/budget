@@ -180,6 +180,8 @@
           commonArgs
           // {
             inherit cargoArtifacts;
+            # Tests require a live PostgreSQL instance (sqlx::test)
+            doCheck = false;
 
             postInstall = ''
               mkdir -p $out/share/budget
