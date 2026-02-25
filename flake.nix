@@ -38,7 +38,7 @@
           # regardless of the actual dataDir path.
           startScript = pkgs.writeShellScript "budget-start" ''
             set -euo pipefail
-            CONFIG_DIR="$STATE_DIRECTORY/config/budget"
+            CONFIG_DIR="''${STATE_DIRECTORY:-${cfg.dataDir}}/config/budget"
             mkdir -p "$CONFIG_DIR"
 
             SECRET_KEY="$(cat "$CREDENTIALS_DIRECTORY/secret-key")"
@@ -54,7 +54,7 @@
             enable_banking_private_key_path = "$EB_KEY_PATH"
             EOF
 
-            export XDG_CONFIG_HOME="$STATE_DIRECTORY/config"
+            export XDG_CONFIG_HOME="''${STATE_DIRECTORY:-${cfg.dataDir}}/config"
             exec ${cfg.package}/bin/budget
           '';
         in
