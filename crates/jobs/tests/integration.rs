@@ -113,6 +113,7 @@ async fn seed_transaction(
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        suggested_category: None,
     };
     db::upsert_transaction(pool, &txn, None)
         .await

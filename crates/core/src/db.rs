@@ -149,6 +149,7 @@ fn row_to_transaction(row: &SqliteRow) -> Result<Transaction, sqlx::Error> {
         project_id: parse_uuid_opt(row, "project_id")?.map(ProjectId::from_uuid),
         correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
+        suggested_category: row.try_get("suggested_category")?,
     })
 }
 
@@ -296,8 +297,8 @@ pub async fn upsert_transaction(
         "INSERT INTO transactions
              (id, account_id, category_id, amount, original_amount, original_currency,
               merchant_name, description, posted_date, budget_month_id, project_id,
-              correlation_id, correlation_type, provider_transaction_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+              correlation_id, correlation_type, provider_transaction_id, suggested_category)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
              amount = excluded.amount,
              original_amount = excluded.original_amount,
@@ -320,6 +321,7 @@ pub async fn upsert_transaction(
     .bind(txn.correlation_id.map(|id| id.to_string()))
     .bind(txn.correlation_type.map(|ct| ct.to_string()))
     .bind(provider_transaction_id)
+    .bind(txn.suggested_category.as_deref())
     .execute(pool)
     .await?;
     Ok(())
@@ -334,7 +336,7 @@ pub async fn list_transactions(pool: &SqlitePool) -> Result<Vec<Transaction>, sq
     let rows = sqlx::query(
         "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                 merchant_name, description, posted_date, budget_month_id, project_id,
-                correlation_id, correlation_type
+                correlation_id, correlation_type, suggested_category
          FROM transactions
          ORDER BY posted_date DESC, merchant_name ASC",
     )
@@ -354,7 +356,7 @@ pub async fn get_uncategorized_transactions(
     let rows = sqlx::query(
         "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                 merchant_name, description, posted_date, budget_month_id, project_id,
-                correlation_id, correlation_type
+                correlation_id, correlation_type, suggested_category
          FROM transactions
          WHERE category_id IS NULL",
     )
@@ -377,7 +379,7 @@ pub async fn get_uncorrelated_transactions(
     let rows = sqlx::query(
         "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                 merchant_name, description, posted_date, budget_month_id, project_id,
-                correlation_id, correlation_type
+                correlation_id, correlation_type, suggested_category
          FROM transactions
          WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
     )
@@ -424,6 +426,61 @@ pub async fn update_transaction_correlation(
     Ok(())
 }
 
+/// Set the LLM-suggested category name on a transaction.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn update_transaction_suggested_category(
+    pool: &SqlitePool,
+    id: TransactionId,
+    suggested_category: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE transactions SET suggested_category = ?1 WHERE id = ?2")
+        .bind(suggested_category)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Count uncategorized transactions grouped by their LLM-suggested category.
+///
+/// Only includes transactions where `category_id IS NULL` and
+/// `suggested_category IS NOT NULL`. Results are ordered by count descending.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_suggestion_histogram(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT suggested_category, COUNT(*) as count
+         FROM transactions
+         WHERE category_id IS NULL AND suggested_category IS NOT NULL
+         GROUP BY suggested_category
+         ORDER BY count DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// List all distinct category names currently in the categories table.
+///
+/// Used to pass existing categories to the LLM so it maps to known names.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn list_category_names(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM categories ORDER BY name")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(|(name,)| name).collect())
+}
+
 /// Assign a transaction to a budget month.
 ///
 /// # Errors
@@ -454,7 +511,7 @@ pub async fn list_transactions_by_account(
     let rows = sqlx::query(
         "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                 merchant_name, description, posted_date, budget_month_id, project_id,
-                correlation_id, correlation_type
+                correlation_id, correlation_type, suggested_category
          FROM transactions
          WHERE account_id = ?1",
     )
@@ -1125,6 +1182,7 @@ mod tests {
             project_id: None,
             correlation_id: None,
             correlation_type: None,
+            suggested_category: None,
         }
     }
 

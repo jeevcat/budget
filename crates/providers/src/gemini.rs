@@ -107,25 +107,37 @@ impl LlmProvider for GeminiProvider {
         merchant_name: &str,
         amount: Decimal,
         description: Option<&str>,
+        existing_categories: &[String],
     ) -> Result<CategorizeResult, ProviderError> {
         let desc_line = description
             .map(|d| format!("Description: {d}\n"))
             .unwrap_or_default();
 
+        let categories_block = if existing_categories.is_empty() {
+            "Use hierarchical categories with \":\" as separator. Common examples:\n\
+             - Food:Groceries, Food:Restaurants, Food:Coffee\n\
+             - Housing:Rent, Housing:Utilities, Housing:Insurance\n\
+             - Transportation:Gas, Transportation:Public Transit, Transportation:Parking\n\
+             - Entertainment:Subscriptions, Entertainment:Movies\n\
+             - Shopping, Shopping:Clothing, Shopping:Electronics\n\
+             - Health:Pharmacy, Health:Doctor\n\
+             - Income:Salary, Income:Freelance\n\
+             - Transfers:P2P\n\
+             - Cash"
+                .to_owned()
+        } else {
+            let list = existing_categories.join(", ");
+            format!(
+                "You MUST use one of these existing categories: {list}\n\
+                 If none of these fit, you may propose a new hierarchical category using \":\" as separator, but prefer existing ones."
+            )
+        };
+
         let prompt = format!(
             r#"You are a transaction categorization engine for a personal budgeting tool.
 
 Given a bank transaction, classify it into exactly one category.
-Use hierarchical categories with ":" as separator. Common examples:
-- Food:Groceries, Food:Restaurants, Food:Coffee
-- Housing:Rent, Housing:Utilities, Housing:Insurance
-- Transportation:Gas, Transportation:Public Transit, Transportation:Parking
-- Entertainment:Subscriptions, Entertainment:Movies
-- Shopping, Shopping:Clothing, Shopping:Electronics
-- Health:Pharmacy, Health:Doctor
-- Income:Salary, Income:Freelance
-- Transfers:P2P
-- Cash
+{categories_block}
 
 Respond with a JSON object containing:
 - "category_name": string — the category (use ":" for hierarchy)
@@ -368,7 +380,12 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("WHOLE FOODS MARKET", dec!(72.34), Some("Weekly groceries"))
+            .categorize(
+                "WHOLE FOODS MARKET",
+                dec!(72.34),
+                Some("Weekly groceries"),
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Groceries");
@@ -390,7 +407,7 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("AMAZON", dec!(25.00), None)
+            .categorize("AMAZON", dec!(25.00), None, &[])
             .await
             .unwrap();
         assert!((result.confidence - 1.0).abs() < f64::EPSILON);
@@ -490,7 +507,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None).await;
+        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
         assert!(matches!(
             result,
             Err(ProviderError::AuthenticationFailed(_))
@@ -507,7 +524,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None).await;
+        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
         assert!(matches!(result, Err(ProviderError::RateLimited)));
     }
 
@@ -521,7 +538,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None).await;
+        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
         assert!(matches!(result, Err(ProviderError::ApiError { .. })));
     }
 
@@ -537,7 +554,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None).await;
+        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
 
@@ -554,7 +571,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None).await;
+        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
 }
@@ -583,7 +600,12 @@ mod live_tests {
     async fn live_categorize_grocery() {
         let provider = require_provider();
         let result = provider
-            .categorize("WHOLE FOODS MARKET #10234", dec!(87.43), Some("Groceries"))
+            .categorize(
+                "WHOLE FOODS MARKET #10234",
+                dec!(87.43),
+                Some("Groceries"),
+                &[],
+            )
             .await
             .unwrap();
 
@@ -605,7 +627,12 @@ mod live_tests {
     async fn live_categorize_subscription() {
         let provider = require_provider();
         let result = provider
-            .categorize("NETFLIX.COM", dec!(15.99), Some("Monthly subscription"))
+            .categorize(
+                "NETFLIX.COM",
+                dec!(15.99),
+                Some("Monthly subscription"),
+                &[],
+            )
             .await
             .unwrap();
 

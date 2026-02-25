@@ -53,6 +53,7 @@ pub struct Transaction {
     pub project_id: Option<ProjectId>,
     pub correlation_id: Option<TransactionId>,
     pub correlation_type: Option<CorrelationType>,
+    pub suggested_category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -32,9 +32,10 @@ fn find_budget_month_for_date(date: NaiveDate, months: &[BudgetMonth]) -> Option
 /// Recompute budget month boundaries from salary transactions, replace them
 /// in the database, and assign each transaction to its budget month.
 ///
-/// This handler is purely functional over the current transaction set: it
-/// re-derives all budget months from scratch so that late-arriving or
-/// recategorized transactions are handled correctly.
+/// This is the shared implementation used by both the standalone recompute
+/// handler and the pipeline step. Purely functional over the current
+/// transaction set: re-derives all budget months from scratch so that
+/// late-arriving or recategorized transactions are handled correctly.
 ///
 /// # Errors
 ///
@@ -43,17 +44,14 @@ fn find_budget_month_for_date(date: NaiveDate, months: &[BudgetMonth]) -> Option
 /// - The "Salary" category does not exist.
 /// - Budget month detection fails (e.g. no salary category configured).
 /// - Any database read or write fails.
-pub async fn handle_recompute_job(
-    _job: BudgetRecomputeJob,
-    pool: Data<SqlitePool>,
-) -> Result<(), BoxDynError> {
+pub(crate) async fn recompute_budgets(pool: &SqlitePool) -> Result<(), BoxDynError> {
     let config = load_config().map_err(|e| format!("config error: {e}"))?;
 
-    let transactions = db::list_transactions(&pool).await?;
-    let categories = db::list_categories(&pool).await?;
+    let transactions = db::list_transactions(pool).await?;
+    let categories = db::list_categories(pool).await?;
 
     // Resolve the salary category by well-known name
-    let salary_category = db::get_category_by_name(&pool, "Salary").await?;
+    let salary_category = db::get_category_by_name(pool, "Salary").await?;
     let salary_category_id = salary_category.map(|c| c.id);
 
     let budget_months = detect_budget_month_boundaries(
@@ -64,7 +62,7 @@ pub async fn handle_recompute_job(
     )?;
 
     // Atomically replace all budget months
-    db::replace_budget_months(&pool, &budget_months).await?;
+    db::replace_budget_months(pool, &budget_months).await?;
 
     // Assign each transaction to its budget month based on posted_date
     let mut assigned: u32 = 0;
@@ -72,7 +70,7 @@ pub async fn handle_recompute_job(
 
     for txn in &transactions {
         if let Some(month_id) = find_budget_month_for_date(txn.posted_date, &budget_months) {
-            db::update_transaction_budget_month(&pool, txn.id, month_id).await?;
+            db::update_transaction_budget_month(pool, txn.id, month_id).await?;
             assigned += 1;
         } else {
             unassigned += 1;
@@ -87,4 +85,16 @@ pub async fn handle_recompute_job(
     );
 
     Ok(())
+}
+
+/// Apalis handler that delegates to [`recompute_budgets`].
+///
+/// # Errors
+///
+/// Returns an error if budget recomputation fails.
+pub async fn handle_recompute_job(
+    _job: BudgetRecomputeJob,
+    pool: Data<SqlitePool>,
+) -> Result<(), BoxDynError> {
+    recompute_budgets(&pool).await
 }

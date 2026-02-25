@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::db;
@@ -20,11 +20,19 @@ pub struct CreateCategory {
     pub parent_id: Option<String>,
 }
 
+/// A single entry in the LLM suggestion histogram.
+#[derive(Serialize)]
+pub struct SuggestionEntry {
+    pub category_name: String,
+    pub count: i64,
+}
+
 /// Build the categories sub-router.
 ///
 /// Mounts:
 /// - `GET /` -- list all categories
 /// - `POST /` -- create a new category
+/// - `GET /suggestions` -- histogram of LLM-suggested categories
 /// - `DELETE /{id}` -- delete a category
 ///
 /// # Errors
@@ -33,6 +41,7 @@ pub struct CreateCategory {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/suggestions", get(suggestions))
         .route("/{id}", axum::routing::delete(remove))
 }
 
@@ -44,6 +53,28 @@ pub fn router() -> Router<AppState> {
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Category>>, AppError> {
     let categories = db::list_categories(&state.pool).await?;
     Ok(Json(categories))
+}
+
+/// Histogram of LLM-suggested category names for uncategorized transactions.
+///
+/// Returns entries sorted by count descending, allowing the user to see
+/// which categories the LLM recommends most and create them.
+///
+/// # Errors
+///
+/// Returns `AppError` if the database query fails.
+async fn suggestions(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SuggestionEntry>>, AppError> {
+    let histogram = db::get_suggestion_histogram(&state.pool).await?;
+    let entries = histogram
+        .into_iter()
+        .map(|(category_name, count)| SuggestionEntry {
+            category_name,
+            count,
+        })
+        .collect();
+    Ok(Json(entries))
 }
 
 /// Create a new category.

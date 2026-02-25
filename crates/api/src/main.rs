@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
+use apalis_workflow::Workflow;
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_jobs::{
     BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob,
-    SyncJob,
+    SyncJob, pipeline,
 };
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
@@ -22,7 +23,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use api::auth;
 use api::routes;
-use api::state::{AppState, JobStorage};
+use api::state::{AppState, JobStorage, PipelineStorage};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,37 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = init_llm_provider(&config);
 
-    // Workers for each job type (backend first, then data injection)
-    // clone() on pool and storages is justified: they are Arc-based handles
-    let sync_worker = WorkerBuilder::new("budget-sync")
-        .backend(SqliteStorage::<SyncJob, _, _>::new(&pool))
-        .data(pool.clone())
-        .data(bank_factory)
-        .build(budget_jobs::handle_sync_job);
-
-    let categorize_worker = WorkerBuilder::new("budget-categorize")
-        .backend(SqliteStorage::<CategorizeJob, _, _>::new(&pool))
-        .data(pool.clone())
-        .data(llm.clone())
-        .build(budget_jobs::handle_categorize_job);
-
-    let correlate_worker = WorkerBuilder::new("budget-correlate")
-        .backend(SqliteStorage::<CorrelateJob, _, _>::new(&pool))
-        .data(pool.clone())
-        .data(llm)
-        .build(budget_jobs::handle_correlate_job);
-
-    let recompute_worker = WorkerBuilder::new("budget-recompute")
-        .backend(SqliteStorage::<BudgetRecomputeJob, _, _>::new(&pool))
-        .data(pool.clone())
-        .build(budget_jobs::handle_recompute_job);
-
-    let noop_worker = WorkerBuilder::new("budget-no-op")
-        .backend(SqliteStorage::<NoOpJob, _, _>::new(&pool))
-        .build(budget_jobs::handle_noop_job);
-
-    tracing::info!("job queue initialized");
-
     let state = AppState {
         pool: pool.clone(),
         secret_key: config.secret_key,
@@ -83,39 +53,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
+        pipeline_storage: PipelineStorage::new(&pool),
         enable_banking_auth,
         host: config
             .host
             .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),
     };
 
-    // Protected API routes require a valid bearer token
-    let api_routes = Router::new()
-        .nest("/accounts", routes::accounts::router())
-        .nest("/transactions", routes::transactions::router())
-        .nest("/categories", routes::categories::router())
-        .nest("/rules", routes::rules::router())
-        .nest("/budgets", routes::budgets::router())
-        .nest("/projects", routes::projects::router())
-        .nest("/jobs", routes::jobs::router())
-        .nest("/connections", routes::connections::router())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_bearer_token,
-        ));
-
-    // Static frontend assets (served from workspace-root/frontend/)
-    let frontend_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend");
-
-    // Callback is unauthenticated — mounted before the /api nest
-    let app = Router::new()
-        .route("/health", get(health))
-        .merge(routes::connections::callback_router())
-        .nest("/api", api_routes)
-        .fallback_service(ServeDir::new(frontend_dir))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
+    let app = build_router(state);
+    let workers = build_workers(&pool, bank_factory, llm);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
 
@@ -123,21 +69,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = axum::serve(listener, app) => {
             if let Err(e) = res { tracing::error!(%e, "server error"); }
         }
-        res = sync_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "sync worker error"); }
+        res = workers => {
+            if let Err(e) = res { tracing::error!(%e, "worker error"); }
         }
-        res = categorize_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
-        }
-        res = correlate_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
-        }
-        res = recompute_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }
-        }
-        res = noop_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "noop worker error"); }
-        }
+        // clone() justified: SqlitePool is Arc-based; build_workers borrows pool
+        () = reclaim_stale_jobs_loop(pool.clone()) => {}
     }
 
     Ok(())
@@ -214,7 +150,47 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Err
     migrator.set_ignore_missing(true);
     migrator.run(pool).await?;
 
+    // No workers are active yet, so any "Running" jobs are stale locks from
+    // a previous process. Reset them so workers pick them up immediately.
+    let reset = sqlx::query(
+        "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL WHERE status = 'Running'",
+    )
+    .execute(pool)
+    .await?;
+    if reset.rows_affected() > 0 {
+        tracing::info!(count = reset.rows_affected(), "reset stale running jobs");
+    }
+
     Ok(())
+}
+
+/// Periodically reset jobs stuck in `Running` with a stale lock.
+///
+/// A lock older than 5 minutes indicates the worker died without completing.
+/// Resetting to `Pending` lets another worker pick the job up.
+async fn reclaim_stale_jobs_loop(pool: SqlitePool) {
+    const STALE_SECONDS: i64 = 300; // 5 minutes
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    loop {
+        interval.tick().await;
+        let cutoff = chrono::Utc::now().timestamp() - STALE_SECONDS;
+        match sqlx::query(
+            "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
+             WHERE status = 'Running' AND lock_at < ?",
+        )
+        .bind(cutoff)
+        .execute(&pool)
+        .await
+        {
+            Ok(res) if res.rows_affected() > 0 => {
+                tracing::info!(count = res.rows_affected(), "reclaimed stale jobs");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to reclaim stale jobs");
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Health check endpoint (unauthenticated).
@@ -275,6 +251,116 @@ fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
             LlmClient::new(MockLlmProvider::new())
         }
     }
+}
+
+/// Build the axum router with all API routes, auth middleware, and static file serving.
+fn build_router(state: AppState) -> Router {
+    let api_routes = Router::new()
+        .nest("/accounts", routes::accounts::router())
+        .nest("/transactions", routes::transactions::router())
+        .nest("/categories", routes::categories::router())
+        .nest("/rules", routes::rules::router())
+        .nest("/budgets", routes::budgets::router())
+        .nest("/projects", routes::projects::router())
+        .nest("/jobs", routes::jobs::router())
+        .nest("/connections", routes::connections::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer_token,
+        ));
+
+    let frontend_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend");
+
+    Router::new()
+        .route("/health", get(health))
+        .merge(routes::connections::callback_router())
+        .nest("/api", api_routes)
+        .fallback_service(ServeDir::new(frontend_dir))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+/// Create and run all apalis workers (individual jobs + pipeline workflow).
+///
+/// Returns a future that resolves when any worker errors out.
+async fn build_workers(
+    pool: &SqlitePool,
+    bank_factory: BankProviderFactory,
+    llm: LlmClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Pipeline workflow: sync -> categorize -> correlate -> recompute
+    let pipeline_backend = SqliteStorage::<Vec<u8>, _, _>::new(pool);
+    let pipeline_workflow = workflow_for(&pipeline_backend)
+        .and_then(pipeline::step_sync)
+        .and_then(pipeline::step_categorize)
+        .and_then(pipeline::step_correlate)
+        .and_then(pipeline::step_recompute);
+    let pipeline_worker = WorkerBuilder::new("budget-pipeline")
+        .backend(pipeline_backend)
+        .data(pool.clone())
+        .data(bank_factory.clone())
+        .data(llm.clone())
+        .build(pipeline_workflow);
+
+    // clone() on pool and storages is justified: they are Arc-based handles
+    let sync_worker = WorkerBuilder::new("budget-sync")
+        .backend(SqliteStorage::<SyncJob, _, _>::new(pool))
+        .data(pool.clone())
+        .data(bank_factory)
+        .build(budget_jobs::handle_sync_job);
+
+    let categorize_worker = WorkerBuilder::new("budget-categorize")
+        .backend(SqliteStorage::<CategorizeJob, _, _>::new(pool))
+        .data(pool.clone())
+        .data(llm.clone())
+        .build(budget_jobs::handle_categorize_job);
+
+    let correlate_worker = WorkerBuilder::new("budget-correlate")
+        .backend(SqliteStorage::<CorrelateJob, _, _>::new(pool))
+        .data(pool.clone())
+        .data(llm)
+        .build(budget_jobs::handle_correlate_job);
+
+    let recompute_worker = WorkerBuilder::new("budget-recompute")
+        .backend(SqliteStorage::<BudgetRecomputeJob, _, _>::new(pool))
+        .data(pool.clone())
+        .build(budget_jobs::handle_recompute_job);
+
+    let noop_worker = WorkerBuilder::new("budget-no-op")
+        .backend(SqliteStorage::<NoOpJob, _, _>::new(pool))
+        .build(budget_jobs::handle_noop_job);
+
+    tracing::info!("job queue initialized");
+
+    tokio::select! {
+        res = sync_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "sync worker error"); }
+        }
+        res = categorize_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
+        }
+        res = correlate_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
+        }
+        res = recompute_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }
+        }
+        res = noop_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "noop worker error"); }
+        }
+        res = pipeline_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "pipeline worker error"); }
+        }
+    }
+
+    Ok(())
+}
+
+/// Create a [`Workflow`] whose Backend type parameter is inferred from a
+/// reference to the concrete backend. This avoids naming the full
+/// `SqliteStorage<Vec<u8>, JsonCodec<Vec<u8>>, SqliteFetcher>` type.
+fn workflow_for<T, B>(_backend: &B) -> Workflow<T, T, B> {
+    Workflow::new("full-sync-pipeline")
 }
 
 /// Build the Enable Banking auth provider and config from settings.

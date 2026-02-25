@@ -8,7 +8,7 @@ use tower::ServiceExt;
 
 use api::auth;
 use api::routes;
-use api::state::{AppState, JobStorage};
+use api::state::{AppState, JobStorage, PipelineStorage};
 
 use budget_core::db;
 use budget_core::models::{
@@ -47,6 +47,7 @@ async fn setup() -> (Router, SqlitePool) {
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         recompute_storage: JobStorage::new(&pool),
+        pipeline_storage: PipelineStorage::new(&pool),
         enable_banking_auth: None,
         host: "http://localhost:3000".to_owned(),
     };
@@ -302,6 +303,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        suggested_category: None,
     };
     db::upsert_transaction(&pool, &txn_categorized, Some("txn-cat-1"))
         .await
@@ -321,6 +323,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        suggested_category: None,
     };
     db::upsert_transaction(&pool, &txn_uncategorized, Some("txn-uncat-1"))
         .await
@@ -381,6 +384,7 @@ async fn transactions_categorize_success() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        suggested_category: None,
     };
     db::upsert_transaction(&pool, &txn, Some("txn-to-categorize"))
         .await
@@ -961,6 +965,15 @@ async fn jobs_recompute_returns_202() {
     let (app, _pool) = setup().await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/recompute")).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn jobs_pipeline_returns_202() {
+    let (app, _pool) = setup().await;
+    let account_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, post_empty(&format!("/api/jobs/pipeline/{account_id}"))).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 

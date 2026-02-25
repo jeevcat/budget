@@ -22,6 +22,20 @@ struct JobRecord {
     done_at: Option<String>,
     last_result: Option<String>,
     lock_by: Option<String>,
+    /// For pipeline jobs, the current step index (0=sync, 1=categorize, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pipeline_step: Option<u64>,
+}
+
+/// Extract the pipeline step index from the apalis metadata JSON.
+///
+/// The metadata stores `WorkflowContext { step_index }` under the fully
+/// qualified type name key. Returns `None` for non-pipeline jobs.
+fn extract_pipeline_step(metadata: &str) -> Option<u64> {
+    let obj: serde_json::Value = serde_json::from_str(metadata).ok()?;
+    obj.get("apalis_workflow::sequential::context::WorkflowContext")?
+        .get("step_index")?
+        .as_u64()
 }
 
 /// Convert a Unix timestamp (seconds) to an ISO 8601 string.
@@ -39,6 +53,7 @@ fn unix_to_iso(ts: i64) -> String {
 /// - `POST /categorize` -- enqueue a categorization job
 /// - `POST /correlate` -- enqueue a correlation job
 /// - `POST /recompute` -- enqueue a budget recomputation job
+/// - `POST /pipeline/{account_id}` -- enqueue a full-sync pipeline
 ///
 /// # Errors
 ///
@@ -50,6 +65,7 @@ pub fn router() -> Router<AppState> {
         .route("/categorize", post(trigger_categorize))
         .route("/correlate", post(trigger_correlate))
         .route("/recompute", post(trigger_recompute))
+        .route("/pipeline/{account_id}", post(trigger_pipeline))
 }
 
 /// List recent jobs from the Apalis `Jobs` table.
@@ -60,8 +76,8 @@ pub fn router() -> Router<AppState> {
 ///
 /// Returns `AppError` on database failure.
 async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, String, i64, i64, i64, Option<i64>, Option<String>, Option<String>)>(
-        "SELECT id, job_type, status, attempts, max_attempts, run_at, done_at, last_result, lock_by \
+    let rows = sqlx::query_as::<_, (String, String, String, i64, i64, i64, Option<i64>, Option<String>, Option<String>, Option<String>)>(
+        "SELECT id, job_type, status, attempts, max_attempts, run_at, done_at, last_result, lock_by, metadata \
          FROM Jobs ORDER BY run_at DESC LIMIT 100",
     )
     .fetch_all(&state.pool)
@@ -80,7 +96,9 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
                 done_at,
                 last_result,
                 lock_by,
+                metadata,
             )| {
+                let pipeline_step = metadata.as_deref().and_then(extract_pipeline_step);
                 JobRecord {
                     id,
                     job_type,
@@ -91,6 +109,7 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
                     done_at: done_at.map(unix_to_iso),
                     last_result,
                     lock_by,
+                    pipeline_step,
                 }
             },
         )
@@ -161,6 +180,26 @@ async fn trigger_recompute(State(state): State<AppState>) -> Result<StatusCode, 
     state
         .recompute_storage
         .push(BudgetRecomputeJob)
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Enqueue a full-sync pipeline (sync, categorize, correlate, recompute)
+/// for the specified account.
+///
+/// Returns 202 Accepted when the pipeline is successfully started.
+///
+/// # Errors
+///
+/// Returns `AppError` if the pipeline cannot be enqueued.
+async fn trigger_pipeline(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    state
+        .pipeline_storage
+        .push_start(account_id)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::ACCEPTED)

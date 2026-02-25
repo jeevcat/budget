@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 apalis = { workspace = true }
+apalis-workflow = { workspace = true }
 budget-core = { workspace = true }
 budget-providers = { workspace = true }
 chrono = { workspace = true }

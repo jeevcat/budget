@@ -212,7 +212,9 @@ function Transactions() {
                 <td>
                   ${
                     categoryName(catMap, t.category_id) ??
-                    html`<span class="badge secondary">uncategorized</span>`
+                    (t.suggested_category
+                      ? html`<span class="badge" title="LLM suggestion">${t.suggested_category}</span>`
+                      : html`<span class="badge secondary">uncategorized</span>`)
                   }
                   ${
                     t.correlation_type
@@ -236,13 +238,19 @@ function Transactions() {
 
 function Categories() {
   const [categories, setCategories] = useState(null);
+  const [suggestions, setSuggestions] = useState(null);
   const [error, setError] = useState(null);
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
   const [adding, setAdding] = useState(false);
 
   function load() {
-    api.get("/categories").then(setCategories).catch(setError);
+    Promise.all([api.get("/categories"), api.get("/categories/suggestions")])
+      .then(([c, s]) => {
+        setCategories(c);
+        setSuggestions(s);
+      })
+      .catch(setError);
   }
 
   useEffect(() => {
@@ -277,10 +285,40 @@ function Categories() {
     }
   }
 
+  async function acceptSuggestion(categoryName) {
+    setAdding(true);
+    try {
+      const parts = categoryName.split(":");
+      let parentIdForNew;
+      if (parts.length > 1) {
+        const parentName = parts.slice(0, -1).join(":");
+        const existingParent = (categories ?? []).find(
+          (c) => c.name === parentName,
+        );
+        if (existingParent) {
+          parentIdForNew = existingParent.id;
+        } else {
+          const created = await api.post("/categories", { name: parentName });
+          parentIdForNew = created.id;
+        }
+      }
+      await api.post("/categories", {
+        name: categoryName,
+        parent_id: parentIdForNew,
+      });
+      load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setAdding(false);
+    }
+  }
+
   if (error) return html`<p class="muted">${error.message}</p>`;
   if (!categories) return html`<p class="muted">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const existingNames = new Set(categories.map((c) => c.name));
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
   const childrenOf = (pid) => categories.filter((c) => c.parent_id === pid);
 
@@ -292,11 +330,57 @@ function Categories() {
     }
   }
 
+  const pendingSuggestions = (suggestions ?? []).filter(
+    (s) => !existingNames.has(s.category_name),
+  );
+
   return html`
     <h2>Categories</h2>
     <p class="muted" style="margin-bottom:1rem">
       ${categories.length} categor${categories.length !== 1 ? "ies" : "y"}
     </p>
+
+    ${
+      pendingSuggestions.length > 0 &&
+      html`
+        <div style="margin-bottom:1.5rem">
+          <h3>LLM Suggestions</h3>
+          <p class="muted" style="margin-bottom:0.5rem">
+            The LLM suggested these categories for uncategorized transactions.
+            Accept to create the category, then re-run categorize.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Suggested Category</th>
+                <th>Transactions</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pendingSuggestions.map(
+                (s) => html`
+                  <tr>
+                    <td><code>${s.category_name}</code></td>
+                    <td class="mono">${s.count}</td>
+                    <td style="text-align:right">
+                      <button
+                        data-variant="primary"
+                        class="small"
+                        onClick=${() => acceptSuggestion(s.category_name)}
+                        disabled=${adding}
+                      >
+                        Accept
+                      </button>
+                    </td>
+                  </tr>
+                `,
+              )}
+            </tbody>
+          </table>
+        </div>
+      `
+    }
 
     <form style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem" onSubmit=${handleAdd}>
       <input
@@ -1264,7 +1348,7 @@ function Jobs() {
 
   async function triggerSync() {
     if (!syncAccountId) return;
-    await trigger(`/jobs/sync/${syncAccountId}`, "sync");
+    await trigger(`/jobs/pipeline/${syncAccountId}`, "sync");
   }
 
   function statusBadge(status) {
@@ -1274,12 +1358,20 @@ function Jobs() {
     return "";
   }
 
-  function friendlyType(jobType) {
-    const name = jobType.includes("::") ? jobType.split("::").pop() : jobType;
+  const PIPELINE_STEPS = ["Sync", "Categorize", "Correlate", "Recompute"];
+
+  function friendlyType(job) {
+    const name = job.job_type.includes("::")
+      ? job.job_type.split("::").pop()
+      : job.job_type;
     if (name === "SyncJob") return "Sync";
     if (name === "CategorizeJob") return "Categorize";
     if (name === "CorrelateJob") return "Correlate";
     if (name === "BudgetRecomputeJob") return "Recompute";
+    if (name === "Vec<u8>" || job.job_type.includes("Vec<u8>")) {
+      const step = PIPELINE_STEPS[job.pipeline_step] ?? "?";
+      return `Pipeline / ${step}`;
+    }
     return name;
   }
 
@@ -1368,7 +1460,7 @@ function Jobs() {
                   (j) => html`
                     <tr>
                       <td class="mono" title=${j.id}>${j.id.slice(0, 8)}</td>
-                      <td>${friendlyType(j.job_type)}</td>
+                      <td>${friendlyType(j)}</td>
                       <td>
                         <span class="badge ${statusBadge(j.status)}">${j.status}</span>
                       </td>

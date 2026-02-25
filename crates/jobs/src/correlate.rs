@@ -53,13 +53,12 @@ fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
 /// # Errors
 ///
 /// Returns an error if any database query or LLM call fails.
-pub async fn handle_correlate_job(
-    _job: CorrelateJob,
-    pool: Data<SqlitePool>,
-    llm: Data<LlmClient>,
+pub(crate) async fn correlate_transactions(
+    pool: &SqlitePool,
+    llm: &LlmClient,
 ) -> Result<(), BoxDynError> {
     // -- Compile correlation rules -------------------------------------------
-    let raw_rules = db::list_rules_by_type(&pool, RuleType::Correlation).await?;
+    let raw_rules = db::list_rules_by_type(pool, RuleType::Correlation).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
         .iter()
         .filter_map(|rule| match compile_rule_pattern(rule) {
@@ -72,7 +71,7 @@ pub async fn handle_correlate_job(
         .collect();
 
     // -- Load uncorrelated transactions --------------------------------------
-    let uncorrelated = db::get_uncorrelated_transactions(&pool).await?;
+    let uncorrelated = db::get_uncorrelated_transactions(pool).await?;
     if uncorrelated.is_empty() {
         tracing::info!("no uncorrelated transactions, nothing to do");
         return Ok(());
@@ -108,7 +107,7 @@ pub async fn handle_correlate_job(
         if let Some((matched_id, corr_type)) =
             evaluate_correlation_rules(txn, &candidates, &compiled_rules)
         {
-            link_pair(&pool, txn.id, matched_id, corr_type).await?;
+            link_pair(pool, txn.id, matched_id, corr_type).await?;
             paired.insert(txn.id);
             paired.insert(matched_id);
             by_rule += 1;
@@ -133,7 +132,7 @@ pub async fn handle_correlate_job(
                 && let Some(ref provider_corr_type) = result.correlation_type
             {
                 let domain_type = to_domain_correlation_type(provider_corr_type);
-                link_pair(&pool, txn.id, candidate.id, domain_type).await?;
+                link_pair(pool, txn.id, candidate.id, domain_type).await?;
                 paired.insert(txn.id);
                 paired.insert(candidate.id);
                 by_llm += 1;
@@ -156,6 +155,19 @@ pub async fn handle_correlate_job(
     );
 
     Ok(())
+}
+
+/// Apalis handler that delegates to [`correlate_transactions`].
+///
+/// # Errors
+///
+/// Returns an error if correlation fails.
+pub async fn handle_correlate_job(
+    _job: CorrelateJob,
+    pool: Data<SqlitePool>,
+    llm: Data<LlmClient>,
+) -> Result<(), BoxDynError> {
+    correlate_transactions(&pool, &llm).await
 }
 
 /// Persist a bidirectional correlation link between two transactions.

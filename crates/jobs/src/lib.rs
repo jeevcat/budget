@@ -13,6 +13,7 @@ use budget_providers::{
 
 pub mod categorize;
 pub mod correlate;
+pub mod pipeline;
 pub mod recompute;
 pub mod sync;
 
@@ -182,6 +183,9 @@ impl LlmClient {
 
     /// Classify a transaction by merchant name, amount, and description.
     ///
+    /// When `existing_categories` is non-empty, the LLM is instructed to
+    /// prefer these known names rather than inventing new ones.
+    ///
     /// # Errors
     ///
     /// Propagates any [`ProviderError`] from the underlying provider.
@@ -190,9 +194,10 @@ impl LlmClient {
         merchant_name: &str,
         amount: Decimal,
         description: Option<&str>,
+        existing_categories: &[String],
     ) -> Result<CategorizeResult, ProviderError> {
         self.inner
-            .categorize_erased(merchant_name, amount, description)
+            .categorize_erased(merchant_name, amount, description, existing_categories)
             .await
     }
 
@@ -234,6 +239,7 @@ trait ErasedLlmProvider {
         merchant_name: &'a str,
         amount: Decimal,
         description: Option<&'a str>,
+        existing_categories: &'a [String],
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>>;
 
     fn propose_correlation_erased<'a>(
@@ -255,8 +261,9 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
         merchant_name: &'a str,
         amount: Decimal,
         description: Option<&'a str>,
+        existing_categories: &'a [String],
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>> {
-        Box::pin(self.categorize(merchant_name, amount, description))
+        Box::pin(self.categorize(merchant_name, amount, description, existing_categories))
     }
 
     fn propose_correlation_erased<'a>(

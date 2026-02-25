@@ -58,6 +58,7 @@ pub trait LlmProvider {
         merchant_name: &str,
         amount: Decimal,
         description: Option<&str>,
+        existing_categories: &[String],
     ) -> Result<CategorizeResult, ProviderError>;
 
     async fn propose_correlation(

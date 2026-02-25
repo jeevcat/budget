@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
+use apalis_workflow::WorkflowSink;
 use budget_jobs::{BudgetRecomputeJob, CategorizeJob, CorrelateJob, SyncJob};
 use budget_providers::EnableBankingAuth;
 use sqlx::SqlitePool;
@@ -61,6 +62,37 @@ impl_push!(CategorizeJob);
 impl_push!(CorrelateJob);
 impl_push!(BudgetRecomputeJob);
 
+/// Storage wrapper for pushing jobs into the full-sync pipeline workflow.
+///
+/// Internally creates a `SqliteStorage` and uses `WorkflowSink::push_start`
+/// to enqueue the initial pipeline step.
+#[derive(Clone)]
+pub struct PipelineStorage {
+    pool: SqlitePool,
+}
+
+impl PipelineStorage {
+    /// Create a new pipeline storage backed by the given pool.
+    #[must_use]
+    pub fn new(pool: &SqlitePool) -> Self {
+        // clone() justified: SqlitePool is Arc-based
+        Self { pool: pool.clone() }
+    }
+
+    /// Start a full-sync pipeline for the given account.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stringified error if the job cannot be enqueued.
+    pub async fn push_start(&self, account_id: String) -> Result<(), String> {
+        let mut storage = SqliteStorage::<Vec<u8>, _, _>::new(&self.pool);
+        storage
+            .push_start(account_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// Shared application state passed to all route handlers via axum's State extractor.
 ///
 /// Each `JobStorage` wraps a cloned `SqlitePool` handle internally,
@@ -79,6 +111,8 @@ pub struct AppState {
     pub correlate_storage: JobStorage<CorrelateJob>,
     /// Job queue storage for budget recomputation jobs.
     pub recompute_storage: JobStorage<BudgetRecomputeJob>,
+    /// Storage for enqueuing full-sync pipeline workflows.
+    pub pipeline_storage: PipelineStorage,
     /// Enable Banking auth provider (None if not configured).
     pub enable_banking_auth: Option<Arc<EnableBankingAuth>>,
     /// Public base URL (e.g. `https://budget.example.com`). Derived from
