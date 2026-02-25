@@ -63,8 +63,7 @@
 
             databaseUrl = lib.mkOption {
               type = lib.types.str;
-              default = "sqlite:budget.db?mode=rwc";
-              description = "Database connection URL (sqlite: or postgres://).";
+              description = "PostgreSQL connection URL.";
             };
 
             dataDir = lib.mkOption {
@@ -171,23 +170,16 @@
           ];
           buildInputs = with pkgs; [
             openssl
-            sqlite
             postgresql
           ];
         };
 
-        cargoArtifacts = craneLib.buildDepsOnly (
-          commonArgs
-          // {
-            cargoExtraArgs = "--features postgres --no-default-features";
-          }
-        );
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         budget = craneLib.buildPackage (
           commonArgs
           // {
             inherit cargoArtifacts;
-            cargoExtraArgs = "--features postgres --no-default-features";
 
             postInstall = ''
               mkdir -p $out/share/budget
