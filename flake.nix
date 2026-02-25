@@ -196,6 +196,10 @@
               # Tests require a live PostgreSQL instance (sqlx::test)
               doCheck = false;
 
+              # Use flake's commit timestamp for Last-Modified headers instead of
+              # Nix's default 1980-01-01 reproducibility timestamp
+              env.SOURCE_DATE_EPOCH = toString self.lastModified;
+
               postInstall = ''
                 mkdir -p $out/share/budget
                 cp -r frontend $out/share/budget/frontend
