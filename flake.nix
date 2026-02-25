@@ -19,7 +19,6 @@
         { config, lib, pkgs, ... }:
         let
           cfg = config.services.budget;
-          configDir = "${cfg.dataDir}/config";
 
           # TOML config with non-secret values only
           baseConfig = pkgs.writeText "budget-base-config.toml" ''
@@ -33,25 +32,31 @@
             frontend_dir = "${cfg.package}/share/budget/frontend"
           '';
 
-          # Script to merge secrets into config at runtime
+          # Script to merge secrets into config at runtime.
+          # Uses $STATE_DIRECTORY (set by systemd) so it works with DynamicUser
+          # regardless of the actual dataDir path.
           writeConfig = pkgs.writeShellScript "budget-write-config" ''
             set -euo pipefail
-            mkdir -p "${configDir}/budget"
+            CONFIG_DIR="$STATE_DIRECTORY/config/budget"
+            mkdir -p "$CONFIG_DIR"
 
             SECRET_KEY="$(cat "$CREDENTIALS_DIRECTORY/secret-key")"
             EB_KEY_PATH="$CREDENTIALS_DIRECTORY/eb-private-key"
             GEMINI_KEY="$(cat "$CREDENTIALS_DIRECTORY/gemini-api-key")"
             EB_APP_ID="${cfg.enableBanking.appId}"
 
-            cp ${baseConfig} "${configDir}/budget/default-config.toml"
-            chmod 600 "${configDir}/budget/default-config.toml"
+            cp ${baseConfig} "$CONFIG_DIR/default-config.toml"
+            chmod 600 "$CONFIG_DIR/default-config.toml"
 
-            cat >> "${configDir}/budget/default-config.toml" <<EOF
+            cat >> "$CONFIG_DIR/default-config.toml" <<EOF
             secret_key = "$SECRET_KEY"
             enable_banking_app_id = "$EB_APP_ID"
             enable_banking_private_key_path = "$EB_KEY_PATH"
             gemini_api_key = "$GEMINI_KEY"
             EOF
+
+            # Write env file for the main process
+            echo "XDG_CONFIG_HOME=$STATE_DIRECTORY/config" > "$STATE_DIRECTORY/budget.env"
           '';
         in
         {
@@ -136,7 +141,7 @@
                 ExecStart = "${cfg.package}/bin/budget";
                 WorkingDirectory = cfg.dataDir;
                 ReadWritePaths = [ cfg.dataDir ];
-                Environment = [ "XDG_CONFIG_HOME=${configDir}" ];
+                EnvironmentFile = "%S/budget/budget.env";
 
                 LoadCredential = [
                   "secret-key:${cfg.secretKeyFile}"
