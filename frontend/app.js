@@ -162,7 +162,7 @@ function Dashboard() {
                 <td class="mono">${s.spent}</td>
                 <td class="mono">${s.remaining}</td>
                 <td>
-                  <span class="badge ${paceBadge(s.pace)}">${s.pace}</span>
+                  <span class="chip ${paceBadge(s.pace)}">${s.pace}</span>
                 </td>
               </tr>
             `,
@@ -188,9 +188,9 @@ function CategoryBadge({ catMap, id, suggested }) {
     return html`<span>${label.short}</span>`;
   }
   if (suggested) {
-    return html`<span class="badge" title="LLM suggestion">${suggested}</span>`;
+    return html`<span class="chip" title="LLM suggestion">${suggested}</span>`;
   }
-  return html`<span class="badge secondary">uncategorized</span>`;
+  return html`<span class="chip outline warning">uncategorized</span>`;
 }
 
 function TxnDetail({ txn, catMap, acctMap, onClose }) {
@@ -226,7 +226,7 @@ function TxnDetail({ txn, catMap, acctMap, onClose }) {
             ${
               txn.correlation_type
                 ? html`
-              <dt>Correlation</dt><dd><span class="badge">${txn.correlation_type}</span></dd>
+              <dt>Correlation</dt><dd><span class="chip outline">${txn.correlation_type}</span></dd>
             `
                 : null
             }
@@ -347,6 +347,32 @@ function Transactions() {
       </span>
     </div>
 
+    ${
+      (filterCat || filterAcct) &&
+      html`
+      <div class="chip-group" style="margin-bottom:0.75rem">
+        ${
+          filterCat &&
+          html`
+          <button class="chip" onClick=${() => setFilterCat("")}>
+            <span>${filterCat === "__none" ? "Uncategorized" : `Category: ${categoryName(catMap, filterCat)}`}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+        ${
+          filterAcct &&
+          html`
+          <button class="chip" onClick=${() => setFilterAcct("")}>
+            <span>Account: ${acctMap[filterAcct]?.name ?? filterAcct}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+      </div>
+    `
+    }
+
     <div class="table txn-table">
       <table>
         <thead>
@@ -372,7 +398,7 @@ function Transactions() {
                   <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
                   ${
                     t.correlation_type
-                      ? html`<span class="badge">${t.correlation_type}</span>`
+                      ? html`<span class="chip outline">${t.correlation_type}</span>`
                       : null
                   }
                 </td>
@@ -404,6 +430,7 @@ function Categories() {
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
   const [adding, setAdding] = useState(false);
+  const [selectedSuggestions, setSelectedSuggestions] = useState(new Set());
 
   function load() {
     Promise.all([api.get("/categories"), api.get("/categories/suggestions")])
@@ -446,27 +473,43 @@ function Categories() {
     }
   }
 
-  async function acceptSuggestion(categoryName) {
+  async function createSuggestedCategory(catName) {
+    const parts = catName.split(":");
+    let parentIdForNew;
+    if (parts.length > 1) {
+      const parentName = parts.slice(0, -1).join(":");
+      const existingParent = (categories ?? []).find(
+        (c) => c.name === parentName,
+      );
+      if (existingParent) {
+        parentIdForNew = existingParent.id;
+      } else {
+        const created = await api.post("/categories", { name: parentName });
+        parentIdForNew = created.id;
+      }
+    }
+    await api.post("/categories", {
+      name: catName,
+      parent_id: parentIdForNew,
+    });
+  }
+
+  function toggleSuggestion(catName) {
+    setSelectedSuggestions((prev) => {
+      const next = new Set(prev);
+      if (next.has(catName)) next.delete(catName);
+      else next.add(catName);
+      return next;
+    });
+  }
+
+  async function acceptSelected() {
     setAdding(true);
     try {
-      const parts = categoryName.split(":");
-      let parentIdForNew;
-      if (parts.length > 1) {
-        const parentName = parts.slice(0, -1).join(":");
-        const existingParent = (categories ?? []).find(
-          (c) => c.name === parentName,
-        );
-        if (existingParent) {
-          parentIdForNew = existingParent.id;
-        } else {
-          const created = await api.post("/categories", { name: parentName });
-          parentIdForNew = created.id;
-        }
+      for (const catName of selectedSuggestions) {
+        await createSuggestedCategory(catName);
       }
-      await api.post("/categories", {
-        name: categoryName,
-        parent_id: parentIdForNew,
-      });
+      setSelectedSuggestions(new Set());
       load();
     } catch (err) {
       setError(err);
@@ -508,37 +551,34 @@ function Categories() {
           <h3>LLM Suggestions</h3>
           <p class="text-light" style="margin-bottom:0.5rem">
             The LLM suggested these categories for uncategorized transactions.
-            Accept to create the category, then re-run categorize.
+            Select to accept, then re-run categorize.
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Suggested Category</th>
-                <th>Transactions</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${pendingSuggestions.map(
-                (s) => html`
-                  <tr>
-                    <td><code>${s.category_name}</code></td>
-                    <td class="mono">${s.count}</td>
-                    <td style="text-align:right">
-                      <button
-                        data-variant="primary"
-                        class="small"
-                        onClick=${() => acceptSuggestion(s.category_name)}
-                        disabled=${adding}
-                      >
-                        Accept
-                      </button>
-                    </td>
-                  </tr>
-                `,
-              )}
-            </tbody>
-          </table>
+          <div class="chip-group" role="group" aria-label="Suggested categories" style="margin-bottom:0.75rem">
+            ${pendingSuggestions.map(
+              (s) => html`
+                <button
+                  class="chip"
+                  aria-pressed=${selectedSuggestions.has(s.category_name) ? "true" : "false"}
+                  onClick=${() => toggleSuggestion(s.category_name)}
+                  title="${s.count} transaction${s.count !== 1 ? "s" : ""}"
+                >
+                  ${s.category_name}
+                </button>
+              `,
+            )}
+          </div>
+          ${
+            selectedSuggestions.size > 0 &&
+            html`
+            <button
+              data-variant="primary"
+              onClick=${acceptSelected}
+              disabled=${adding}
+            >
+              ${adding ? "Accepting..." : `Accept ${selectedSuggestions.size} Selected`}
+            </button>
+          `
+          }
         </div>
       `
     }
@@ -708,11 +748,6 @@ function Rules() {
   );
   const correlationRules = rules.filter((r) => r.rule_type === "correlation");
 
-  function typeBadge(ruleType) {
-    if (ruleType === "categorization") return "success";
-    return "secondary";
-  }
-
   function fieldLabel(field) {
     if (field === "amount_range") return "amount range";
     return field;
@@ -801,7 +836,7 @@ function Rules() {
         <td>
           <div class="hstack">
             <span class="mono" style="font-size:0.8rem;min-width:1.5rem;text-align:right">${rule.priority}</span>
-            <span class="badge ${typeBadge(rule.rule_type)}"
+            <span class="chip outline ${rule.rule_type === "categorization" ? "success" : ""}"
               >${rule.rule_type}</span
             >
             <span class="text-light">${fieldLabel(rule.match_field)}</span>
@@ -1017,9 +1052,7 @@ function Budgets() {
                   <tr>
                     <td>${categoryName(catMap, bp.category_id)}</td>
                     <td>
-                      <span class="badge ${bp.period_type === "monthly" ? "" : "secondary"}">
-                        ${bp.period_type}
-                      </span>
+                      <span class="chip outline">${bp.period_type}</span>
                     </td>
                     <td class="mono">${Number(bp.amount).toFixed(2)}</td>
                     <td>
@@ -1226,14 +1259,14 @@ function Projects() {
                     ${
                       p.end_date
                         ? html`<span class="mono">${p.end_date}</span>`
-                        : html`<span class="badge success">ongoing</span>`
+                        : html`<span class="chip success">ongoing</span>`
                     }
                   </td>
                   <td>
                     ${
                       p.budget_amount != null
                         ? html`<span class="mono">${Number(p.budget_amount).toFixed(2)}</span>`
-                        : html`<span class="badge secondary">no budget</span>`
+                        : html`<span class="chip outline">no budget</span>`
                     }
                   </td>
                   <td>
@@ -1369,7 +1402,7 @@ function Connections() {
                     <tr>
                       <td>${c.institution_name}</td>
                       <td>
-                        <span class="badge ${statusBadge(c.status)}">${c.status}</span>
+                        <span class="chip ${statusBadge(c.status)}">${c.status}</span>
                       </td>
                       <td class="mono">${c.valid_until}</td>
                       <td>${accountCount(c.id)}</td>
@@ -1578,7 +1611,7 @@ function Jobs() {
         <span class="queue-card-title">${card.title}</span>
         ${
           c.failed > 0
-            ? html`<span class="badge danger">${c.failed} failed</span>`
+            ? html`<span class="chip danger">${c.failed} failed</span>`
             : null
         }
         ${
@@ -1613,15 +1646,9 @@ function Jobs() {
               `
         }
         <span class="queue-card-desc">${card.desc}</span>
-        <div class="queue-stat-row">
-          <div class="queue-stat">
-            <span class="queue-stat-label">Active</span>
-            <span class="queue-stat-value">${c.active}</span>
-          </div>
-          <div class="queue-stat">
-            <span class="queue-stat-label">Waiting</span>
-            <span class="queue-stat-value">${c.waiting}</span>
-          </div>
+        <div class="chip-group" style="width:100%;margin-top:0.25rem">
+          <span class="chip outline"><span class="text-light">Active</span> <span class="mono">${c.active}</span></span>
+          <span class="chip outline"><span class="text-light">Waiting</span> <span class="mono">${c.waiting}</span></span>
         </div>
       </div>
     `;

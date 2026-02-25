@@ -54,30 +54,11 @@
   margin-top: -0.25rem;
 }
 
-.queue-stat-row {
+.chip-group {
   display: flex;
-  gap: 0.5rem;
-  width: 100%;
-  margin-top: 0.25rem;
-}
-
-.queue-stat {
-  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.85rem;
-}
-
-.queue-stat-label {
-  color: var(--muted-foreground);
-}
-
-.queue-stat-value {
-  font-weight: 600;
-  font-family: var(--font-mono);
 }
 
 /* Transactions */
