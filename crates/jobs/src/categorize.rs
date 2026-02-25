@@ -48,11 +48,6 @@ pub(crate) async fn categorize_fan_out(
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
 
-    #[cfg(feature = "sqlite")]
-    let mut storage =
-        apalis_sqlite::SqliteStorage::<CategorizeTransactionJob, _, _>::new(apalis_pool);
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
     let mut storage = apalis_postgres::PostgresStorage::new(apalis_pool);
 
     for txn in &uncategorized {

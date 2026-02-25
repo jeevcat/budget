@@ -12,9 +12,8 @@ name = "budget"
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "postgres", "any", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono", "rust_decimal"] }
 apalis = "1.0.0-rc.4"
-apalis-sqlite = { version = "1.0.0-rc.4", features = ["tokio"] }
 apalis-postgres = { version = "1.0.0-rc.4", features = ["tokio"] }
 apalis-workflow = "0.1.0-rc.4"
 serde = { version = "1", features = ["derive"] }
@@ -37,7 +36,7 @@ jsonwebtoken = "9"
 
 # Internal crates
 budget-core = { path = "crates/core" }
-budget-jobs = { path = "crates/jobs", default-features = false }
+budget-jobs = { path = "crates/jobs" }
 budget-providers = { path = "crates/providers" }
 
 [workspace.lints.rust]

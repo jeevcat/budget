@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +28,7 @@ pub struct Connection {
     pub provider: String,
     pub provider_session_id: String,
     pub institution_name: String,
-    pub valid_until: String,
+    pub valid_until: DateTime<Utc>,
     pub status: ConnectionStatus,
 }
 

@@ -3,15 +3,9 @@ name = "budget-jobs"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["sqlite"]
-sqlite = ["dep:apalis-sqlite"]
-postgres = ["dep:apalis-postgres"]
-
 [dependencies]
 apalis = { workspace = true }
-apalis-sqlite = { workspace = true, optional = true }
-apalis-postgres = { workspace = true, optional = true }
+apalis-postgres = { workspace = true }
 apalis-workflow = { workspace = true }
 budget-core = { workspace = true }
 budget-providers = { workspace = true }
@@ -23,7 +17,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-apalis-sqlite = { workspace = true }
 chrono = { workspace = true }
 rust_decimal_macros = { workspace = true }
 sqlx = { workspace = true }

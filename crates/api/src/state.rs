@@ -52,12 +52,7 @@ macro_rules! impl_push {
             ///
             /// Returns a stringified error if the job cannot be enqueued.
             pub async fn push(&self, job: $job) -> Result<(), String> {
-                #[cfg(feature = "sqlite")]
-                let mut storage = apalis_sqlite::SqliteStorage::<$job, _, _>::new(&self.pool);
-
-                #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
                 let mut storage = apalis_postgres::PostgresStorage::new(&self.pool);
-
                 storage.push(job).await.map_err(|e| e.to_string())
             }
         }
@@ -94,12 +89,7 @@ impl PipelineStorage {
     ///
     /// Returns a stringified error if the job cannot be enqueued.
     pub async fn push_start(&self, account_id: String) -> Result<(), String> {
-        #[cfg(feature = "sqlite")]
-        let mut storage = apalis_sqlite::SqliteStorage::<Vec<u8>, _, _>::new(&self.pool);
-
-        #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
         let mut storage = apalis_postgres::PostgresStorage::<Vec<u8>>::new(&self.pool);
-
         storage
             .push_start(account_id)
             .await

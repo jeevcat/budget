@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::connect(&config.database_url).await?;
     let apalis_pool = ApalisPool::connect(&config.database_url).await?;
 
-    run_migrations(&db, &config.database_url, &apalis_pool).await?;
+    run_migrations(&db, &apalis_pool).await?;
     tracing::info!("migrations applied");
 
     // Provider wrappers for apalis Data injection
@@ -140,26 +140,14 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// migrations work on persistent databases.
 async fn run_migrations(
     db: &Db,
-    url: &str,
     apalis_pool: &ApalisPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Apalis migrations first — they use high-numbered timestamp versions.
+    // Apalis migrations first — they create the apalis schema and tables.
     // Domain migrations run second with ignore_missing so both coexist in
     // the shared _sqlx_migrations table.
-    #[cfg(feature = "sqlite")]
-    {
-        let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-        apalis_migrator.set_ignore_missing(true);
-        apalis_migrator.run(apalis_pool).await?;
-    }
+    apalis_postgres::PostgresStorage::setup(apalis_pool).await?;
 
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    {
-        apalis_postgres::PostgresStorage::setup(apalis_pool).await?;
-    }
-
-    // PRAGMAs + domain migrations
-    db.run_migrations(url).await?;
+    db.run_migrations().await?;
 
     // No workers are active yet, so any "Running" jobs are stale locks from
     // a previous process. Reset them so workers pick them up immediately.
@@ -293,16 +281,7 @@ async fn build_workers(
     llm: LlmClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     macro_rules! backend {
-        ($T:ty) => {{
-            #[cfg(feature = "sqlite")]
-            {
-                apalis_sqlite::SqliteStorage::<$T, _, _>::new(apalis_pool)
-            }
-            #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-            {
-                apalis_postgres::PostgresStorage::<$T>::new(apalis_pool)
-            }
-        }};
+        ($T:ty) => {{ apalis_postgres::PostgresStorage::<$T>::new(apalis_pool) }};
     }
 
     // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute

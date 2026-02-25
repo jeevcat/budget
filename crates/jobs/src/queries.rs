@@ -107,29 +107,13 @@ pub async fn reset_all_running(pool: &ApalisPool) -> Result<u64, sqlx::Error> {
 ///
 /// Returns `sqlx::Error` on database failure.
 pub async fn reclaim_stale(pool: &ApalisPool, stale_seconds: i64) -> Result<u64, sqlx::Error> {
-    #[cfg(feature = "sqlite")]
-    {
-        let cutoff = chrono::Utc::now().timestamp() - stale_seconds;
-        let res = sqlx::query(&format!(
-            "UPDATE {JOBS_TABLE} SET status = 'Pending', lock_by = NULL, lock_at = NULL \
-             WHERE status = 'Running' AND lock_at < ?",
-        ))
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
-        Ok(res.rows_affected())
-    }
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    {
-        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(stale_seconds);
-        let res = sqlx::query(&format!(
-            "UPDATE {JOBS_TABLE} SET status = 'Pending', lock_by = NULL, lock_at = NULL \
-             WHERE status = 'Running' AND lock_at < $1",
-        ))
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
-        Ok(res.rows_affected())
-    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(stale_seconds);
+    let res = sqlx::query(&format!(
+        "UPDATE {JOBS_TABLE} SET status = 'Pending', lock_by = NULL, lock_at = NULL \
+         WHERE status = 'Running' AND lock_at < $1",
+    ))
+    .bind(cutoff)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
 }

@@ -1,7 +1,7 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
-use sqlx::any::AnyRow;
-use sqlx::{AnyPool, Row};
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::models::{
@@ -15,7 +15,7 @@ use crate::models::{
 // Private parse helpers
 // ---------------------------------------------------------------------------
 
-fn parse_uuid(row: &AnyRow, col: &str) -> Result<Uuid, sqlx::Error> {
+fn parse_uuid(row: &PgRow, col: &str) -> Result<Uuid, sqlx::Error> {
     let s: String = row.try_get(col)?;
     s.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
         index: col.to_owned(),
@@ -23,7 +23,7 @@ fn parse_uuid(row: &AnyRow, col: &str) -> Result<Uuid, sqlx::Error> {
     })
 }
 
-fn parse_uuid_opt(row: &AnyRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> {
+fn parse_uuid_opt(row: &PgRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> {
     let s: Option<String> = row.try_get(col)?;
     s.map(|v| {
         v.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
@@ -34,45 +34,7 @@ fn parse_uuid_opt(row: &AnyRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> 
     .transpose()
 }
 
-fn parse_decimal(row: &AnyRow, col: &str) -> Result<Decimal, sqlx::Error> {
-    let s: String = row.try_get(col)?;
-    s.parse::<Decimal>().map_err(|e| sqlx::Error::ColumnDecode {
-        index: col.to_owned(),
-        source: Box::new(e),
-    })
-}
-
-fn parse_decimal_opt(row: &AnyRow, col: &str) -> Result<Option<Decimal>, sqlx::Error> {
-    let s: Option<String> = row.try_get(col)?;
-    s.map(|v| {
-        v.parse::<Decimal>().map_err(|e| sqlx::Error::ColumnDecode {
-            index: col.to_owned(),
-            source: Box::new(e),
-        })
-    })
-    .transpose()
-}
-
-fn parse_date(row: &AnyRow, col: &str) -> Result<NaiveDate, sqlx::Error> {
-    let s: String = row.try_get(col)?;
-    NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| sqlx::Error::ColumnDecode {
-        index: col.to_owned(),
-        source: Box::new(e),
-    })
-}
-
-fn parse_date_opt(row: &AnyRow, col: &str) -> Result<Option<NaiveDate>, sqlx::Error> {
-    let s: Option<String> = row.try_get(col)?;
-    s.map(|v| {
-        NaiveDate::parse_from_str(&v, "%Y-%m-%d").map_err(|e| sqlx::Error::ColumnDecode {
-            index: col.to_owned(),
-            source: Box::new(e),
-        })
-    })
-    .transpose()
-}
-
-fn parse_enum<T: std::str::FromStr>(row: &AnyRow, col: &str) -> Result<T, sqlx::Error>
+fn parse_enum<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<T, sqlx::Error>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
@@ -83,7 +45,7 @@ where
     })
 }
 
-fn parse_enum_opt<T: std::str::FromStr>(row: &AnyRow, col: &str) -> Result<Option<T>, sqlx::Error>
+fn parse_enum_opt<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<Option<T>, sqlx::Error>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
@@ -101,7 +63,7 @@ where
 // Row-to-domain mappers
 // ---------------------------------------------------------------------------
 
-fn row_to_account(row: &AnyRow) -> Result<Account, sqlx::Error> {
+fn row_to_account(row: &PgRow) -> Result<Account, sqlx::Error> {
     Ok(Account {
         id: AccountId::from_uuid(parse_uuid(row, "id")?),
         provider_account_id: row.try_get("provider_account_id")?,
@@ -113,7 +75,7 @@ fn row_to_account(row: &AnyRow) -> Result<Account, sqlx::Error> {
     })
 }
 
-fn row_to_connection(row: &AnyRow) -> Result<Connection, sqlx::Error> {
+fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
     Ok(Connection {
         id: ConnectionId::from_uuid(parse_uuid(row, "id")?),
         provider: row.try_get("provider")?,
@@ -124,7 +86,7 @@ fn row_to_connection(row: &AnyRow) -> Result<Connection, sqlx::Error> {
     })
 }
 
-fn row_to_category(row: &AnyRow) -> Result<Category, sqlx::Error> {
+fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
     Ok(Category {
         id: CategoryId::from_uuid(parse_uuid(row, "id")?),
         name: row.try_get("name")?,
@@ -132,17 +94,17 @@ fn row_to_category(row: &AnyRow) -> Result<Category, sqlx::Error> {
     })
 }
 
-fn row_to_transaction(row: &AnyRow) -> Result<Transaction, sqlx::Error> {
+fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
     Ok(Transaction {
         id: TransactionId::from_uuid(parse_uuid(row, "id")?),
         account_id: AccountId::from_uuid(parse_uuid(row, "account_id")?),
         category_id: parse_uuid_opt(row, "category_id")?.map(CategoryId::from_uuid),
-        amount: parse_decimal(row, "amount")?,
-        original_amount: parse_decimal_opt(row, "original_amount")?,
+        amount: row.try_get("amount")?,
+        original_amount: row.try_get("original_amount")?,
         original_currency: row.try_get("original_currency")?,
         merchant_name: row.try_get("merchant_name")?,
         description: row.try_get("description")?,
-        posted_date: parse_date(row, "posted_date")?,
+        posted_date: row.try_get("posted_date")?,
         budget_month_id: parse_uuid_opt(row, "budget_month_id")?.map(BudgetMonthId::from_uuid),
         project_id: parse_uuid_opt(row, "project_id")?.map(ProjectId::from_uuid),
         correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
@@ -152,7 +114,7 @@ fn row_to_transaction(row: &AnyRow) -> Result<Transaction, sqlx::Error> {
     })
 }
 
-fn row_to_rule(row: &AnyRow) -> Result<Rule, sqlx::Error> {
+fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
     Ok(Rule {
         id: RuleId::from_uuid(parse_uuid(row, "id")?),
         rule_type: parse_enum::<RuleType>(row, "rule_type")?,
@@ -164,32 +126,32 @@ fn row_to_rule(row: &AnyRow) -> Result<Rule, sqlx::Error> {
     })
 }
 
-fn row_to_budget_period(row: &AnyRow) -> Result<BudgetPeriod, sqlx::Error> {
+fn row_to_budget_period(row: &PgRow) -> Result<BudgetPeriod, sqlx::Error> {
     Ok(BudgetPeriod {
         id: BudgetPeriodId::from_uuid(parse_uuid(row, "id")?),
         category_id: CategoryId::from_uuid(parse_uuid(row, "category_id")?),
         period_type: parse_enum::<PeriodType>(row, "period_type")?,
-        amount: parse_decimal(row, "amount")?,
+        amount: row.try_get("amount")?,
     })
 }
 
-fn row_to_budget_month(row: &AnyRow) -> Result<BudgetMonth, sqlx::Error> {
+fn row_to_budget_month(row: &PgRow) -> Result<BudgetMonth, sqlx::Error> {
     Ok(BudgetMonth {
         id: BudgetMonthId::from_uuid(parse_uuid(row, "id")?),
-        start_date: parse_date(row, "start_date")?,
-        end_date: parse_date_opt(row, "end_date")?,
+        start_date: row.try_get("start_date")?,
+        end_date: row.try_get("end_date")?,
         salary_transactions_detected: row.try_get("salary_transactions_detected")?,
     })
 }
 
-fn row_to_project(row: &AnyRow) -> Result<Project, sqlx::Error> {
+fn row_to_project(row: &PgRow) -> Result<Project, sqlx::Error> {
     Ok(Project {
         id: ProjectId::from_uuid(parse_uuid(row, "id")?),
         name: row.try_get("name")?,
         category_id: CategoryId::from_uuid(parse_uuid(row, "category_id")?),
-        start_date: parse_date(row, "start_date")?,
-        end_date: parse_date_opt(row, "end_date")?,
-        budget_amount: parse_decimal_opt(row, "budget_amount")?,
+        start_date: row.try_get("start_date")?,
+        end_date: row.try_get("end_date")?,
+        budget_amount: row.try_get("budget_amount")?,
     })
 }
 
@@ -200,49 +162,39 @@ fn row_to_project(row: &AnyRow) -> Result<Project, sqlx::Error> {
 /// Database handle wrapping the connection pool.
 ///
 /// All query functions are methods on this struct so that the pool type is
-/// private. Callers never depend on `AnyPool` directly.
+/// private. Callers never depend on `PgPool` directly.
 #[derive(Clone)]
-pub struct Db(AnyPool);
+pub struct Db(PgPool);
 
 impl Db {
     /// Open a connection pool to the database at `url`.
-    ///
-    /// Installs the default sqlx `Any` drivers (`SQLite`, Postgres) before
-    /// connecting. The URL scheme determines which backend is used.
     ///
     /// # Errors
     ///
     /// Returns `sqlx::Error` if the connection fails.
     pub async fn connect(url: &str) -> Result<Self, sqlx::Error> {
-        sqlx::any::install_default_drivers();
-        Ok(Self(AnyPool::connect(url).await?))
+        Ok(Self(PgPool::connect(url).await?))
+    }
+
+    /// Wrap an existing pool as a `Db` handle.
+    #[must_use]
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self(pool)
     }
 
     /// Expose the inner pool for callers that need direct pool access
     /// (e.g. running raw queries against the apalis `Jobs` table).
     #[must_use]
-    pub fn pool(&self) -> &AnyPool {
+    pub fn pool(&self) -> &PgPool {
         &self.0
     }
 
-    /// Run PRAGMAs (`SQLite` only) and domain migrations.
+    /// Run domain migrations.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if any PRAGMA or migration fails.
-    pub async fn run_migrations(&self, url: &str) -> Result<(), sqlx::Error> {
-        if url.starts_with("sqlite:") {
-            sqlx::query("PRAGMA journal_mode = 'WAL'")
-                .execute(&self.0)
-                .await?;
-            sqlx::query("PRAGMA synchronous = NORMAL")
-                .execute(&self.0)
-                .await?;
-            sqlx::query("PRAGMA cache_size = 64000")
-                .execute(&self.0)
-                .await?;
-        }
-
+    /// Returns `sqlx::Error` if any migration fails.
+    pub async fn run_migrations(&self) -> Result<(), sqlx::Error> {
         let mut migrator = sqlx::migrate!("../../migrations");
         migrator.set_ignore_missing(true);
         migrator.run(&self.0).await?;
@@ -376,12 +328,12 @@ impl Db {
         .bind(txn.id.to_string())
         .bind(txn.account_id.to_string())
         .bind(txn.category_id.map(|id| id.to_string()))
-        .bind(txn.amount.to_string())
-        .bind(txn.original_amount.map(|d| d.to_string()))
+        .bind(txn.amount)
+        .bind(txn.original_amount)
         .bind(txn.original_currency.as_deref())
         .bind(&txn.merchant_name)
         .bind(&txn.description)
-        .bind(txn.posted_date.to_string())
+        .bind(txn.posted_date)
         .bind(txn.budget_month_id.map(|id| id.to_string()))
         .bind(txn.project_id.map(|id| id.to_string()))
         .bind(txn.correlation_id.map(|id| id.to_string()))
@@ -502,7 +454,7 @@ impl Db {
                AND amount = $1
                AND id != $2",
         )
-        .bind(opposite_amount.to_string())
+        .bind(opposite_amount)
         .bind(exclude_id.to_string())
         .fetch_all(pool)
         .await?;
@@ -707,10 +659,7 @@ impl Db {
         .fetch_optional(pool)
         .await?;
         match row {
-            Some(r) => {
-                let s: Option<String> = r.try_get("max_date")?;
-                Ok(s.and_then(|v| NaiveDate::parse_from_str(&v, "%Y-%m-%d").ok()))
-            }
+            Some(r) => Ok(r.try_get("max_date")?),
             None => Ok(None),
         }
     }
@@ -933,7 +882,7 @@ impl Db {
         .bind(bp.id.to_string())
         .bind(bp.category_id.to_string())
         .bind(bp.period_type.to_string())
-        .bind(bp.amount.to_string())
+        .bind(bp.amount)
         .execute(pool)
         .await?;
         Ok(())
@@ -985,7 +934,7 @@ impl Db {
         )
         .bind(bp.category_id.to_string())
         .bind(bp.period_type.to_string())
-        .bind(bp.amount.to_string())
+        .bind(bp.amount)
         .bind(bp.id.to_string())
         .execute(pool)
         .await?;
@@ -1031,8 +980,8 @@ impl Db {
                  VALUES ($1, $2, $3, $4)",
             )
             .bind(month.id.to_string())
-            .bind(month.start_date.to_string())
-            .bind(month.end_date.map(|d| d.to_string()))
+            .bind(month.start_date)
+            .bind(month.end_date)
             .bind(month.salary_transactions_detected)
             .execute(&mut *tx)
             .await?;
@@ -1075,9 +1024,9 @@ impl Db {
         .bind(project.id.to_string())
         .bind(&project.name)
         .bind(project.category_id.to_string())
-        .bind(project.start_date.to_string())
-        .bind(project.end_date.map(|d| d.to_string()))
-        .bind(project.budget_amount.map(|d| d.to_string()))
+        .bind(project.start_date)
+        .bind(project.end_date)
+        .bind(project.budget_amount)
         .execute(pool)
         .await?;
         Ok(())
@@ -1129,9 +1078,9 @@ impl Db {
         )
         .bind(&project.name)
         .bind(project.category_id.to_string())
-        .bind(project.start_date.to_string())
-        .bind(project.end_date.map(|d| d.to_string()))
-        .bind(project.budget_amount.map(|d| d.to_string()))
+        .bind(project.start_date)
+        .bind(project.end_date)
+        .bind(project.budget_amount)
         .bind(project.id.to_string())
         .execute(pool)
         .await?;
@@ -1171,7 +1120,7 @@ impl Db {
         .bind(&connection.provider)
         .bind(&connection.provider_session_id)
         .bind(&connection.institution_name)
-        .bind(&connection.valid_until)
+        .bind(connection.valid_until)
         .bind(connection.status.to_string())
         .execute(pool)
         .await?;
@@ -1264,7 +1213,7 @@ impl Db {
         &self,
         token: &str,
         user_data: &str,
-        expires_at: &str,
+        expires_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query("INSERT INTO state_tokens (token, user_data, expires_at) VALUES ($1, $2, $3)")
@@ -1332,14 +1281,8 @@ mod tests {
     // Helpers
     // -----------------------------------------------------------------------
 
-    async fn setup_db() -> Db {
-        let url = format!(
-            "sqlite:file:coretest_{}?mode=memory&cache=shared",
-            uuid::Uuid::new_v4().simple()
-        );
-        let db = Db::connect(&url).await.unwrap();
-        db.run_migrations(&url).await.unwrap();
-        db
+    fn wrap(pool: PgPool) -> Db {
+        Db(pool)
     }
 
     fn make_account() -> Account {
@@ -1427,9 +1370,9 @@ mod tests {
     // Account tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_upsert_account_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_upsert_account_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
 
         db.upsert_account(&acct).await.unwrap();
@@ -1443,9 +1386,9 @@ mod tests {
         assert_eq!(fetched.currency, acct.currency);
     }
 
-    #[tokio::test]
-    async fn test_upsert_account_replaces_existing() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_upsert_account_replaces_existing(pool: PgPool) {
+        let db = wrap(pool);
         let mut acct = make_account();
 
         db.upsert_account(&acct).await.unwrap();
@@ -1465,9 +1408,9 @@ mod tests {
         assert_eq!(fetched.account_type, AccountType::Savings);
     }
 
-    #[tokio::test]
-    async fn test_list_accounts_returns_all() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_list_accounts_returns_all(pool: PgPool) {
+        let db = wrap(pool);
 
         let acct1 = make_account();
         let mut acct2 = make_account();
@@ -1486,9 +1429,9 @@ mod tests {
         assert!(ids.contains(&acct2.id));
     }
 
-    #[tokio::test]
-    async fn test_get_account_returns_none_for_nonexistent() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_account_returns_none_for_nonexistent(pool: PgPool) {
+        let db = wrap(pool);
         let result = db.get_account(AccountId::new()).await.unwrap();
         assert!(result.is_none());
     }
@@ -1497,9 +1440,9 @@ mod tests {
     // Transaction tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_upsert_transaction_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_upsert_transaction_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1526,9 +1469,9 @@ mod tests {
         assert!(fetched.correlation_type.is_none());
     }
 
-    #[tokio::test]
-    async fn test_upsert_transaction_dedup_by_provider_id() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_upsert_transaction_dedup_by_provider_id(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1555,9 +1498,9 @@ mod tests {
         assert_eq!(fetched.amount, dec!(-45.00));
     }
 
-    #[tokio::test]
-    async fn test_upsert_transaction_dedup_preserves_local_fields() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_upsert_transaction_dedup_preserves_local_fields(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1608,9 +1551,9 @@ mod tests {
         assert_eq!(fetched.budget_month_id, Some(bm.id));
     }
 
-    #[tokio::test]
-    async fn test_get_uncategorized_transactions() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_uncategorized_transactions(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1630,9 +1573,9 @@ mod tests {
         assert_eq!(uncat[0].id, txn_uncat.id);
     }
 
-    #[tokio::test]
-    async fn test_get_uncorrelated_transactions() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_uncorrelated_transactions(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1660,9 +1603,9 @@ mod tests {
         assert_eq!(uncorr[0].id, txn_uncorr.id);
     }
 
-    #[tokio::test]
-    async fn test_update_transaction_category() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_transaction_category(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1681,9 +1624,9 @@ mod tests {
         assert_eq!(all[0].category_method, Some(CategoryMethod::Manual));
     }
 
-    #[tokio::test]
-    async fn test_update_transaction_category_method_all_variants() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_transaction_category_method_all_variants(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1707,9 +1650,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_new_transaction_has_no_category_method() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_new_transaction_has_no_category_method(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1720,9 +1663,9 @@ mod tests {
         assert!(fetched.category_method.is_none());
     }
 
-    #[tokio::test]
-    async fn test_category_method_survives_provider_resync() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_category_method_survives_provider_resync(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1752,9 +1695,9 @@ mod tests {
         assert_eq!(fetched[0].category_method, Some(CategoryMethod::Rule));
     }
 
-    #[tokio::test]
-    async fn test_update_transaction_correlation() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_transaction_correlation(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1773,9 +1716,9 @@ mod tests {
         assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
     }
 
-    #[tokio::test]
-    async fn test_update_transaction_budget_month() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_transaction_budget_month(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -1798,9 +1741,9 @@ mod tests {
         assert_eq!(all[0].budget_month_id, Some(bm.id));
     }
 
-    #[tokio::test]
-    async fn test_list_transactions_by_account() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_list_transactions_by_account(pool: PgPool) {
+        let db = wrap(pool);
 
         let acct1 = make_account();
         let mut acct2 = make_account();
@@ -1829,9 +1772,9 @@ mod tests {
     // Category tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_insert_category_and_list_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_category_and_list_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat1 = make_category("Groceries");
         let cat2 = make_category("Transport");
@@ -1847,9 +1790,9 @@ mod tests {
         assert!(names.contains(&"Transport"));
     }
 
-    #[tokio::test]
-    async fn test_get_category_by_id() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_category_by_id(pool: PgPool) {
+        let db = wrap(pool);
         let cat = make_category("Entertainment");
         db.insert_category(&cat).await.unwrap();
 
@@ -1859,9 +1802,9 @@ mod tests {
         assert!(fetched.parent_id.is_none());
     }
 
-    #[tokio::test]
-    async fn test_get_category_by_name() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_category_by_name(pool: PgPool) {
+        let db = wrap(pool);
         let cat = make_category("Subscriptions");
         db.insert_category(&cat).await.unwrap();
 
@@ -1874,16 +1817,16 @@ mod tests {
         assert_eq!(fetched.name, "Subscriptions");
     }
 
-    #[tokio::test]
-    async fn test_get_category_by_name_returns_none_for_nonexistent() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_category_by_name_returns_none_for_nonexistent(pool: PgPool) {
+        let db = wrap(pool);
         let result = db.get_category_by_name("Nonexistent").await.unwrap();
         assert!(result.is_none());
     }
 
-    #[tokio::test]
-    async fn test_delete_category() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_delete_category(pool: PgPool) {
+        let db = wrap(pool);
         let cat = make_category("ToDelete");
         db.insert_category(&cat).await.unwrap();
 
@@ -1897,9 +1840,9 @@ mod tests {
     // Rule tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_insert_rule_and_list_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_rule_and_list_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Food");
         db.insert_category(&cat).await.unwrap();
@@ -1922,9 +1865,9 @@ mod tests {
         assert_eq!(fetched.priority, 10);
     }
 
-    #[tokio::test]
-    async fn test_list_rules_by_type_filters_and_orders_by_priority_desc() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_list_rules_by_type_filters_and_orders_by_priority_desc(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat_rule_low = make_rule(RuleType::Categorization, 1);
         let cat_rule_high = make_rule(RuleType::Categorization, 100);
@@ -1952,9 +1895,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_get_rule_by_id() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_rule_by_id(pool: PgPool) {
+        let db = wrap(pool);
         let rule = make_rule(RuleType::Categorization, 5);
         db.insert_rule(&rule).await.unwrap();
 
@@ -1963,9 +1906,9 @@ mod tests {
         assert_eq!(fetched.priority, 5);
     }
 
-    #[tokio::test]
-    async fn test_update_rule_changes_fields() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_rule_changes_fields(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Travel");
         db.insert_category(&cat).await.unwrap();
@@ -1987,9 +1930,9 @@ mod tests {
         assert_eq!(fetched.priority, 20);
     }
 
-    #[tokio::test]
-    async fn test_delete_rule() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_delete_rule(pool: PgPool) {
+        let db = wrap(pool);
         let rule = make_rule(RuleType::Categorization, 1);
         db.insert_rule(&rule).await.unwrap();
 
@@ -2003,9 +1946,9 @@ mod tests {
     // Budget Period tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_insert_budget_period_and_list_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_budget_period_and_list_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Utilities");
         db.insert_category(&cat).await.unwrap();
@@ -2023,9 +1966,9 @@ mod tests {
         assert_eq!(fetched.amount, dec!(500.00));
     }
 
-    #[tokio::test]
-    async fn test_get_budget_period_by_id() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_budget_period_by_id(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Rent");
         db.insert_category(&cat).await.unwrap();
@@ -2038,9 +1981,9 @@ mod tests {
         assert_eq!(fetched.amount, dec!(500.00));
     }
 
-    #[tokio::test]
-    async fn test_update_budget_period_changes_fields() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_budget_period_changes_fields(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat1 = make_category("Groceries");
         let cat2 = make_category("Dining");
@@ -2062,9 +2005,9 @@ mod tests {
         assert_eq!(fetched.amount, dec!(6000.00));
     }
 
-    #[tokio::test]
-    async fn test_delete_budget_period() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_delete_budget_period(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Insurance");
         db.insert_category(&cat).await.unwrap();
@@ -2082,9 +2025,9 @@ mod tests {
     // Budget Month tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_replace_budget_months_inserts_fresh_set() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_replace_budget_months_inserts_fresh_set(pool: PgPool) {
+        let db = wrap(pool);
 
         let months = vec![
             make_budget_month(
@@ -2107,9 +2050,9 @@ mod tests {
         assert!(ids.contains(&months[1].id));
     }
 
-    #[tokio::test]
-    async fn test_replace_budget_months_replaces_all() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_replace_budget_months_replaces_all(pool: PgPool) {
+        let db = wrap(pool);
 
         // Insert initial set.
         let old_months = vec![
@@ -2145,9 +2088,9 @@ mod tests {
         assert!(!ids.contains(&old_months[1].id));
     }
 
-    #[tokio::test]
-    async fn test_list_budget_months_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_list_budget_months_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
 
         let month = make_budget_month(NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(), None);
         db.replace_budget_months(std::slice::from_ref(&month))
@@ -2171,9 +2114,9 @@ mod tests {
     // Project tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_insert_project_and_list_roundtrip() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_project_and_list_roundtrip(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Home Improvement");
         db.insert_category(&cat).await.unwrap();
@@ -2196,9 +2139,9 @@ mod tests {
         assert_eq!(fetched.budget_amount, Some(dec!(10000.00)));
     }
 
-    #[tokio::test]
-    async fn test_get_project_by_id() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_project_by_id(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Education");
         db.insert_category(&cat).await.unwrap();
@@ -2211,9 +2154,9 @@ mod tests {
         assert_eq!(fetched.name, "Kitchen Renovation");
     }
 
-    #[tokio::test]
-    async fn test_update_project_changes_fields() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_project_changes_fields(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat1 = make_category("Home");
         let cat2 = make_category("Garden");
@@ -2244,16 +2187,16 @@ mod tests {
     // Categorized merchant groups
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn test_get_categorized_merchant_groups_empty() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_categorized_merchant_groups_empty(pool: PgPool) {
+        let db = wrap(pool);
         let groups = db.get_categorized_merchant_groups().await.unwrap();
         assert!(groups.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_get_categorized_merchant_groups_excludes_single_occurrence() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_categorized_merchant_groups_excludes_single_occurrence(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -2270,9 +2213,9 @@ mod tests {
         assert!(groups.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_get_categorized_merchant_groups_returns_qualifying() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_categorized_merchant_groups_returns_qualifying(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -2294,9 +2237,9 @@ mod tests {
         assert_eq!(groups[0].2, 3);
     }
 
-    #[tokio::test]
-    async fn test_get_categorized_merchant_groups_excludes_uncategorized() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_categorized_merchant_groups_excludes_uncategorized(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -2311,9 +2254,9 @@ mod tests {
         assert!(groups.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_get_categorized_merchant_groups_orders_by_count_desc() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_categorized_merchant_groups_orders_by_count_desc(pool: PgPool) {
+        let db = wrap(pool);
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
@@ -2345,9 +2288,9 @@ mod tests {
         assert_eq!(groups[1].2, 2);
     }
 
-    #[tokio::test]
-    async fn test_delete_project() {
-        let db = setup_db().await;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_delete_project(pool: PgPool) {
+        let db = wrap(pool);
 
         let cat = make_category("Misc");
         db.insert_category(&cat).await.unwrap();

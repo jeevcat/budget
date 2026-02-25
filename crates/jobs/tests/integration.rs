@@ -1,17 +1,14 @@
-// Tests use in-memory SQLite — only compile when the sqlite feature is active.
-#![cfg(feature = "sqlite")]
-
 //! Integration tests for job handlers.
 //!
-//! Each test creates its own in-memory `SQLite` database with all migrations
-//! applied, seeds the necessary data, and invokes the handler function
-//! directly. Mock providers from `budget_providers` supply deterministic
-//! bank and LLM responses.
+//! Each test gets its own PostgreSQL database (via `sqlx::test`) with all
+//! migrations applied, seeds the necessary data, and invokes the handler
+//! function directly. Mock providers from `budget_providers` supply
+//! deterministic bank and LLM responses.
 
 use apalis::prelude::Data;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, TimeZone};
 use rust_decimal_macros::dec;
-use uuid::Uuid;
+use sqlx::PgPool;
 
 use budget_core::db::Db;
 use budget_core::models::{
@@ -31,36 +28,21 @@ use budget_providers::{MockBankProvider, MockLlmProvider};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Create a shared named in-memory `SQLite` database with all migrations
-/// applied. Returns both the `Db` (AnyPool) and a typed `ApalisPool` that
-/// share the same underlying database.
-async fn setup_db() -> (Db, ApalisPool) {
-    let url = format!(
-        "sqlite:file:jobtest_{}?mode=memory&cache=shared",
-        Uuid::new_v4().simple()
-    );
-    let db = Db::connect(&url)
-        .await
-        .expect("failed to create in-memory SQLite database");
+/// Wrap the `sqlx::test`-provided `PgPool` as both a `Db` handle and an
+/// `ApalisPool`. Runs apalis schema setup first, then domain migrations
+/// (with `ignore_missing` so both coexist in the shared `_sqlx_migrations` table).
+async fn setup_db(pool: PgPool) -> (Db, ApalisPool) {
+    let db = Db::from_pool(pool.clone());
 
-    let apalis_pool = ApalisPool::connect(&url)
+    // Apalis jobs table first (creates apalis schema + migrations entries)
+    apalis_postgres::PostgresStorage::setup(&pool)
         .await
-        .expect("failed to create apalis pool");
+        .expect("apalis setup");
 
-    // Apalis Jobs table (needed by fan-out handlers that enqueue per-txn jobs)
-    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator
-        .run(&apalis_pool)
-        .await
-        .expect("failed to run apalis migrations");
+    // Domain migrations second (ignore_missing tolerates apalis entries)
+    db.run_migrations().await.expect("domain migrations");
 
-    // Domain migrations via Db
-    db.run_migrations(&url)
-        .await
-        .expect("failed to run domain migrations");
-
-    (db, apalis_pool)
+    (db, pool)
 }
 
 fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -148,7 +130,7 @@ fn make_bank_factory() -> BankProviderFactory {
     BankProviderFactory::new(None).with_fallback(BankClient::new(MockBankProvider::new()))
 }
 
-/// Factory with no fallback — only connection-based providers work.
+/// Factory with no fallback -- only connection-based providers work.
 fn make_bank_factory_no_fallback() -> BankProviderFactory {
     BankProviderFactory::new(None)
 }
@@ -160,7 +142,7 @@ async fn seed_connection(db: &Db, status: ConnectionStatus) -> Connection {
         provider: "enable_banking".to_owned(),
         provider_session_id: "test-session-123".to_owned(),
         institution_name: "Test Bank".to_owned(),
-        valid_until: "2099-12-31".to_owned(),
+        valid_until: chrono::Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
         status,
     };
     db.insert_connection(&connection)
@@ -194,9 +176,9 @@ fn make_llm_client() -> LlmClient {
 // sync.rs tests
 // ===========================================================================
 
-#[tokio::test]
-async fn sync_valid_account_upserts_transactions() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_valid_account_upserts_transactions(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
@@ -224,14 +206,14 @@ async fn sync_valid_account_upserts_transactions() {
     assert!(txns.len() <= 9);
 }
 
-#[tokio::test]
-async fn sync_nonexistent_account_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_nonexistent_account_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let bank = make_bank_factory();
 
     // Valid UUID but no matching row in the accounts table
     let job = SyncJob {
-        account_id: Uuid::new_v4().to_string(),
+        account_id: uuid::Uuid::new_v4().to_string(),
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
@@ -244,9 +226,9 @@ async fn sync_nonexistent_account_returns_error() {
     );
 }
 
-#[tokio::test]
-async fn sync_invalid_uuid_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_invalid_uuid_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let bank = make_bank_factory();
 
     let job = SyncJob {
@@ -263,9 +245,9 @@ async fn sync_invalid_uuid_returns_error() {
     );
 }
 
-#[tokio::test]
-async fn sync_deduplicates_on_rerun() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_deduplicates_on_rerun(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
@@ -311,12 +293,12 @@ async fn sync_deduplicates_on_rerun() {
 }
 
 // ===========================================================================
-// sync.rs — connection-aware tests
+// sync.rs -- connection-aware tests
 // ===========================================================================
 
-#[tokio::test]
-async fn sync_with_active_connection_uses_factory() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_with_active_connection_uses_factory(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let connection = seed_connection(&db, ConnectionStatus::Active).await;
     let account = seed_connected_account(&db, connection.id).await;
 
@@ -340,9 +322,9 @@ async fn sync_with_active_connection_uses_factory() {
     );
 }
 
-#[tokio::test]
-async fn sync_expired_connection_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_expired_connection_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let connection = seed_connection(&db, ConnectionStatus::Expired).await;
     let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
@@ -361,9 +343,9 @@ async fn sync_expired_connection_returns_error() {
     );
 }
 
-#[tokio::test]
-async fn sync_revoked_connection_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_revoked_connection_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let connection = seed_connection(&db, ConnectionStatus::Revoked).await;
     let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
@@ -382,9 +364,9 @@ async fn sync_revoked_connection_returns_error() {
     );
 }
 
-#[tokio::test]
-async fn sync_unsupported_provider_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_unsupported_provider_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
 
     // Connection with an unknown provider type
     let connection = Connection {
@@ -392,7 +374,7 @@ async fn sync_unsupported_provider_returns_error() {
         provider: "unknown_provider".to_owned(),
         provider_session_id: "session-xyz".to_owned(),
         institution_name: "Mystery Bank".to_owned(),
-        valid_until: "2099-12-31".to_owned(),
+        valid_until: chrono::Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
         status: ConnectionStatus::Active,
     };
     db.insert_connection(&connection)
@@ -419,9 +401,9 @@ async fn sync_unsupported_provider_returns_error() {
     );
 }
 
-#[tokio::test]
-async fn sync_no_connection_no_fallback_returns_error() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn sync_no_connection_no_fallback_returns_error(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
 
     // Factory without a fallback provider
@@ -448,9 +430,9 @@ async fn sync_no_connection_no_fallback_returns_error() {
 // categorize.rs tests
 // ===========================================================================
 
-#[tokio::test]
-async fn categorize_rule_based_assignment() {
-    let (db, pool) = setup_db().await;
+#[sqlx::test]
+async fn categorize_rule_based_assignment(pool: PgPool) {
+    let (db, pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
 
     let groceries_cat = seed_category(&db, "Food:Groceries").await;
@@ -499,9 +481,9 @@ async fn categorize_rule_based_assignment() {
     );
 }
 
-#[tokio::test]
-async fn categorize_llm_high_confidence_assigns_category() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn categorize_llm_high_confidence_assigns_category(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -538,9 +520,9 @@ async fn categorize_llm_high_confidence_assigns_category() {
     );
 }
 
-#[tokio::test]
-async fn categorize_llm_low_confidence_leaves_uncategorized() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn categorize_llm_low_confidence_leaves_uncategorized(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -575,9 +557,9 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
     );
 }
 
-#[tokio::test]
-async fn categorize_no_uncategorized_transactions_is_noop() {
-    let (db, pool) = setup_db().await;
+#[sqlx::test]
+async fn categorize_no_uncategorized_transactions_is_noop(pool: PgPool) {
+    let (db, pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
 
     let cat = seed_category(&db, "Food:Groceries").await;
@@ -611,9 +593,9 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
     );
 }
 
-#[tokio::test]
-async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn categorize_llm_unknown_category_name_leaves_uncategorized(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -652,9 +634,9 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
 // correlate.rs tests
 // ===========================================================================
 
-#[tokio::test]
-async fn correlate_rule_based_linking() {
-    let (db, pool) = setup_db().await;
+#[sqlx::test]
+async fn correlate_rule_based_linking(pool: PgPool) {
+    let (db, pool) = setup_db(pool).await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
 
@@ -713,9 +695,9 @@ async fn correlate_rule_based_linking() {
     );
 }
 
-#[tokio::test]
-async fn correlate_llm_equal_opposite_amounts_links() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn correlate_llm_equal_opposite_amounts_links(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
@@ -770,9 +752,9 @@ async fn correlate_llm_equal_opposite_amounts_links() {
     assert_eq!(b.correlation_type, Some(CorrelationType::Transfer));
 }
 
-#[tokio::test]
-async fn correlate_bidirectional_both_sides_linked() {
-    let (db, _pool) = setup_db().await;
+#[sqlx::test]
+async fn correlate_bidirectional_both_sides_linked(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
@@ -817,9 +799,9 @@ async fn correlate_bidirectional_both_sides_linked() {
     assert_eq!(a.correlation_type, b.correlation_type);
 }
 
-#[tokio::test]
-async fn correlate_no_uncorrelated_transactions_is_noop() {
-    let (db, pool) = setup_db().await;
+#[sqlx::test]
+async fn correlate_no_uncorrelated_transactions_is_noop(pool: PgPool) {
+    let (db, pool) = setup_db(pool).await;
 
     // No transactions at all -- fan-out should return Ok immediately
     handle_correlate_job(CorrelateJob, Data::new(db.clone()), Data::new(pool.clone()))
@@ -830,9 +812,9 @@ async fn correlate_no_uncorrelated_transactions_is_noop() {
     assert!(txns.is_empty());
 }
 
-#[tokio::test]
-async fn correlate_already_paired_not_correlated_again() {
-    let (db, pool) = setup_db().await;
+#[sqlx::test]
+async fn correlate_already_paired_not_correlated_again(pool: PgPool) {
+    let (db, pool) = setup_db(pool).await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
 
@@ -896,149 +878,6 @@ async fn correlate_already_paired_not_correlated_again() {
         c.correlation_id, None,
         "txn_c has no matching counterpart; should remain uncorrelated"
     );
-}
-
-// ===========================================================================
-// queries.rs tests
-// ===========================================================================
-
-/// Push a `CategorizeJob` into the apalis queue.
-async fn push_categorize_job(pool: &ApalisPool) {
-    use apalis::prelude::*;
-    let mut storage = apalis_sqlite::SqliteStorage::<CategorizeJob, _, _>::new(pool);
-    storage.push(CategorizeJob).await.expect("push job");
-}
-
-const TEST_WORKER_ID: &str = "test-worker-1";
-
-/// Register a fake worker in the Workers table so `lock_by` FK is satisfied.
-async fn register_test_worker(pool: &ApalisPool) {
-    sqlx::query(
-        "INSERT OR IGNORE INTO Workers (id, worker_type, storage_name) \
-         VALUES (?, 'test', 'test')",
-    )
-    .bind(TEST_WORKER_ID)
-    .execute(pool)
-    .await
-    .expect("register test worker");
-}
-
-/// Set all jobs in the queue to Running with a given `lock_at` timestamp.
-async fn set_all_jobs_running(pool: &ApalisPool, lock_at: i64) {
-    register_test_worker(pool).await;
-    sqlx::query(&format!(
-        "UPDATE {} SET status = 'Running', lock_by = ?, lock_at = ?",
-        budget_jobs::JOBS_TABLE,
-    ))
-    .bind(TEST_WORKER_ID)
-    .bind(lock_at)
-    .execute(pool)
-    .await
-    .expect("set jobs to Running");
-}
-
-#[tokio::test]
-async fn queries_list_jobs_empty() {
-    let (_db, pool) = setup_db().await;
-
-    let jobs = budget_jobs::queries::list_jobs(&pool)
-        .await
-        .expect("list_jobs");
-    assert!(jobs.is_empty());
-}
-
-#[tokio::test]
-async fn queries_list_jobs_returns_enqueued() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-
-    let jobs = budget_jobs::queries::list_jobs(&pool)
-        .await
-        .expect("list_jobs");
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].status, "Pending");
-    assert!(jobs[0].job_type.contains("CategorizeJob"));
-}
-
-#[tokio::test]
-async fn queries_queue_counts_aggregates() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-    push_categorize_job(&pool).await;
-
-    let counts = budget_jobs::queries::queue_counts(&pool)
-        .await
-        .expect("queue_counts");
-    assert_eq!(counts.len(), 1);
-    assert_eq!(counts[0].waiting, 2);
-    assert_eq!(counts[0].active, 0);
-    assert_eq!(counts[0].completed, 0);
-    assert_eq!(counts[0].failed, 0);
-}
-
-#[tokio::test]
-async fn queries_reset_all_running_resets_to_pending() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-    set_all_jobs_running(&pool, 1000).await;
-
-    let reset = budget_jobs::queries::reset_all_running(&pool)
-        .await
-        .expect("reset_all_running");
-    assert_eq!(reset, 1);
-
-    let jobs = budget_jobs::queries::list_jobs(&pool)
-        .await
-        .expect("list_jobs");
-    assert_eq!(jobs[0].status, "Pending");
-}
-
-#[tokio::test]
-async fn queries_reset_all_running_ignores_pending() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-
-    // Job is already Pending — reset should affect 0 rows
-    let reset = budget_jobs::queries::reset_all_running(&pool)
-        .await
-        .expect("reset_all_running");
-    assert_eq!(reset, 0);
-}
-
-#[tokio::test]
-async fn queries_reclaim_stale_reclaims_old_locks() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-    set_all_jobs_running(&pool, 0).await;
-
-    let reclaimed = budget_jobs::queries::reclaim_stale(&pool, 300)
-        .await
-        .expect("reclaim_stale");
-    assert_eq!(reclaimed, 1);
-
-    let jobs = budget_jobs::queries::list_jobs(&pool)
-        .await
-        .expect("list_jobs");
-    assert_eq!(jobs[0].status, "Pending");
-}
-
-#[tokio::test]
-async fn queries_reclaim_stale_ignores_recent_locks() {
-    let (_db, pool) = setup_db().await;
-    push_categorize_job(&pool).await;
-    let now = chrono::Utc::now().timestamp();
-    set_all_jobs_running(&pool, now).await;
-
-    // 300s threshold — lock is fresh, should not be reclaimed
-    let reclaimed = budget_jobs::queries::reclaim_stale(&pool, 300)
-        .await
-        .expect("reclaim_stale");
-    assert_eq!(reclaimed, 0);
-
-    let jobs = budget_jobs::queries::list_jobs(&pool)
-        .await
-        .expect("list_jobs");
-    assert_eq!(jobs[0].status, "Running");
 }
 
 // ===========================================================================

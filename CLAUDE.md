@@ -15,7 +15,9 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 
 - Live backend tests (Enable Banking sandbox, Gemini API) use `#[ignore = "hits live ..."]`
 - Run them explicitly with: `cargo test -p budget-providers -- --ignored`
-- All other tests use in-memory SQLite + mock providers and run fast
+- All other tests use PostgreSQL (`#[sqlx::test]` creates temp databases) + mock providers
+- Requires `DATABASE_URL` env var pointing to a PG instance (e.g. `postgresql://budget@localhost:5432/budget`)
+- The `budget` PG user needs `CREATEDB` permission for `sqlx::test` to work
 
 ## Logging
 

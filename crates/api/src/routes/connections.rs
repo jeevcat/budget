@@ -80,7 +80,7 @@ struct StateTokenData {
     aspsp_name: String,
     #[allow(dead_code)]
     aspsp_country: String,
-    valid_until: String,
+    valid_until: chrono::DateTime<chrono::Utc>,
     institution_name: String,
 }
 
@@ -128,9 +128,7 @@ async fn authorize(
 
     let valid_until = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(i64::from(body.valid_days)))
-        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "invalid valid_days".to_owned()))?
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "invalid valid_days".to_owned()))?;
 
     let token = generate_state_token();
 
@@ -148,23 +146,22 @@ async fn authorize(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "time overflow".to_owned(),
             )
-        })?
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+        })?;
 
     state
         .db
-        .insert_state_token(&token, &token_data.to_string(), &expires_at)
+        .insert_state_token(&token, &token_data.to_string(), expires_at)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    let valid_until_str = valid_until.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let authorization_url = auth
         .start_authorization(
             &body.aspsp_name,
             &body.aspsp_country,
             &redirect_url,
             &token,
-            &valid_until,
+            &valid_until_str,
             &body.psu_type,
         )
         .await

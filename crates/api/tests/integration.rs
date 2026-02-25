@@ -1,11 +1,9 @@
-// Tests use in-memory SQLite — only compile when the sqlite feature is active.
-#![cfg(feature = "sqlite")]
-
 use axum::Router;
 use axum::body::Body;
 use axum::middleware;
 use http::Request;
 use http::StatusCode;
+use sqlx::PgPool;
 use tower::ServiceExt;
 
 use api::auth;
@@ -17,7 +15,7 @@ use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
     CategoryId, Project, Rule, Transaction, TransactionId,
 };
-use budget_jobs::{ApalisPool, LlmClient};
+use budget_jobs::LlmClient;
 use budget_providers::MockLlmProvider;
 
 /// Bearer token used in all test requests.
@@ -27,36 +25,24 @@ const TEST_SECRET: &str = "test-secret-key";
 // Shared test setup
 // ---------------------------------------------------------------------------
 
-/// Create a shared named in-memory `SQLite` database with all migrations
-/// applied, build the full application `Router`, and return both.
-async fn setup() -> (Router, Db) {
-    let url = format!(
-        "sqlite:file:apitest_{}?mode=memory&cache=shared",
-        uuid::Uuid::new_v4().simple()
-    );
-    let db = Db::connect(&url).await.expect("in-memory db");
-    let apalis_pool = ApalisPool::connect(&url).await.expect("apalis pool");
-
-    // Both migrators share the _sqlx_migrations table and must tolerate
-    // each other's entries so restarts on persistent databases work.
-    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator
-        .run(&apalis_pool)
+/// Wrap a `sqlx::test`-provided `PgPool` in the full application `Router`
+/// with apalis tables and domain migrations applied.
+async fn setup(pool: PgPool) -> (Router, Db) {
+    let db = Db::from_pool(pool.clone());
+    apalis_postgres::PostgresStorage::setup(&pool)
         .await
-        .expect("apalis migrations");
-
-    db.run_migrations(&url).await.expect("domain migrations");
+        .expect("apalis setup");
+    db.run_migrations().await.expect("domain migrations");
 
     let state = AppState {
         db: db.clone(),
         secret_key: TEST_SECRET.to_owned(),
-        sync_storage: JobStorage::new(&apalis_pool),
-        categorize_storage: JobStorage::new(&apalis_pool),
-        correlate_storage: JobStorage::new(&apalis_pool),
-        recompute_storage: JobStorage::new(&apalis_pool),
-        pipeline_storage: PipelineStorage::new(&apalis_pool),
-        apalis_pool: apalis_pool.clone(),
+        sync_storage: JobStorage::new(&pool),
+        categorize_storage: JobStorage::new(&pool),
+        correlate_storage: JobStorage::new(&pool),
+        recompute_storage: JobStorage::new(&pool),
+        pipeline_storage: PipelineStorage::new(&pool),
+        apalis_pool: pool,
         enable_banking_auth: None,
         llm: LlmClient::new(MockLlmProvider::new()),
         host: "http://localhost:3000".to_owned(),
@@ -186,9 +172,9 @@ fn get_unauthenticated(uri: &str) -> Request<Body> {
 // Accounts
 // ===========================================================================
 
-#[tokio::test]
-async fn accounts_list_empty() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_list_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
     let (status, body) = send(app, get("/api/accounts")).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -196,9 +182,9 @@ async fn accounts_list_empty() {
     assert!(accounts.is_empty());
 }
 
-#[tokio::test]
-async fn accounts_create_and_list() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_create_and_list(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-123",
@@ -227,18 +213,18 @@ async fn accounts_create_and_list() {
     assert_eq!(accounts[0].name, "My Checking");
 }
 
-#[tokio::test]
-async fn accounts_get_nonexistent_returns_404() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_get_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
     let fake_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, get(&format!("/api/accounts/{fake_id}"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
-async fn accounts_get_after_creation() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_get_after_creation(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-456",
@@ -263,9 +249,9 @@ async fn accounts_get_after_creation() {
     assert_eq!(fetched.account_type, AccountType::Savings);
 }
 
-#[tokio::test]
-async fn accounts_create_invalid_account_type_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_create_invalid_account_type_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-789",
@@ -283,9 +269,9 @@ async fn accounts_create_invalid_account_type_returns_400() {
 // Transactions
 // ===========================================================================
 
-#[tokio::test]
-async fn transactions_list_empty() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn transactions_list_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, get("/api/transactions")).await;
     assert_eq!(status, StatusCode::OK);
@@ -294,9 +280,9 @@ async fn transactions_list_empty() {
     assert!(txns.is_empty());
 }
 
-#[tokio::test]
-async fn transactions_uncategorized_returns_only_uncategorized() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     // Insert an account directly so we can reference it
     let account = Account {
@@ -377,9 +363,9 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
     assert_eq!(all_txns.len(), 2);
 }
 
-#[tokio::test]
-async fn transactions_categorize_success() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn transactions_categorize_success(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -443,9 +429,9 @@ async fn transactions_categorize_success() {
     assert_eq!(updated.category_id, Some(category.id));
 }
 
-#[tokio::test]
-async fn transactions_categorize_invalid_uuid_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn transactions_categorize_invalid_uuid_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "category_id": "not-a-uuid"
@@ -468,9 +454,9 @@ async fn transactions_categorize_invalid_uuid_returns_400() {
 // Categories
 // ===========================================================================
 
-#[tokio::test]
-async fn categories_create_and_list() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn categories_create_and_list(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "name": "Entertainment"
@@ -492,9 +478,9 @@ async fn categories_create_and_list() {
     assert_eq!(cats[0].name, "Entertainment");
 }
 
-#[tokio::test]
-async fn categories_delete_returns_204() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn categories_delete_returns_204(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({ "name": "ToDelete" });
     let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
@@ -517,9 +503,9 @@ async fn categories_delete_returns_204() {
     assert!(cats.is_empty());
 }
 
-#[tokio::test]
-async fn categories_create_with_parent() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn categories_create_with_parent(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     // Create parent
     let parent_payload = serde_json::json!({ "name": "Food" });
@@ -550,9 +536,9 @@ async fn categories_create_with_parent() {
 // Rules
 // ===========================================================================
 
-#[tokio::test]
-async fn rules_create_and_list() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_create_and_list(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     // Rules with target_category_id need a valid category for context,
     // but the DB schema only has a FK constraint. Insert a category first.
@@ -586,9 +572,9 @@ async fn rules_create_and_list() {
     assert_eq!(rules.len(), 1);
 }
 
-#[tokio::test]
-async fn rules_update() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_update(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -630,9 +616,9 @@ async fn rules_update() {
     assert_eq!(updated.id, created.id);
 }
 
-#[tokio::test]
-async fn rules_delete() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn rules_delete(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
@@ -656,9 +642,9 @@ async fn rules_delete() {
     assert!(rules.is_empty());
 }
 
-#[tokio::test]
-async fn rules_create_invalid_rule_type_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn rules_create_invalid_rule_type_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "rule_type": "invalid_type",
@@ -675,9 +661,9 @@ async fn rules_create_invalid_rule_type_returns_400() {
 // Rules: Generate & Apply
 // ===========================================================================
 
-#[tokio::test]
-async fn rules_generate_returns_empty_when_no_categorized_transactions() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn rules_generate_returns_empty_when_no_categorized_transactions(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, post_empty("/api/rules/generate")).await;
     assert_eq!(status, StatusCode::OK);
@@ -688,9 +674,9 @@ async fn rules_generate_returns_empty_when_no_categorized_transactions() {
     assert_eq!(resp["filtered_by_existing_rules"], 0);
 }
 
-#[tokio::test]
-async fn rules_generate_proposes_rule_from_categorized_transactions() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_generate_proposes_rule_from_categorized_transactions(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -771,9 +757,9 @@ async fn rules_generate_proposes_rule_from_categorized_transactions() {
     assert!(proposal["matches_count"].as_u64().expect("u64") >= 1);
 }
 
-#[tokio::test]
-async fn rules_generate_filters_merchants_covered_by_existing_rules() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_generate_filters_merchants_covered_by_existing_rules(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -837,9 +823,9 @@ async fn rules_generate_filters_merchants_covered_by_existing_rules() {
     assert_eq!(resp["proposals"].as_array().expect("array").len(), 0);
 }
 
-#[tokio::test]
-async fn rules_apply_with_no_rules_categorizes_nothing() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_apply_with_no_rules_categorizes_nothing(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -878,9 +864,9 @@ async fn rules_apply_with_no_rules_categorizes_nothing() {
     assert_eq!(resp["categorized_count"], 0);
 }
 
-#[tokio::test]
-async fn rules_apply_categorizes_matching_transactions() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -956,9 +942,9 @@ async fn rules_apply_categorizes_matching_transactions() {
     assert!(unchanged.category_id.is_none());
 }
 
-#[tokio::test]
-async fn rules_apply_skips_already_categorized_transactions() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
@@ -1035,17 +1021,17 @@ async fn rules_apply_skips_already_categorized_transactions() {
 // Budgets
 // ===========================================================================
 
-#[tokio::test]
-async fn budgets_status_returns_404_when_no_months() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn budgets_status_returns_404_when_no_months(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, get("/api/budgets/status")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
-async fn budgets_create_period() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_create_period(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1068,9 +1054,9 @@ async fn budgets_create_period() {
     assert_eq!(created.amount, rust_decimal::Decimal::new(150_000, 2));
 }
 
-#[tokio::test]
-async fn budgets_months_empty() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn budgets_months_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, get("/api/budgets/months")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1079,9 +1065,9 @@ async fn budgets_months_empty() {
     assert!(months.is_empty());
 }
 
-#[tokio::test]
-async fn budgets_delete_period() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_delete_period(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1112,9 +1098,9 @@ async fn budgets_delete_period() {
     assert!(periods.is_empty());
 }
 
-#[tokio::test]
-async fn budgets_status_with_current_month() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_status_with_current_month(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1154,9 +1140,9 @@ async fn budgets_status_with_current_month() {
 // Projects
 // ===========================================================================
 
-#[tokio::test]
-async fn projects_create_and_list() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn projects_create_and_list(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1201,9 +1187,9 @@ async fn projects_create_and_list() {
     assert_eq!(projects[0].name, "Kitchen Renovation");
 }
 
-#[tokio::test]
-async fn projects_update() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn projects_update(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1245,9 +1231,9 @@ async fn projects_update() {
     );
 }
 
-#[tokio::test]
-async fn projects_delete() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn projects_delete(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1280,9 +1266,9 @@ async fn projects_delete() {
     assert!(projects.is_empty());
 }
 
-#[tokio::test]
-async fn projects_create_invalid_date_returns_400() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn projects_create_invalid_date_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1305,51 +1291,51 @@ async fn projects_create_invalid_date_returns_400() {
 // Jobs
 // ===========================================================================
 
-#[tokio::test]
-async fn jobs_sync_returns_202() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_sync_returns_202(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
     let account_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, post_empty(&format!("/api/jobs/sync/{account_id}"))).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
-#[tokio::test]
-async fn jobs_categorize_returns_202() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_categorize_returns_202(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/categorize")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
-#[tokio::test]
-async fn jobs_correlate_returns_202() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_correlate_returns_202(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/correlate")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
-#[tokio::test]
-async fn jobs_recompute_returns_202() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_recompute_returns_202(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/recompute")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
-#[tokio::test]
-async fn jobs_pipeline_returns_202() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_pipeline_returns_202(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
     let account_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, post_empty(&format!("/api/jobs/pipeline/{account_id}"))).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
-#[tokio::test]
-async fn jobs_list_returns_empty_array() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_list_returns_empty_array(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, get("/api/jobs")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1358,9 +1344,9 @@ async fn jobs_list_returns_empty_array() {
     assert!(jobs.is_empty());
 }
 
-#[tokio::test]
-async fn jobs_list_returns_enqueued_job() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn jobs_list_returns_enqueued_job(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     // Enqueue a categorize job
     let (status, _body) = send(app.clone(), post_empty("/api/jobs/categorize")).await;
@@ -1381,27 +1367,27 @@ async fn jobs_list_returns_enqueued_job() {
 // Additional edge case tests
 // ===========================================================================
 
-#[tokio::test]
-async fn accounts_get_invalid_uuid_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_get_invalid_uuid_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, get("/api/accounts/not-a-uuid")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn categories_delete_nonexistent_returns_204() {
+#[sqlx::test]
+async fn categories_delete_nonexistent_returns_204(pool: PgPool) {
     // DELETE on a nonexistent row is not an error -- the SQL succeeds with 0 rows affected
-    let (app, _db) = setup().await;
+    let (app, _db) = setup(pool).await;
     let fake_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, delete(&format!("/api/categories/{fake_id}"))).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
-#[tokio::test]
-async fn rules_create_correlation_rule() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn rules_create_correlation_rule(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
@@ -1429,9 +1415,9 @@ async fn rules_create_correlation_rule() {
     );
 }
 
-#[tokio::test]
-async fn budgets_update_period() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_update_period(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1472,9 +1458,9 @@ async fn budgets_update_period() {
     assert_eq!(updated.amount, rust_decimal::Decimal::new(240_000, 2));
 }
 
-#[tokio::test]
-async fn projects_create_without_optional_fields() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn projects_create_without_optional_fields(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1498,9 +1484,9 @@ async fn projects_create_without_optional_fields() {
     assert!(created.budget_amount.is_none());
 }
 
-#[tokio::test]
-async fn transactions_categorize_with_invalid_txn_id_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn transactions_categorize_with_invalid_txn_id_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "category_id": uuid::Uuid::new_v4().to_string()
@@ -1514,9 +1500,9 @@ async fn transactions_categorize_with_invalid_txn_id_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn rules_create_invalid_match_field_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn rules_create_invalid_match_field_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
@@ -1529,9 +1515,9 @@ async fn rules_create_invalid_match_field_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn budgets_create_period_invalid_amount_returns_400() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_create_period_invalid_amount_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1550,9 +1536,9 @@ async fn budgets_create_period_invalid_amount_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn accounts_create_all_types() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn accounts_create_all_types(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     for account_type in &[
         "checking",
@@ -1585,9 +1571,9 @@ async fn accounts_create_all_types() {
     assert_eq!(accounts.len(), 6);
 }
 
-#[tokio::test]
-async fn budgets_create_period_invalid_period_type_returns_400() {
-    let (app, db) = setup().await;
+#[sqlx::test]
+async fn budgets_create_period_invalid_period_type_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
 
     let category = Category {
         id: CategoryId::new(),
@@ -1606,9 +1592,9 @@ async fn budgets_create_period_invalid_period_type_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn projects_create_invalid_category_uuid_returns_400() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn projects_create_invalid_category_uuid_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
         "name": "Bad UUID Project",
@@ -1624,9 +1610,9 @@ async fn projects_create_invalid_category_uuid_returns_400() {
 // Authentication
 // ===========================================================================
 
-#[tokio::test]
-async fn auth_health_is_unauthenticated() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn auth_health_is_unauthenticated(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, get_unauthenticated("/health")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1635,17 +1621,17 @@ async fn auth_health_is_unauthenticated() {
     assert_eq!(parsed["status"], "ok");
 }
 
-#[tokio::test]
-async fn auth_api_rejects_missing_token() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn auth_api_rejects_missing_token(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, get_unauthenticated("/api/accounts")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn auth_api_rejects_wrong_token() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn auth_api_rejects_wrong_token(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let request = Request::builder()
         .uri("/api/accounts")
@@ -1658,9 +1644,9 @@ async fn auth_api_rejects_wrong_token() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn auth_api_rejects_malformed_header() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn auth_api_rejects_malformed_header(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let request = Request::builder()
         .uri("/api/accounts")
@@ -1673,9 +1659,9 @@ async fn auth_api_rejects_malformed_header() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn auth_api_accepts_valid_token() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn auth_api_accepts_valid_token(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, get("/api/accounts")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1685,9 +1671,9 @@ async fn auth_api_accepts_valid_token() {
 // Connections
 // ===========================================================================
 
-#[tokio::test]
-async fn connections_list_empty() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn connections_list_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, body) = send(app, get("/api/connections")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1697,17 +1683,17 @@ async fn connections_list_empty() {
     assert!(connections.is_empty());
 }
 
-#[tokio::test]
-async fn connections_aspsps_returns_501_when_not_configured() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn connections_aspsps_returns_501_when_not_configured(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, get("/api/connections/aspsps?country=FI")).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
 }
 
-#[tokio::test]
-async fn connections_callback_rejects_invalid_state() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn connections_callback_rejects_invalid_state(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     // The callback endpoint should return 501 because enable_banking_auth is None.
     // But if it were configured, an invalid state token would return 400.
@@ -1720,9 +1706,9 @@ async fn connections_callback_rejects_invalid_state() {
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
 }
 
-#[tokio::test]
-async fn connections_callback_is_unauthenticated() {
-    let (app, _db) = setup().await;
+#[sqlx::test]
+async fn connections_callback_is_unauthenticated(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
 
     // The callback endpoint should NOT return 401, proving it's unauthenticated.
     // It should return 501 (not configured) rather than 401 (unauthorized).
@@ -1736,87 +1722,4 @@ async fn connections_callback_is_unauthenticated() {
         StatusCode::UNAUTHORIZED,
         "callback must be unauthenticated"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Migrations
-// ---------------------------------------------------------------------------
-
-/// The startup migration sequence (apalis then domain) must be idempotent.
-/// Running it twice on the same database — as happens on every server
-/// restart — must not produce `VersionMissing` or any other error.
-#[tokio::test]
-async fn migrations_are_idempotent_with_apalis() {
-    let pool = ApalisPool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory pool");
-
-    // First pass: normal startup sequence
-    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator
-        .run(&pool)
-        .await
-        .expect("apalis migrations (first pass)");
-
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator
-        .run(&pool)
-        .await
-        .expect("domain migrations (first pass)");
-
-    // Second pass: simulates a server restart
-    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator
-        .run(&pool)
-        .await
-        .expect("apalis migrations (second pass)");
-
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator
-        .run(&pool)
-        .await
-        .expect("domain migrations must succeed on second run (simulates restart)");
-}
-
-/// Domain migrations must apply cleanly to a database where only apalis
-/// migrations have run.  This is the scenario where a persistent DB had
-/// apalis tables created (via an older binary or manual setup) before
-/// any domain migrations were added.
-///
-/// Without `ignore_missing` on both migrators, sqlx rejects low-numbered
-/// domain versions when higher-numbered apalis entries already exist.
-#[tokio::test]
-async fn domain_migrations_apply_after_only_apalis() {
-    let pool = ApalisPool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory pool");
-
-    // Only apalis migrations applied (simulates a DB from before any
-    // domain schema existed, or where domain records were lost)
-    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator.run(&pool).await.expect("apalis migrations");
-
-    // Verify apalis versions are present (they use timestamps > 20220000000000)
-    let apalis_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version > 1000000")
-            .fetch_one(&pool)
-            .await
-            .expect("count apalis migrations");
-    assert!(
-        apalis_count > 0,
-        "apalis should have recorded its migrations"
-    );
-
-    // Now domain migrations must apply even though higher versions exist
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator
-        .run(&pool)
-        .await
-        .expect("domain migrations must apply after apalis-only DB");
 }

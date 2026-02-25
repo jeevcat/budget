@@ -26,21 +26,10 @@ pub mod sync;
 // compile-time feature flag.
 // ---------------------------------------------------------------------------
 
-/// Concrete pool type for apalis storage, selected at compile time.
-/// When both features are active (e.g. `--all-features`), sqlite wins.
-#[cfg(feature = "sqlite")]
-pub type ApalisPool = sqlx::SqlitePool;
-
-/// Concrete pool type for apalis storage, selected at compile time.
-#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+/// Concrete pool type for apalis storage (`PostgreSQL`).
 pub type ApalisPool = sqlx::postgres::PgPool;
 
-/// Apalis jobs table name — differs between backends.
-#[cfg(feature = "sqlite")]
-pub const JOBS_TABLE: &str = "Jobs";
-
-/// Apalis jobs table name — differs between backends.
-#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+/// Apalis jobs table name.
 pub const JOBS_TABLE: &str = "apalis.jobs";
 
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
