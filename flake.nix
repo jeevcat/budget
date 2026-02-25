@@ -32,10 +32,10 @@
             frontend_dir = "${cfg.package}/share/budget/frontend"
           '';
 
-          # Script to merge secrets into config at runtime.
+          # Wrapper that writes config (merging secrets) and execs the binary.
           # Uses $STATE_DIRECTORY (set by systemd) so it works with DynamicUser
           # regardless of the actual dataDir path.
-          writeConfig = pkgs.writeShellScript "budget-write-config" ''
+          startScript = pkgs.writeShellScript "budget-start" ''
             set -euo pipefail
             CONFIG_DIR="$STATE_DIRECTORY/config/budget"
             mkdir -p "$CONFIG_DIR"
@@ -55,8 +55,8 @@
             gemini_api_key = "$GEMINI_KEY"
             EOF
 
-            # Write env file for the main process
-            echo "XDG_CONFIG_HOME=$STATE_DIRECTORY/config" > "$STATE_DIRECTORY/budget.env"
+            export XDG_CONFIG_HOME="$STATE_DIRECTORY/config"
+            exec ${cfg.package}/bin/budget
           '';
         in
         {
@@ -137,11 +137,9 @@
                 Type = "simple";
                 DynamicUser = true;
                 StateDirectory = "budget";
-                ExecStartPre = writeConfig;
-                ExecStart = "${cfg.package}/bin/budget";
+                ExecStart = startScript;
                 WorkingDirectory = cfg.dataDir;
                 ReadWritePaths = [ cfg.dataDir ];
-                EnvironmentFile = "%S/budget/budget.env";
 
                 LoadCredential = [
                   "secret-key:${cfg.secretKeyFile}"
