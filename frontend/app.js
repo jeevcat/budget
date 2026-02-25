@@ -76,14 +76,47 @@ function amountClass(amount) {
   return "";
 }
 
-function categoryName(catMap, id) {
+function categoryLabel(catMap, id) {
   if (!id) return null;
   const cat = catMap[id];
   if (!cat) return null;
   if (cat.parent_id && catMap[cat.parent_id]) {
-    return `${catMap[cat.parent_id].name} > ${cat.name}`;
+    const parent = catMap[cat.parent_id].name;
+    const short = cat.name.startsWith(`${parent}:`)
+      ? cat.name.slice(parent.length + 1)
+      : cat.name;
+    return { parent, short };
   }
-  return cat.name;
+  return { parent: null, short: cat.name };
+}
+
+function categoryName(catMap, id) {
+  const label = categoryLabel(catMap, id);
+  if (!label) return null;
+  return label.parent ? `${label.parent} > ${label.short}` : label.short;
+}
+
+function titleCase(s) {
+  return s.toLowerCase().replace(/(?:^|\s|[-./])\S/g, (ch) => ch.toUpperCase());
+}
+
+function cleanMerchant(name) {
+  if (!name) return name;
+  let s = name;
+  s = s.replace(/^VISA\s+/, "");
+  s = s.replace(/^SUMUP\s+\*\s*/, "");
+  if (s === s.toUpperCase() && s.length > 2) s = titleCase(s);
+  return s;
+}
+
+function cleanDescription(desc) {
+  if (!desc) return null;
+  const m = desc.match(/remittanceinformation:(.*)/);
+  if (!m) return desc;
+  let info = m[1].trim();
+  if (!info) return null;
+  if (/^NR XXXX \d{4}\s/.test(info)) return null;
+  return info;
 }
 
 function paceBadge(pace) {
@@ -144,11 +177,92 @@ function Dashboard() {
 // Transactions
 // ---------------------------------------------------------------------------
 
+function CategoryBadge({ catMap, id, suggested }) {
+  const label = categoryLabel(catMap, id);
+  if (label) {
+    if (label.parent) {
+      return html`<span title="${label.parent} > ${label.short}">
+        <span class="cat-parent">${label.parent}</span>${label.short}
+      </span>`;
+    }
+    return html`<span>${label.short}</span>`;
+  }
+  if (suggested) {
+    return html`<span class="badge" title="LLM suggestion">${suggested}</span>`;
+  }
+  return html`<span class="badge secondary">uncategorized</span>`;
+}
+
+function TxnDetail({ txn, catMap, acctMap, onClose }) {
+  if (!txn) return null;
+  const ref = (el) => {
+    if (el && !el.open) {
+      el.addEventListener("close", onClose, { once: true });
+      el.showModal();
+    }
+  };
+  const desc = cleanDescription(txn.description);
+  const label = categoryLabel(catMap, txn.category_id);
+  return html`
+    <dialog ref=${ref} closedby="any">
+      <form method="dialog">
+        <header>
+          <h3>${cleanMerchant(txn.merchant_name || txn.description)}</h3>
+        </header>
+        <div>
+          <dl class="txn-dl">
+            <dt>Date</dt><dd>${txn.posted_date}</dd>
+            <dt>Amount</dt><dd class="mono ${amountClass(txn.amount)}">${formatAmount(txn.amount)}</dd>
+            ${
+              txn.original_amount
+                ? html`
+              <dt>Original</dt><dd class="mono">${txn.original_amount} ${txn.original_currency}</dd>
+            `
+                : null
+            }
+            <dt>Category</dt>
+            <dd>${label ? (label.parent ? `${label.parent} > ${label.short}` : label.short) : html`<span class="text-light">uncategorized</span>`}</dd>
+            <dt>Account</dt><dd>${acctMap[txn.account_id]?.name ?? txn.account_id}</dd>
+            ${
+              txn.correlation_type
+                ? html`
+              <dt>Correlation</dt><dd><span class="badge">${txn.correlation_type}</span></dd>
+            `
+                : null
+            }
+            ${
+              txn.merchant_name
+                ? html`
+              <dt>Raw merchant</dt><dd><code>${txn.merchant_name}</code></dd>
+            `
+                : null
+            }
+            ${
+              desc
+                ? html`
+              <dt>Note</dt><dd>${desc}</dd>
+            `
+                : null
+            }
+          </dl>
+        </div>
+        <footer>
+          <button value="close">Close</button>
+        </footer>
+      </form>
+    </dialog>
+  `;
+}
+
 function Transactions() {
   const [txns, setTxns] = useState(null);
   const [categories, setCategories] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterCat, setFilterCat] = useState("");
+  const [filterAcct, setFilterAcct] = useState("");
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -179,12 +293,61 @@ function Transactions() {
       </p>
     `;
 
+  const q = search.toLowerCase();
+  const filtered = txns.filter((t) => {
+    if (
+      q &&
+      !(t.merchant_name || "").toLowerCase().includes(q) &&
+      !(t.description || "").toLowerCase().includes(q)
+    )
+      return false;
+    if (filterCat === "__none" && t.category_id) return false;
+    if (filterCat && filterCat !== "__none" && t.category_id !== filterCat)
+      return false;
+    if (filterAcct && t.account_id !== filterAcct) return false;
+    return true;
+  });
+
+  const usedCatIds = [
+    ...new Set(txns.map((t) => t.category_id).filter(Boolean)),
+  ];
+  const usedAcctIds = [...new Set(txns.map((t) => t.account_id))];
+
   return html`
     <h2>Transactions</h2>
-    <p class="muted" style="margin-bottom:1rem">
-      ${txns.length} transaction${txns.length !== 1 ? "s" : ""}
-    </p>
-    <div class="table">
+
+    <div class="hstack gap-2 mb-4">
+      <input
+        type="search"
+        placeholder="Search merchants..."
+        class="txn-search"
+        value=${search}
+        onInput=${(e) => setSearch(e.target.value)}
+      />
+      <select value=${filterCat} onChange=${(e) => setFilterCat(e.target.value)}>
+        <option value="">All categories</option>
+        <option value="__none">Uncategorized</option>
+        ${usedCatIds.map(
+          (id) =>
+            html`<option value=${id}>${categoryName(catMap, id)}</option>`,
+        )}
+      </select>
+      <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
+        <option value="">All accounts</option>
+        ${usedAcctIds.map(
+          (id) => html`<option value=${id}>${acctMap[id]?.name ?? id}</option>`,
+        )}
+      </select>
+      <span class="text-lighter small" style="margin-left:auto">
+        ${
+          filtered.length === txns.length
+            ? `${txns.length} transaction${txns.length !== 1 ? "s" : ""}`
+            : `${filtered.length} of ${txns.length}`
+        }
+      </span>
+    </div>
+
+    <div class="table txn-table">
       <table>
         <thead>
           <tr>
@@ -196,26 +359,17 @@ function Transactions() {
           </tr>
         </thead>
         <tbody>
-          ${txns.map(
+          ${filtered.map(
             (t) => html`
-              <tr class=${t.correlation_type ? "row-correlated" : ""}>
+              <tr
+                class=${t.correlation_type ? "row-correlated" : ""}
+                onClick=${() => setSelected(t)}
+              >
                 <td class="mono">${t.posted_date}</td>
-                <td>
-                  <span style="font-weight:500">${t.merchant_name || t.description}</span>
-                  ${
-                    t.description && t.merchant_name
-                      ? html`<span class="muted" style="display:block;font-size:0.8rem">${t.description}</span>`
-                      : null
-                  }
-                </td>
+                <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
                 <td class="mono ${amountClass(t.amount)}">${formatAmount(t.amount)}</td>
                 <td>
-                  ${
-                    categoryName(catMap, t.category_id) ??
-                    (t.suggested_category
-                      ? html`<span class="badge" title="LLM suggestion">${t.suggested_category}</span>`
-                      : html`<span class="badge secondary">uncategorized</span>`)
-                  }
+                  <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
                   ${
                     t.correlation_type
                       ? html`<span class="badge">${t.correlation_type}</span>`
@@ -229,6 +383,13 @@ function Transactions() {
         </tbody>
       </table>
     </div>
+
+    <${TxnDetail}
+      txn=${selected}
+      catMap=${catMap}
+      acctMap=${acctMap}
+      onClose=${() => setSelected(null)}
+    />
   `;
 }
 

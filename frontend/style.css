@@ -105,3 +105,46 @@
   font-weight: 600;
   font-family: var(--oat-font-mono, ui-monospace, monospace);
 }
+
+/* Transactions */
+.txn-search {
+  flex: 1;
+  min-width: 160px;
+}
+
+.txn-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--background);
+  z-index: 1;
+}
+
+.txn-table tbody tr {
+  cursor: pointer;
+}
+
+.cat-parent {
+  color: var(--muted);
+  margin-right: 0.15em;
+}
+
+.cat-parent::after {
+  content: "\203A";
+  margin-left: 0.2em;
+}
+
+.txn-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+}
+
+.txn-dl dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.txn-dl dd {
+  margin: 0;
+  word-break: break-word;
+}

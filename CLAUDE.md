@@ -24,6 +24,11 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Change verbosity: set `RUST_LOG` env var (default: `budget=debug,tower_http=debug,info`)
 - `cargo run -- config` prints both the config path and log path
 
+## Frontend
+
+- **Use [Oat CSS](https://oat.ink/) classes and components** — do not write custom CSS unless Oat has no suitable option
+- Full reference: `frontend/oat-reference.md` — check this before adding anything to `style.css`
+
 ## Coding Standards
 
 - **Never suppress clippy lints** without explicit human approval
