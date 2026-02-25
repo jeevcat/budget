@@ -259,9 +259,12 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
 
     // Use build timestamp for Last-Modified so Cloudflare cache invalidates on deploy.
     // Nix store files have epoch timestamps which never change between builds.
-    let build_time = httpdate::fmt_http_date(std::time::SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(env!("SOURCE_DATE_EPOCH").parse().unwrap_or(0)));
-    let last_modified = http::HeaderValue::from_str(&build_time).unwrap();
+    let build_epoch: u64 = env!("SOURCE_DATE_EPOCH")
+        .parse()
+        .expect("SOURCE_DATE_EPOCH must be a valid u64");
+    let build_time =
+        httpdate::fmt_http_date(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(build_epoch));
+    let last_modified = http::HeaderValue::from_str(&build_time).expect("valid HTTP date");
 
     let static_files = ServeDir::new(frontend_dir)
         .append_index_html_on_directories(true)
@@ -273,6 +276,10 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .layer(SetResponseHeaderLayer::overriding(
             http::header::LAST_MODIFIED,
             last_modified,
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            http::header::CACHE_CONTROL,
+            http::HeaderValue::from_static("public, max-age=86400, must-revalidate"),
         ))
         .service(static_files);
 
