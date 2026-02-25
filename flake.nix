@@ -16,7 +16,12 @@
     }:
     let
       nixosModule =
-        { config, lib, pkgs, ... }:
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
         let
           cfg = config.services.budget;
 
@@ -121,8 +126,10 @@
           config = lib.mkIf cfg.enable {
             systemd.services.budget = {
               description = "Budget personal finance tracker";
-              after = [ "network.target" ]
-                ++ lib.optional (lib.hasPrefix "postgres" cfg.databaseUrl) "postgresql.service";
+              after = [
+                "network.target"
+              ]
+              ++ lib.optional (lib.hasPrefix "postgres" cfg.databaseUrl) "postgresql.service";
               wantedBy = [ "multi-user.target" ];
 
               serviceConfig = {
@@ -142,60 +149,67 @@
           };
         };
     in
-    (flake-utils.lib.eachSystem [
-      "x86_64-linux"
-      "aarch64-linux"
-    ] (
-      system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
-        craneLib = crane.mkLib pkgs;
+    (flake-utils.lib.eachSystem
+      [
+        "x86_64-linux"
+        "aarch64-linux"
+      ]
+      (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          craneLib = crane.mkLib pkgs;
+          lib = pkgs.lib;
 
-        # Only include source files relevant to the Rust build
-        src = lib.fileset.toSource {
-          root = ./.;
-          fileset = lib.fileset.unions [
-            (craneLib.fileset.commonCargoSources ./.)
-            ./migrations
-            ./frontend
-          ];
-        };
-        lib = pkgs.lib;
+          # Deps source: only Cargo files, so deps cache isn't invalidated by
+          # migration or frontend changes
+          depsSrc = craneLib.cleanCargoSource ./.;
 
-        commonArgs = {
-          inherit src;
-          strictDeps = true;
-          nativeBuildInputs = with pkgs; [
-            pkg-config
-          ];
-          buildInputs = with pkgs; [
-            openssl
-            postgresql
-          ];
-        };
+          # Full source: includes migrations (for sqlx::migrate! macro) and frontend
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (craneLib.fileset.commonCargoSources ./.)
+              ./migrations
+              ./frontend
+            ];
+          };
 
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          commonArgs = {
+            strictDeps = true;
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+            ];
+            buildInputs = with pkgs; [
+              openssl
+              postgresql
+            ];
+          };
 
-        budget = craneLib.buildPackage (
-          commonArgs
-          // {
-            inherit cargoArtifacts;
-            # Tests require a live PostgreSQL instance (sqlx::test)
-            doCheck = false;
+          # Build external deps only (no workspace crates that use sqlx::migrate!)
+          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = depsSrc; });
 
-            postInstall = ''
-              mkdir -p $out/share/budget
-              cp -r frontend $out/share/budget/frontend
-            '';
-          }
-        );
-      in
-      {
-        packages.default = budget;
+          budget = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit src cargoArtifacts;
+              # Tests require a live PostgreSQL instance (sqlx::test)
+              doCheck = false;
 
-        checks.default = budget;
-      }
-    ))
+              postInstall = ''
+                mkdir -p $out/share/budget
+                cp -r frontend $out/share/budget/frontend
+              '';
+            }
+          );
+        in
+        {
+          packages.default = budget;
+
+          checks.default = budget;
+        }
+      )
+    )
     // {
       nixosModules.default = nixosModule;
     };
