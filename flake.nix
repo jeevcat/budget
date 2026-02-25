@@ -30,6 +30,7 @@
             server_port = ${toString cfg.port}
             host = "${cfg.host}"
             frontend_dir = "${cfg.package}/share/budget/frontend"
+            gemini_api_key = "${cfg.geminiApiKey}"
           '';
 
           # Wrapper that writes config (merging secrets) and execs the binary.
@@ -42,7 +43,6 @@
 
             SECRET_KEY="$(cat "$CREDENTIALS_DIRECTORY/secret-key")"
             EB_KEY_PATH="$CREDENTIALS_DIRECTORY/eb-private-key"
-            GEMINI_KEY="$(cat "$CREDENTIALS_DIRECTORY/gemini-api-key")"
             EB_APP_ID="${cfg.enableBanking.appId}"
 
             cp ${baseConfig} "$CONFIG_DIR/default-config.toml"
@@ -52,7 +52,6 @@
             secret_key = "$SECRET_KEY"
             enable_banking_app_id = "$EB_APP_ID"
             enable_banking_private_key_path = "$EB_KEY_PATH"
-            gemini_api_key = "$GEMINI_KEY"
             EOF
 
             export XDG_CONFIG_HOME="$STATE_DIRECTORY/config"
@@ -103,9 +102,9 @@
               };
             };
 
-            geminiApiKeyFile = lib.mkOption {
-              type = lib.types.path;
-              description = "File containing the Gemini API key.";
+            geminiApiKey = lib.mkOption {
+              type = lib.types.str;
+              description = "Gemini API key.";
             };
 
             llmModel = lib.mkOption {
@@ -143,7 +142,6 @@
                 LoadCredential = [
                   "secret-key:${cfg.secretKeyFile}"
                   "eb-private-key:${cfg.enableBanking.privateKeyFile}"
-                  "gemini-api-key:${cfg.geminiApiKeyFile}"
                 ];
 
                 # Hardening
