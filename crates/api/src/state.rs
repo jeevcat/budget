@@ -127,6 +127,8 @@ pub struct AppState {
     pub recompute_storage: JobStorage<BudgetRecomputeJob>,
     /// Storage for enqueuing full-sync pipeline workflows.
     pub pipeline_storage: PipelineStorage,
+    /// Typed pool for apalis job queries (list, counts, reclaim).
+    pub apalis_pool: ApalisPool,
     /// Enable Banking auth provider (None if not configured).
     pub enable_banking_auth: Option<Arc<EnableBankingAuth>>,
     /// Public base URL (e.g. `https://budget.example.com`). Derived from

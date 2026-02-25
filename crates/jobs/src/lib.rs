@@ -14,6 +14,7 @@ use budget_providers::{
 pub mod categorize;
 pub mod correlate;
 pub mod pipeline;
+pub mod queries;
 pub mod recompute;
 pub mod sync;
 

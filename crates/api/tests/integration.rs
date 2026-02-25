@@ -55,6 +55,7 @@ async fn setup() -> (Router, Db) {
         correlate_storage: JobStorage::new(&apalis_pool),
         recompute_storage: JobStorage::new(&apalis_pool),
         pipeline_storage: PipelineStorage::new(&apalis_pool),
+        apalis_pool: apalis_pool.clone(),
         enable_banking_auth: None,
         host: "http://localhost:3000".to_owned(),
     };

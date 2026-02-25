@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         correlate_storage: JobStorage::new(&apalis_pool),
         recompute_storage: JobStorage::new(&apalis_pool),
         pipeline_storage: PipelineStorage::new(&apalis_pool),
+        apalis_pool: apalis_pool.clone(),
         enable_banking_auth,
         host: config
             .host
@@ -160,14 +161,9 @@ async fn run_migrations(
 
     // No workers are active yet, so any "Running" jobs are stale locks from
     // a previous process. Reset them so workers pick them up immediately.
-    let reset = sqlx::query(&format!(
-        "UPDATE {} SET status = 'Pending', lock_by = NULL, lock_at = NULL WHERE status = 'Running'",
-        budget_jobs::JOBS_TABLE,
-    ))
-    .execute(apalis_pool)
-    .await?;
-    if reset.rows_affected() > 0 {
-        tracing::info!(count = reset.rows_affected(), "reset stale running jobs");
+    let reset = budget_jobs::queries::reset_all_running(apalis_pool).await?;
+    if reset > 0 {
+        tracing::info!(count = reset, "reset stale running jobs");
     }
 
     Ok(())
@@ -179,28 +175,12 @@ async fn run_migrations(
 /// Resetting to `Pending` lets another worker pick the job up.
 async fn reclaim_stale_jobs_loop(pool: ApalisPool) {
     const STALE_SECONDS: i64 = 300; // 5 minutes
-
-    #[cfg(feature = "sqlite")]
-    const RECLAIM_SQL: &str = "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
-         WHERE status = 'Running' AND lock_at < ?";
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    const RECLAIM_SQL: &str = "UPDATE apalis.jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
-         WHERE status = 'Running' AND lock_at < $1";
-
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-
-        #[cfg(feature = "sqlite")]
-        let cutoff = chrono::Utc::now().timestamp() - STALE_SECONDS;
-
-        #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(STALE_SECONDS);
-
-        match sqlx::query(RECLAIM_SQL).bind(cutoff).execute(&pool).await {
-            Ok(res) if res.rows_affected() > 0 => {
-                tracing::info!(count = res.rows_affected(), "reclaimed stale jobs");
+        match budget_jobs::queries::reclaim_stale(&pool, STALE_SECONDS).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "reclaimed stale jobs");
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to reclaim stale jobs");
