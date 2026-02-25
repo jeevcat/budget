@@ -8,7 +8,7 @@ use apalis::prelude::*;
 
 use budget_core::db::Db;
 
-use super::BankProviderFactory;
+use super::{ApalisPool, BankProviderFactory};
 
 /// Step 1: Sync transactions for the given account.
 ///
@@ -29,8 +29,12 @@ pub async fn step_sync(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn step_categorize(account_id: String, db: Data<Db>) -> Result<String, BoxDynError> {
-    super::categorize::categorize_fan_out(&db).await?;
+pub async fn step_categorize(
+    account_id: String,
+    db: Data<Db>,
+    apalis_pool: Data<ApalisPool>,
+) -> Result<String, BoxDynError> {
+    super::categorize::categorize_fan_out(&db, &apalis_pool).await?;
     Ok(account_id)
 }
 
@@ -39,8 +43,12 @@ pub async fn step_categorize(account_id: String, db: Data<Db>) -> Result<String,
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn step_correlate(account_id: String, db: Data<Db>) -> Result<String, BoxDynError> {
-    super::correlate::correlate_fan_out(&db).await?;
+pub async fn step_correlate(
+    account_id: String,
+    db: Data<Db>,
+    apalis_pool: Data<ApalisPool>,
+) -> Result<String, BoxDynError> {
+    super::correlate::correlate_fan_out(&db, &apalis_pool).await?;
     Ok(account_id)
 }
 

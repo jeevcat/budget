@@ -5,14 +5,13 @@
 //! one `CorrelateTransactionJob` per remaining transaction for LLM processing.
 
 use apalis::prelude::*;
-use apalis_sqlite::SqliteStorage;
 
 use budget_core::db::Db;
 use budget_core::models::{CorrelationType, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_correlation_rules};
 use budget_providers::TransactionSummary;
 
-use super::{CorrelateJob, CorrelateTransactionJob, LlmClient};
+use super::{ApalisPool, CorrelateJob, CorrelateTransactionJob, LlmClient};
 
 /// Minimum LLM confidence required to auto-link a correlation.
 const LLM_CONFIDENCE_THRESHOLD: f64 = 0.8;
@@ -48,7 +47,10 @@ fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
 /// # Errors
 ///
 /// Returns an error if any database query or enqueue operation fails.
-pub(crate) async fn correlate_fan_out(db: &Db) -> Result<(), BoxDynError> {
+pub(crate) async fn correlate_fan_out(
+    db: &Db,
+    apalis_pool: &ApalisPool,
+) -> Result<(), BoxDynError> {
     // -- Compile correlation rules -------------------------------------------
     let raw_rules = db.list_rules_by_type(RuleType::Correlation).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
@@ -75,7 +77,13 @@ pub(crate) async fn correlate_fan_out(db: &Db) -> Result<(), BoxDynError> {
 
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
-    let mut storage = SqliteStorage::<CorrelateTransactionJob, _, _>::new(db.pool());
+
+    #[cfg(feature = "sqlite")]
+    let mut storage =
+        apalis_sqlite::SqliteStorage::<CorrelateTransactionJob, _, _>::new(apalis_pool);
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    let mut storage = apalis_postgres::PostgresStorage::new(apalis_pool);
 
     for txn in &uncorrelated {
         if paired.contains(&txn.id) {
@@ -187,8 +195,12 @@ pub async fn handle_correlate_transaction_job(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn handle_correlate_job(_job: CorrelateJob, db: Data<Db>) -> Result<(), BoxDynError> {
-    correlate_fan_out(&db).await
+pub async fn handle_correlate_job(
+    _job: CorrelateJob,
+    db: Data<Db>,
+    apalis_pool: Data<ApalisPool>,
+) -> Result<(), BoxDynError> {
+    correlate_fan_out(&db, &apalis_pool).await
 }
 
 /// Persist a bidirectional correlation link between two transactions.

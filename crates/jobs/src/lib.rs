@@ -17,6 +17,31 @@ pub mod pipeline;
 pub mod recompute;
 pub mod sync;
 
+// ---------------------------------------------------------------------------
+// Apalis pool type alias
+//
+// Apalis storage backends need a concrete pool type (SqlitePool or PgPool)
+// rather than AnyPool. This alias selects the right one based on the
+// compile-time feature flag.
+// ---------------------------------------------------------------------------
+
+/// Concrete pool type for apalis storage, selected at compile time.
+/// When both features are active (e.g. `--all-features`), sqlite wins.
+#[cfg(feature = "sqlite")]
+pub type ApalisPool = sqlx::SqlitePool;
+
+/// Concrete pool type for apalis storage, selected at compile time.
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub type ApalisPool = sqlx::postgres::PgPool;
+
+/// Apalis jobs table name — differs between backends.
+#[cfg(feature = "sqlite")]
+pub const JOBS_TABLE: &str = "Jobs";
+
+/// Apalis jobs table name — differs between backends.
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub const JOBS_TABLE: &str = "apalis.jobs";
+
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
 pub use recompute::handle_recompute_job;

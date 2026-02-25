@@ -5,13 +5,12 @@
 //! one `CategorizeTransactionJob` per remaining transaction for LLM processing.
 
 use apalis::prelude::*;
-use apalis_sqlite::SqliteStorage;
 
 use budget_core::db::Db;
 use budget_core::models::{RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_categorization_rules};
 
-use super::{CategorizeJob, CategorizeTransactionJob, LlmClient};
+use super::{ApalisPool, CategorizeJob, CategorizeTransactionJob, LlmClient};
 
 /// Minimum LLM confidence required to auto-assign a category.
 const LLM_CONFIDENCE_THRESHOLD: f64 = 0.8;
@@ -22,7 +21,10 @@ const LLM_CONFIDENCE_THRESHOLD: f64 = 0.8;
 /// # Errors
 ///
 /// Returns an error if any database query or enqueue operation fails.
-pub(crate) async fn categorize_fan_out(db: &Db) -> Result<(), BoxDynError> {
+pub(crate) async fn categorize_fan_out(
+    db: &Db,
+    apalis_pool: &ApalisPool,
+) -> Result<(), BoxDynError> {
     // -- Compile categorization rules ----------------------------------------
     let raw_rules = db.list_rules_by_type(RuleType::Categorization).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
@@ -45,7 +47,13 @@ pub(crate) async fn categorize_fan_out(db: &Db) -> Result<(), BoxDynError> {
 
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
-    let mut storage = SqliteStorage::<CategorizeTransactionJob, _, _>::new(db.pool());
+
+    #[cfg(feature = "sqlite")]
+    let mut storage =
+        apalis_sqlite::SqliteStorage::<CategorizeTransactionJob, _, _>::new(apalis_pool);
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    let mut storage = apalis_postgres::PostgresStorage::new(apalis_pool);
 
     for txn in &uncategorized {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
@@ -153,6 +161,10 @@ pub async fn handle_categorize_transaction_job(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn handle_categorize_job(_job: CategorizeJob, db: Data<Db>) -> Result<(), BoxDynError> {
-    categorize_fan_out(&db).await
+pub async fn handle_categorize_job(
+    _job: CategorizeJob,
+    db: Data<Db>,
+    apalis_pool: Data<ApalisPool>,
+) -> Result<(), BoxDynError> {
+    categorize_fan_out(&db, &apalis_pool).await
 }

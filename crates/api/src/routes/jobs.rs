@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
+use sqlx::Row;
 
 use budget_jobs::{BudgetRecomputeJob, CategorizeJob, CorrelateJob, SyncJob};
 
@@ -19,9 +20,18 @@ struct QueueCount {
     failed: i64,
 }
 
+/// Individual job record for the jobs list endpoint.
+#[derive(Serialize)]
+struct JobRecord {
+    job_type: String,
+    status: String,
+    run_at: String,
+}
+
 /// Build the jobs sub-router.
 ///
 /// Mounts:
+/// - `GET /` -- list all jobs
 /// - `GET /counts` -- queue depth per job type
 /// - `POST /sync/{account_id}` -- enqueue a bank sync job
 /// - `POST /categorize` -- enqueue a categorization job
@@ -34,6 +44,7 @@ struct QueueCount {
 /// Individual handlers return `AppError` on failure.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/", get(list_jobs))
         .route("/counts", get(queue_counts))
         .route("/sync/{account_id}", post(trigger_sync))
         .route("/categorize", post(trigger_categorize))
@@ -42,21 +53,52 @@ pub fn router() -> Router<AppState> {
         .route("/pipeline/{account_id}", post(trigger_pipeline))
 }
 
+/// List all jobs ordered by most recent first.
+///
+/// # Errors
+///
+/// Returns `AppError` on database failure.
+async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>, AppError> {
+    let rows = sqlx::query(&format!(
+        "SELECT job_type, status, CAST(run_at AS TEXT) as run_at FROM {} ORDER BY run_at DESC",
+        budget_jobs::JOBS_TABLE,
+    ))
+    .fetch_all(state.db.pool())
+    .await?;
+
+    let jobs = rows
+        .iter()
+        .map(|row| {
+            Ok(JobRecord {
+                job_type: row.try_get("job_type")?,
+                status: row.try_get("status")?,
+                run_at: row.try_get("run_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+    Ok(Json(jobs))
+}
+
 /// Return queue depth per job type for the Immich-style queue display.
 ///
 /// # Errors
 ///
 /// Returns `AppError` on database failure.
 async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCount>>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT job_type, status, COUNT(*) as count FROM Jobs GROUP BY job_type, status",
-    )
+    let rows = sqlx::query(&format!(
+        "SELECT job_type, status, COUNT(*) as cnt FROM {} GROUP BY job_type, status",
+        budget_jobs::JOBS_TABLE,
+    ))
     .fetch_all(state.db.pool())
     .await?;
 
     // Aggregate into one QueueCount per job_type
     let mut map = std::collections::HashMap::<String, QueueCount>::new();
-    for (job_type, status, count) in rows {
+    for row in rows {
+        let job_type: String = row.try_get("job_type")?;
+        let status: String = row.try_get("status")?;
+        let count: i64 = row.try_get("cnt")?;
         let entry = map.entry(job_type.clone()).or_insert_with(|| QueueCount {
             job_type,
             active: 0,

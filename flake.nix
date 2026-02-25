@@ -21,7 +21,7 @@
           cfg = config.services.budget;
 
           configFile = pkgs.writeText "budget-config.toml" ''
-            database_url = "sqlite:budget.db?mode=rwc"
+            database_url = "${cfg.databaseUrl}"
             llm_model = "${cfg.llmModel}"
             bank_provider = "enable_banking"
             budget_currency = "${cfg.budgetCurrency}"
@@ -61,10 +61,16 @@
               description = "HTTP listen port.";
             };
 
+            databaseUrl = lib.mkOption {
+              type = lib.types.str;
+              default = "sqlite:budget.db?mode=rwc";
+              description = "Database connection URL (sqlite: or postgres://).";
+            };
+
             dataDir = lib.mkOption {
               type = lib.types.path;
               default = "/var/lib/budget";
-              description = "Directory for the SQLite database and runtime state.";
+              description = "Directory for runtime state.";
             };
 
             host = lib.mkOption {
@@ -116,7 +122,8 @@
           config = lib.mkIf cfg.enable {
             systemd.services.budget = {
               description = "Budget personal finance tracker";
-              after = [ "network.target" ];
+              after = [ "network.target" ]
+                ++ lib.optional (lib.hasPrefix "postgres" cfg.databaseUrl) "postgresql.service";
               wantedBy = [ "multi-user.target" ];
 
               serviceConfig = {
@@ -165,15 +172,22 @@
           buildInputs = with pkgs; [
             openssl
             sqlite
+            postgresql
           ];
         };
 
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        cargoArtifacts = craneLib.buildDepsOnly (
+          commonArgs
+          // {
+            cargoExtraArgs = "--features postgres --no-default-features";
+          }
+        );
 
         budget = craneLib.buildPackage (
           commonArgs
           // {
             inherit cargoArtifacts;
+            cargoExtraArgs = "--features postgres --no-default-features";
 
             postInstall = ''
               mkdir -p $out/share/budget

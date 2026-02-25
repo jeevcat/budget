@@ -1,3 +1,6 @@
+// Tests use in-memory SQLite — only compile when the sqlite feature is active.
+#![cfg(feature = "sqlite")]
+
 //! Integration tests for job handlers.
 //!
 //! Each test creates its own in-memory `SQLite` database with all migrations
@@ -17,8 +20,8 @@ use budget_core::models::{
     TransactionId,
 };
 use budget_jobs::{
-    BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
-    CorrelateTransactionJob, LlmClient, SyncJob, handle_categorize_job,
+    ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
+    CorrelateJob, CorrelateTransactionJob, LlmClient, SyncJob, handle_categorize_job,
     handle_categorize_transaction_job, handle_correlate_job, handle_correlate_transaction_job,
     handle_sync_job,
 };
@@ -28,26 +31,36 @@ use budget_providers::{MockBankProvider, MockLlmProvider};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Create an in-memory `SQLite` database and run all migrations (domain + apalis).
-async fn setup_db() -> Db {
-    let db = Db::connect("sqlite::memory:")
+/// Create a shared named in-memory `SQLite` database with all migrations
+/// applied. Returns both the `Db` (AnyPool) and a typed `ApalisPool` that
+/// share the same underlying database.
+async fn setup_db() -> (Db, ApalisPool) {
+    let url = format!(
+        "sqlite:file:jobtest_{}?mode=memory&cache=shared",
+        Uuid::new_v4().simple()
+    );
+    let db = Db::connect(&url)
         .await
         .expect("failed to create in-memory SQLite database");
+
+    let apalis_pool = ApalisPool::connect(&url)
+        .await
+        .expect("failed to create apalis pool");
 
     // Apalis Jobs table (needed by fan-out handlers that enqueue per-txn jobs)
     let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
     apalis_migrator.set_ignore_missing(true);
     apalis_migrator
-        .run(db.pool())
+        .run(&apalis_pool)
         .await
         .expect("failed to run apalis migrations");
 
     // Domain migrations via Db
-    db.run_migrations()
+    db.run_migrations(&url)
         .await
         .expect("failed to run domain migrations");
 
-    db
+    (db, apalis_pool)
 }
 
 fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -182,7 +195,7 @@ fn make_llm_client() -> LlmClient {
 
 #[tokio::test]
 async fn sync_valid_account_upserts_transactions() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
@@ -212,7 +225,7 @@ async fn sync_valid_account_upserts_transactions() {
 
 #[tokio::test]
 async fn sync_nonexistent_account_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let bank = make_bank_factory();
 
     // Valid UUID but no matching row in the accounts table
@@ -232,7 +245,7 @@ async fn sync_nonexistent_account_returns_error() {
 
 #[tokio::test]
 async fn sync_invalid_uuid_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let bank = make_bank_factory();
 
     let job = SyncJob {
@@ -251,7 +264,7 @@ async fn sync_invalid_uuid_returns_error() {
 
 #[tokio::test]
 async fn sync_deduplicates_on_rerun() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
@@ -302,7 +315,7 @@ async fn sync_deduplicates_on_rerun() {
 
 #[tokio::test]
 async fn sync_with_active_connection_uses_factory() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let connection = seed_connection(&db, ConnectionStatus::Active).await;
     let account = seed_connected_account(&db, connection.id).await;
 
@@ -328,7 +341,7 @@ async fn sync_with_active_connection_uses_factory() {
 
 #[tokio::test]
 async fn sync_expired_connection_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let connection = seed_connection(&db, ConnectionStatus::Expired).await;
     let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
@@ -349,7 +362,7 @@ async fn sync_expired_connection_returns_error() {
 
 #[tokio::test]
 async fn sync_revoked_connection_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let connection = seed_connection(&db, ConnectionStatus::Revoked).await;
     let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
@@ -370,7 +383,7 @@ async fn sync_revoked_connection_returns_error() {
 
 #[tokio::test]
 async fn sync_unsupported_provider_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
 
     // Connection with an unknown provider type
     let connection = Connection {
@@ -407,7 +420,7 @@ async fn sync_unsupported_provider_returns_error() {
 
 #[tokio::test]
 async fn sync_no_connection_no_fallback_returns_error() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
 
     // Factory without a fallback provider
@@ -436,7 +449,7 @@ async fn sync_no_connection_no_fallback_returns_error() {
 
 #[tokio::test]
 async fn categorize_rule_based_assignment() {
-    let db = setup_db().await;
+    let (db, pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
 
     let groceries_cat = seed_category(&db, "Food:Groceries").await;
@@ -467,9 +480,13 @@ async fn categorize_rule_based_assignment() {
     .await;
 
     // Fan-out handler applies rules in-line (no LLM needed)
-    handle_categorize_job(CategorizeJob, Data::new(db.clone()))
-        .await
-        .expect("categorize job should succeed");
+    handle_categorize_job(
+        CategorizeJob,
+        Data::new(db.clone()),
+        Data::new(pool.clone()),
+    )
+    .await
+    .expect("categorize job should succeed");
 
     let updated = db.list_transactions().await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
@@ -483,7 +500,7 @@ async fn categorize_rule_based_assignment() {
 
 #[tokio::test]
 async fn categorize_llm_high_confidence_assigns_category() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -522,7 +539,7 @@ async fn categorize_llm_high_confidence_assigns_category() {
 
 #[tokio::test]
 async fn categorize_llm_low_confidence_leaves_uncategorized() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -559,7 +576,7 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
 
 #[tokio::test]
 async fn categorize_no_uncategorized_transactions_is_noop() {
-    let db = setup_db().await;
+    let (db, pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
 
     let cat = seed_category(&db, "Food:Groceries").await;
@@ -576,9 +593,13 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
     .await;
 
     // Fan-out should complete without error and without changing anything
-    handle_categorize_job(CategorizeJob, Data::new(db.clone()))
-        .await
-        .expect("categorize job should succeed with nothing to do");
+    handle_categorize_job(
+        CategorizeJob,
+        Data::new(db.clone()),
+        Data::new(pool.clone()),
+    )
+    .await
+    .expect("categorize job should succeed with nothing to do");
 
     let txns = db.list_transactions().await.expect("list txns");
     assert_eq!(txns.len(), 1);
@@ -591,7 +612,7 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
 
 #[tokio::test]
 async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
@@ -632,7 +653,7 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
 
 #[tokio::test]
 async fn correlate_rule_based_linking() {
-    let db = setup_db().await;
+    let (db, pool) = setup_db().await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
 
@@ -675,7 +696,7 @@ async fn correlate_rule_based_linking() {
         .expect("insert correlation rule");
 
     // Fan-out handler applies rules in-line (no LLM needed)
-    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()), Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed");
 
@@ -693,7 +714,7 @@ async fn correlate_rule_based_linking() {
 
 #[tokio::test]
 async fn correlate_llm_equal_opposite_amounts_links() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
@@ -750,7 +771,7 @@ async fn correlate_llm_equal_opposite_amounts_links() {
 
 #[tokio::test]
 async fn correlate_bidirectional_both_sides_linked() {
-    let db = setup_db().await;
+    let (db, _pool) = setup_db().await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
@@ -797,10 +818,10 @@ async fn correlate_bidirectional_both_sides_linked() {
 
 #[tokio::test]
 async fn correlate_no_uncorrelated_transactions_is_noop() {
-    let db = setup_db().await;
+    let (db, pool) = setup_db().await;
 
     // No transactions at all -- fan-out should return Ok immediately
-    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()), Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed with no transactions");
 
@@ -810,7 +831,7 @@ async fn correlate_no_uncorrelated_transactions_is_noop() {
 
 #[tokio::test]
 async fn correlate_already_paired_not_correlated_again() {
-    let db = setup_db().await;
+    let (db, pool) = setup_db().await;
     let checking = seed_checking_account(&db).await;
     let credit = seed_credit_card_account(&db).await;
 
@@ -856,7 +877,7 @@ async fn correlate_already_paired_not_correlated_again() {
     .await;
 
     // Fan-out handler: txn_a/txn_b already correlated, txn_c enqueued for LLM
-    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()), Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed");
 

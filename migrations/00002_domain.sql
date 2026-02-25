@@ -7,15 +7,15 @@ CREATE TABLE IF NOT EXISTS accounts (
     institution TEXT NOT NULL,
     account_type TEXT NOT NULL,
     currency TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE IF NOT EXISTS categories (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     parent_id TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
     FOREIGN KEY (parent_id) REFERENCES categories(id)
 );
 
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS budget_months (
     start_date TEXT NOT NULL,
     end_date TEXT,
     salary_transactions_detected INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS projects (
     start_date TEXT NOT NULL,
     end_date TEXT,
     budget_amount TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     project_id TEXT,
     correlation_id TEXT,
     correlation_type TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
     FOREIGN KEY (account_id) REFERENCES accounts(id),
     FOREIGN KEY (category_id) REFERENCES categories(id),
     FOREIGN KEY (budget_month_id) REFERENCES budget_months(id),
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS rules (
     target_category_id TEXT,
     target_correlation_type TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
     FOREIGN KEY (target_category_id) REFERENCES categories(id)
 );
 
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS budget_periods (
     category_id TEXT NOT NULL,
     period_type TEXT NOT NULL,
     amount TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 

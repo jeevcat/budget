@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::any::AnyRow;
+use sqlx::{AnyPool, Row};
 use uuid::Uuid;
 
 use crate::models::{
@@ -14,7 +14,7 @@ use crate::models::{
 // Private parse helpers
 // ---------------------------------------------------------------------------
 
-fn parse_uuid(row: &SqliteRow, col: &str) -> Result<Uuid, sqlx::Error> {
+fn parse_uuid(row: &AnyRow, col: &str) -> Result<Uuid, sqlx::Error> {
     let s: String = row.try_get(col)?;
     s.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
         index: col.to_owned(),
@@ -22,7 +22,7 @@ fn parse_uuid(row: &SqliteRow, col: &str) -> Result<Uuid, sqlx::Error> {
     })
 }
 
-fn parse_uuid_opt(row: &SqliteRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> {
+fn parse_uuid_opt(row: &AnyRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> {
     let s: Option<String> = row.try_get(col)?;
     s.map(|v| {
         v.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
@@ -33,7 +33,7 @@ fn parse_uuid_opt(row: &SqliteRow, col: &str) -> Result<Option<Uuid>, sqlx::Erro
     .transpose()
 }
 
-fn parse_decimal(row: &SqliteRow, col: &str) -> Result<Decimal, sqlx::Error> {
+fn parse_decimal(row: &AnyRow, col: &str) -> Result<Decimal, sqlx::Error> {
     let s: String = row.try_get(col)?;
     s.parse::<Decimal>().map_err(|e| sqlx::Error::ColumnDecode {
         index: col.to_owned(),
@@ -41,7 +41,7 @@ fn parse_decimal(row: &SqliteRow, col: &str) -> Result<Decimal, sqlx::Error> {
     })
 }
 
-fn parse_decimal_opt(row: &SqliteRow, col: &str) -> Result<Option<Decimal>, sqlx::Error> {
+fn parse_decimal_opt(row: &AnyRow, col: &str) -> Result<Option<Decimal>, sqlx::Error> {
     let s: Option<String> = row.try_get(col)?;
     s.map(|v| {
         v.parse::<Decimal>().map_err(|e| sqlx::Error::ColumnDecode {
@@ -52,7 +52,7 @@ fn parse_decimal_opt(row: &SqliteRow, col: &str) -> Result<Option<Decimal>, sqlx
     .transpose()
 }
 
-fn parse_date(row: &SqliteRow, col: &str) -> Result<NaiveDate, sqlx::Error> {
+fn parse_date(row: &AnyRow, col: &str) -> Result<NaiveDate, sqlx::Error> {
     let s: String = row.try_get(col)?;
     NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| sqlx::Error::ColumnDecode {
         index: col.to_owned(),
@@ -60,7 +60,7 @@ fn parse_date(row: &SqliteRow, col: &str) -> Result<NaiveDate, sqlx::Error> {
     })
 }
 
-fn parse_date_opt(row: &SqliteRow, col: &str) -> Result<Option<NaiveDate>, sqlx::Error> {
+fn parse_date_opt(row: &AnyRow, col: &str) -> Result<Option<NaiveDate>, sqlx::Error> {
     let s: Option<String> = row.try_get(col)?;
     s.map(|v| {
         NaiveDate::parse_from_str(&v, "%Y-%m-%d").map_err(|e| sqlx::Error::ColumnDecode {
@@ -71,7 +71,7 @@ fn parse_date_opt(row: &SqliteRow, col: &str) -> Result<Option<NaiveDate>, sqlx:
     .transpose()
 }
 
-fn parse_enum<T: std::str::FromStr>(row: &SqliteRow, col: &str) -> Result<T, sqlx::Error>
+fn parse_enum<T: std::str::FromStr>(row: &AnyRow, col: &str) -> Result<T, sqlx::Error>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
@@ -82,10 +82,7 @@ where
     })
 }
 
-fn parse_enum_opt<T: std::str::FromStr>(
-    row: &SqliteRow,
-    col: &str,
-) -> Result<Option<T>, sqlx::Error>
+fn parse_enum_opt<T: std::str::FromStr>(row: &AnyRow, col: &str) -> Result<Option<T>, sqlx::Error>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
@@ -103,7 +100,7 @@ where
 // Row-to-domain mappers
 // ---------------------------------------------------------------------------
 
-fn row_to_account(row: &SqliteRow) -> Result<Account, sqlx::Error> {
+fn row_to_account(row: &AnyRow) -> Result<Account, sqlx::Error> {
     Ok(Account {
         id: AccountId::from_uuid(parse_uuid(row, "id")?),
         provider_account_id: row.try_get("provider_account_id")?,
@@ -115,7 +112,7 @@ fn row_to_account(row: &SqliteRow) -> Result<Account, sqlx::Error> {
     })
 }
 
-fn row_to_connection(row: &SqliteRow) -> Result<Connection, sqlx::Error> {
+fn row_to_connection(row: &AnyRow) -> Result<Connection, sqlx::Error> {
     Ok(Connection {
         id: ConnectionId::from_uuid(parse_uuid(row, "id")?),
         provider: row.try_get("provider")?,
@@ -126,7 +123,7 @@ fn row_to_connection(row: &SqliteRow) -> Result<Connection, sqlx::Error> {
     })
 }
 
-fn row_to_category(row: &SqliteRow) -> Result<Category, sqlx::Error> {
+fn row_to_category(row: &AnyRow) -> Result<Category, sqlx::Error> {
     Ok(Category {
         id: CategoryId::from_uuid(parse_uuid(row, "id")?),
         name: row.try_get("name")?,
@@ -134,7 +131,7 @@ fn row_to_category(row: &SqliteRow) -> Result<Category, sqlx::Error> {
     })
 }
 
-fn row_to_transaction(row: &SqliteRow) -> Result<Transaction, sqlx::Error> {
+fn row_to_transaction(row: &AnyRow) -> Result<Transaction, sqlx::Error> {
     Ok(Transaction {
         id: TransactionId::from_uuid(parse_uuid(row, "id")?),
         account_id: AccountId::from_uuid(parse_uuid(row, "account_id")?),
@@ -153,7 +150,7 @@ fn row_to_transaction(row: &SqliteRow) -> Result<Transaction, sqlx::Error> {
     })
 }
 
-fn row_to_rule(row: &SqliteRow) -> Result<Rule, sqlx::Error> {
+fn row_to_rule(row: &AnyRow) -> Result<Rule, sqlx::Error> {
     Ok(Rule {
         id: RuleId::from_uuid(parse_uuid(row, "id")?),
         rule_type: parse_enum::<RuleType>(row, "rule_type")?,
@@ -165,7 +162,7 @@ fn row_to_rule(row: &SqliteRow) -> Result<Rule, sqlx::Error> {
     })
 }
 
-fn row_to_budget_period(row: &SqliteRow) -> Result<BudgetPeriod, sqlx::Error> {
+fn row_to_budget_period(row: &AnyRow) -> Result<BudgetPeriod, sqlx::Error> {
     Ok(BudgetPeriod {
         id: BudgetPeriodId::from_uuid(parse_uuid(row, "id")?),
         category_id: CategoryId::from_uuid(parse_uuid(row, "category_id")?),
@@ -174,7 +171,7 @@ fn row_to_budget_period(row: &SqliteRow) -> Result<BudgetPeriod, sqlx::Error> {
     })
 }
 
-fn row_to_budget_month(row: &SqliteRow) -> Result<BudgetMonth, sqlx::Error> {
+fn row_to_budget_month(row: &AnyRow) -> Result<BudgetMonth, sqlx::Error> {
     Ok(BudgetMonth {
         id: BudgetMonthId::from_uuid(parse_uuid(row, "id")?),
         start_date: parse_date(row, "start_date")?,
@@ -183,7 +180,7 @@ fn row_to_budget_month(row: &SqliteRow) -> Result<BudgetMonth, sqlx::Error> {
     })
 }
 
-fn row_to_project(row: &SqliteRow) -> Result<Project, sqlx::Error> {
+fn row_to_project(row: &AnyRow) -> Result<Project, sqlx::Error> {
     Ok(Project {
         id: ProjectId::from_uuid(parse_uuid(row, "id")?),
         name: row.try_get("name")?,
@@ -201,41 +198,48 @@ fn row_to_project(row: &SqliteRow) -> Result<Project, sqlx::Error> {
 /// Database handle wrapping the connection pool.
 ///
 /// All query functions are methods on this struct so that the pool type is
-/// private. Callers never depend on `SqlitePool` directly.
+/// private. Callers never depend on `AnyPool` directly.
 #[derive(Clone)]
-pub struct Db(SqlitePool);
+pub struct Db(AnyPool);
 
 impl Db {
     /// Open a connection pool to the database at `url`.
+    ///
+    /// Installs the default sqlx `Any` drivers (`SQLite`, Postgres) before
+    /// connecting. The URL scheme determines which backend is used.
     ///
     /// # Errors
     ///
     /// Returns `sqlx::Error` if the connection fails.
     pub async fn connect(url: &str) -> Result<Self, sqlx::Error> {
-        Ok(Self(SqlitePool::connect(url).await?))
+        sqlx::any::install_default_drivers();
+        Ok(Self(AnyPool::connect(url).await?))
     }
 
-    /// Expose the inner pool for apalis storage.
+    /// Expose the inner pool for callers that need direct pool access
+    /// (e.g. running raw queries against the apalis `Jobs` table).
     #[must_use]
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &AnyPool {
         &self.0
     }
 
-    /// Set `SQLite` PRAGMAs and run domain migrations.
+    /// Run PRAGMAs (`SQLite` only) and domain migrations.
     ///
     /// # Errors
     ///
     /// Returns `sqlx::Error` if any PRAGMA or migration fails.
-    pub async fn run_migrations(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("PRAGMA journal_mode = 'WAL'")
-            .execute(&self.0)
-            .await?;
-        sqlx::query("PRAGMA synchronous = NORMAL")
-            .execute(&self.0)
-            .await?;
-        sqlx::query("PRAGMA cache_size = 64000")
-            .execute(&self.0)
-            .await?;
+    pub async fn run_migrations(&self, url: &str) -> Result<(), sqlx::Error> {
+        if url.starts_with("sqlite:") {
+            sqlx::query("PRAGMA journal_mode = 'WAL'")
+                .execute(&self.0)
+                .await?;
+            sqlx::query("PRAGMA synchronous = NORMAL")
+                .execute(&self.0)
+                .await?;
+            sqlx::query("PRAGMA cache_size = 64000")
+                .execute(&self.0)
+                .await?;
+        }
 
         let mut migrator = sqlx::migrate!("../../migrations");
         migrator.set_ignore_missing(true);
@@ -248,9 +252,7 @@ impl Db {
     // Accounts
     // ---------------------------------------------------------------------------
 
-    /// Insert or replace an account in the database.
-    ///
-    /// Uses `INSERT OR REPLACE` to upsert by primary key.
+    /// Insert or update an account by primary key.
     ///
     /// # Errors
     ///
@@ -258,8 +260,15 @@ impl Db {
     pub async fn upsert_account(&self, account: &Account) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "INSERT OR REPLACE INTO accounts (id, provider_account_id, name, institution, account_type, currency, connection_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO accounts (id, provider_account_id, name, institution, account_type, currency, connection_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(id) DO UPDATE SET
+                 provider_account_id = excluded.provider_account_id,
+                 name = excluded.name,
+                 institution = excluded.institution,
+                 account_type = excluded.account_type,
+                 currency = excluded.currency,
+                 connection_id = excluded.connection_id",
         )
         .bind(account.id.to_string())
         .bind(&account.provider_account_id)
@@ -298,7 +307,7 @@ impl Db {
     pub async fn get_account(&self, id: AccountId) -> Result<Option<Account>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts WHERE id = ?1",
+            "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -320,7 +329,7 @@ impl Db {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id
-             FROM accounts WHERE provider_account_id = ?1",
+             FROM accounts WHERE provider_account_id = $1",
         )
         .bind(provider_account_id)
         .fetch_optional(pool)
@@ -353,7 +362,7 @@ impl Db {
                  (id, account_id, category_id, amount, original_amount, original_currency,
                   merchant_name, description, posted_date, budget_month_id, project_id,
                   correlation_id, correlation_type, provider_transaction_id, suggested_category)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
@@ -418,7 +427,7 @@ impl Db {
                     merchant_name, description, posted_date, budget_month_id, project_id,
                     correlation_id, correlation_type, suggested_category
              FROM transactions
-             WHERE id = ?1",
+             WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -488,8 +497,8 @@ impl Db {
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
-               AND amount = ?1
-               AND id != ?2",
+               AND amount = $1
+               AND id != $2",
         )
         .bind(opposite_amount.to_string())
         .bind(exclude_id.to_string())
@@ -509,7 +518,7 @@ impl Db {
         category_id: CategoryId,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET category_id = ?1 WHERE id = ?2")
+        sqlx::query("UPDATE transactions SET category_id = $1 WHERE id = $2")
             .bind(category_id.to_string())
             .bind(id.to_string())
             .execute(pool)
@@ -530,7 +539,7 @@ impl Db {
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE transactions SET correlation_id = ?1, correlation_type = ?2 WHERE id = ?3",
+            "UPDATE transactions SET correlation_id = $1, correlation_type = $2 WHERE id = $3",
         )
         .bind(correlation_id.to_string())
         .bind(correlation_type.to_string())
@@ -551,7 +560,7 @@ impl Db {
         suggested_category: &str,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET suggested_category = ?1 WHERE id = ?2")
+        sqlx::query("UPDATE transactions SET suggested_category = $1 WHERE id = $2")
             .bind(suggested_category)
             .bind(id.to_string())
             .execute(pool)
@@ -569,16 +578,22 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_suggestion_histogram(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
         let pool = &self.0;
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT suggested_category, COUNT(*) as count
+        let rows = sqlx::query(
+            "SELECT suggested_category, COUNT(*) as cnt
              FROM transactions
              WHERE category_id IS NULL AND suggested_category IS NOT NULL
              GROUP BY suggested_category
-             ORDER BY count DESC",
+             ORDER BY cnt DESC",
         )
         .fetch_all(pool)
         .await?;
-        Ok(rows)
+        rows.iter()
+            .map(|row| {
+                let name: String = row.try_get("suggested_category")?;
+                let count: i64 = row.try_get("cnt")?;
+                Ok((name, count))
+            })
+            .collect()
     }
 
     /// List all distinct category names currently in the categories table.
@@ -590,10 +605,10 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn list_category_names(&self) -> Result<Vec<String>, sqlx::Error> {
         let pool = &self.0;
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM categories ORDER BY name")
+        let rows = sqlx::query("SELECT name FROM categories ORDER BY name")
             .fetch_all(pool)
             .await?;
-        Ok(rows.into_iter().map(|(name,)| name).collect())
+        rows.iter().map(|row| row.try_get("name")).collect()
     }
 
     /// Assign a transaction to a budget month.
@@ -607,7 +622,7 @@ impl Db {
         budget_month_id: BudgetMonthId,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET budget_month_id = ?1 WHERE id = ?2")
+        sqlx::query("UPDATE transactions SET budget_month_id = $1 WHERE id = $2")
             .bind(budget_month_id.to_string())
             .bind(id.to_string())
             .execute(pool)
@@ -630,7 +645,7 @@ impl Db {
                     merchant_name, description, posted_date, budget_month_id, project_id,
                     correlation_id, correlation_type, suggested_category
              FROM transactions
-             WHERE account_id = ?1",
+             WHERE account_id = $1",
         )
         .bind(account_id.to_string())
         .fetch_all(pool)
@@ -649,12 +664,19 @@ impl Db {
         account_id: AccountId,
     ) -> Result<Option<NaiveDate>, sqlx::Error> {
         let pool = &self.0;
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT MAX(posted_date) FROM transactions WHERE account_id = ?1")
-                .bind(account_id.to_string())
-                .fetch_optional(pool)
-                .await?;
-        Ok(row.and_then(|(s,)| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()))
+        let row = sqlx::query(
+            "SELECT MAX(posted_date) as max_date FROM transactions WHERE account_id = $1",
+        )
+        .bind(account_id.to_string())
+        .fetch_optional(pool)
+        .await?;
+        match row {
+            Some(r) => {
+                let s: Option<String> = r.try_get("max_date")?;
+                Ok(s.and_then(|v| NaiveDate::parse_from_str(&v, "%Y-%m-%d").ok()))
+            }
+            None => Ok(None),
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -668,7 +690,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails (e.g. duplicate primary key).
     pub async fn insert_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("INSERT INTO categories (id, name, parent_id) VALUES (?1, ?2, ?3)")
+        sqlx::query("INSERT INTO categories (id, name, parent_id) VALUES ($1, $2, $3)")
             .bind(category.id.to_string())
             .bind(&category.name)
             .bind(category.parent_id.map(|id| id.to_string()))
@@ -699,7 +721,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_category(&self, id: CategoryId) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
-        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE id = ?1")
+        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE id = $1")
             .bind(id.to_string())
             .fetch_optional(pool)
             .await?;
@@ -715,7 +737,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
-        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE name = ?1")
+        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE name = $1")
             .bind(name)
             .fetch_optional(pool)
             .await?;
@@ -729,7 +751,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails (e.g. foreign key violation).
     pub async fn delete_category(&self, id: CategoryId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM categories WHERE id = ?1")
+        sqlx::query("DELETE FROM categories WHERE id = $1")
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -749,7 +771,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO rules (id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(rule.id.to_string())
         .bind(rule.rule_type.to_string())
@@ -791,7 +813,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority
              FROM rules
-             WHERE rule_type = ?1
+             WHERE rule_type = $1
              ORDER BY priority DESC",
         )
         .bind(rule_type.to_string())
@@ -811,7 +833,7 @@ impl Db {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority
-             FROM rules WHERE id = ?1",
+             FROM rules WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -827,9 +849,9 @@ impl Db {
     pub async fn update_rule(&self, rule: &Rule) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE rules SET rule_type = ?1, match_field = ?2, match_pattern = ?3,
-                    target_category_id = ?4, target_correlation_type = ?5, priority = ?6
-             WHERE id = ?7",
+            "UPDATE rules SET rule_type = $1, match_field = $2, match_pattern = $3,
+                    target_category_id = $4, target_correlation_type = $5, priority = $6
+             WHERE id = $7",
         )
         .bind(rule.rule_type.to_string())
         .bind(rule.match_field.to_string())
@@ -850,7 +872,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn delete_rule(&self, id: RuleId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM rules WHERE id = ?1")
+        sqlx::query("DELETE FROM rules WHERE id = $1")
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -870,7 +892,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO budget_periods (id, category_id, period_type, amount)
-             VALUES (?1, ?2, ?3, ?4)",
+             VALUES ($1, $2, $3, $4)",
         )
         .bind(bp.id.to_string())
         .bind(bp.category_id.to_string())
@@ -907,7 +929,7 @@ impl Db {
     ) -> Result<Option<BudgetPeriod>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, category_id, period_type, amount FROM budget_periods WHERE id = ?1",
+            "SELECT id, category_id, period_type, amount FROM budget_periods WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -923,7 +945,7 @@ impl Db {
     pub async fn update_budget_period(&self, bp: &BudgetPeriod) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE budget_periods SET category_id = ?1, period_type = ?2, amount = ?3 WHERE id = ?4",
+            "UPDATE budget_periods SET category_id = $1, period_type = $2, amount = $3 WHERE id = $4",
         )
         .bind(bp.category_id.to_string())
         .bind(bp.period_type.to_string())
@@ -941,7 +963,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn delete_budget_period(&self, id: BudgetPeriodId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM budget_periods WHERE id = ?1")
+        sqlx::query("DELETE FROM budget_periods WHERE id = $1")
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -970,7 +992,7 @@ impl Db {
         for month in months {
             sqlx::query(
                 "INSERT INTO budget_months (id, start_date, end_date, salary_transactions_detected)
-                 VALUES (?1, ?2, ?3, ?4)",
+                 VALUES ($1, $2, $3, $4)",
             )
             .bind(month.id.to_string())
             .bind(month.start_date.to_string())
@@ -1012,7 +1034,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO projects (id, name, category_id, start_date, end_date, budget_amount)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(project.id.to_string())
         .bind(&project.name)
@@ -1050,7 +1072,7 @@ impl Db {
     pub async fn get_project(&self, id: ProjectId) -> Result<Option<Project>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, name, category_id, start_date, end_date, budget_amount FROM projects WHERE id = ?1",
+            "SELECT id, name, category_id, start_date, end_date, budget_amount FROM projects WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -1066,8 +1088,8 @@ impl Db {
     pub async fn update_project(&self, project: &Project) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE projects SET name = ?1, category_id = ?2, start_date = ?3, end_date = ?4, budget_amount = ?5
-             WHERE id = ?6",
+            "UPDATE projects SET name = $1, category_id = $2, start_date = $3, end_date = $4, budget_amount = $5
+             WHERE id = $6",
         )
         .bind(&project.name)
         .bind(project.category_id.to_string())
@@ -1087,7 +1109,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn delete_project(&self, id: ProjectId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM projects WHERE id = ?1")
+        sqlx::query("DELETE FROM projects WHERE id = $1")
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -1107,7 +1129,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO connections (id, provider, provider_session_id, institution_name, valid_until, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(connection.id.to_string())
         .bind(&connection.provider)
@@ -1150,7 +1172,7 @@ impl Db {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, provider, provider_session_id, institution_name, valid_until, status
-             FROM connections WHERE id = ?1",
+             FROM connections WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -1170,7 +1192,7 @@ impl Db {
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE connections SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
+            "UPDATE connections SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
         )
         .bind(status.to_string())
         .bind(id.to_string())
@@ -1186,7 +1208,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn delete_connection(&self, id: ConnectionId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM connections WHERE id = ?1")
+        sqlx::query("DELETE FROM connections WHERE id = $1")
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -1209,7 +1231,7 @@ impl Db {
         expires_at: &str,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("INSERT INTO state_tokens (token, user_data, expires_at) VALUES (?1, ?2, ?3)")
+        sqlx::query("INSERT INTO state_tokens (token, user_data, expires_at) VALUES ($1, $2, $3)")
             .bind(token)
             .bind(user_data)
             .bind(expires_at)
@@ -1229,15 +1251,18 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn consume_state_token(&self, token: &str) -> Result<Option<String>, sqlx::Error> {
         let pool = &self.0;
-        let row: Option<(String,)> = sqlx::query_as(
+        let row = sqlx::query(
             "UPDATE state_tokens SET used = 1
-             WHERE token = ?1 AND used = 0 AND expires_at > datetime('now')
+             WHERE token = $1 AND used = 0 AND expires_at > CURRENT_TIMESTAMP
              RETURNING user_data",
         )
         .bind(token)
         .fetch_optional(pool)
         .await?;
-        Ok(row.map(|(data,)| data))
+        match row {
+            Some(r) => Ok(Some(r.try_get("user_data")?)),
+            None => Ok(None),
+        }
     }
 
     /// Delete expired state tokens.
@@ -1247,7 +1272,7 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn prune_expired_state_tokens(&self) -> Result<u64, sqlx::Error> {
         let pool = &self.0;
-        let result = sqlx::query("DELETE FROM state_tokens WHERE expires_at <= datetime('now')")
+        let result = sqlx::query("DELETE FROM state_tokens WHERE expires_at <= CURRENT_TIMESTAMP")
             .execute(pool)
             .await?;
         Ok(result.rows_affected())
@@ -1272,8 +1297,12 @@ mod tests {
     // -----------------------------------------------------------------------
 
     async fn setup_db() -> Db {
-        let db = Db::connect("sqlite::memory:").await.unwrap();
-        db.run_migrations().await.unwrap();
+        let url = format!(
+            "sqlite:file:coretest_{}?mode=memory&cache=shared",
+            uuid::Uuid::new_v4().simple()
+        );
+        let db = Db::connect(&url).await.unwrap();
+        db.run_migrations(&url).await.unwrap();
         db
     }
 

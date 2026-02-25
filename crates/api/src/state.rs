@@ -1,28 +1,26 @@
 use std::sync::Arc;
 
 use apalis::prelude::*;
-use apalis_sqlite::SqliteStorage;
 use apalis_workflow::WorkflowSink;
 use budget_core::db::Db;
 use budget_jobs::{
-    BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
+    ApalisPool, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
     CorrelateTransactionJob, SyncJob,
 };
 use budget_providers::EnableBankingAuth;
-use sqlx::SqlitePool;
 
-/// Wrapper around a `SqlitePool` that provides a typed `push` method for
-/// enqueueing jobs without exposing the full `SqliteStorage` type parameters.
+/// Wrapper around an `ApalisPool` that provides a typed `push` method for
+/// enqueueing jobs without exposing the full storage type parameters.
 ///
 /// The inner pool is Arc-based, so cloning is cheap.
 pub struct JobStorage<T> {
-    pool: SqlitePool,
+    pool: ApalisPool,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> Clone for JobStorage<T> {
     fn clone(&self) -> Self {
-        // SqlitePool is Arc-based, so cloning is cheap
+        // Pool is Arc-based, so cloning is cheap
         Self {
             pool: self.pool.clone(),
             _marker: std::marker::PhantomData,
@@ -33,8 +31,8 @@ impl<T> Clone for JobStorage<T> {
 impl<T> JobStorage<T> {
     /// Create a new job storage backed by the given pool.
     #[must_use]
-    pub fn new(pool: &SqlitePool) -> Self {
-        // clone() justified: SqlitePool is Arc-based
+    pub fn new(pool: &ApalisPool) -> Self {
+        // clone() justified: pool is Arc-based
         Self {
             pool: pool.clone(),
             _marker: std::marker::PhantomData,
@@ -47,14 +45,19 @@ macro_rules! impl_push {
         impl JobStorage<$job> {
             /// Push a job into the queue.
             ///
-            /// Creates a fresh `SqliteStorage` for the push operation. This is
+            /// Creates a fresh storage backend for the push operation. This is
             /// inexpensive because the storage only wraps an Arc'd pool.
             ///
             /// # Errors
             ///
             /// Returns a stringified error if the job cannot be enqueued.
             pub async fn push(&self, job: $job) -> Result<(), String> {
-                let mut storage = SqliteStorage::<$job, _, _>::new(&self.pool);
+                #[cfg(feature = "sqlite")]
+                let mut storage = apalis_sqlite::SqliteStorage::<$job, _, _>::new(&self.pool);
+
+                #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+                let mut storage = apalis_postgres::PostgresStorage::new(&self.pool);
+
                 storage.push(job).await.map_err(|e| e.to_string())
             }
         }
@@ -70,18 +73,18 @@ impl_push!(BudgetRecomputeJob);
 
 /// Storage wrapper for pushing jobs into the full-sync pipeline workflow.
 ///
-/// Internally creates a `SqliteStorage` and uses `WorkflowSink::push_start`
+/// Internally creates a storage backend and uses `WorkflowSink::push_start`
 /// to enqueue the initial pipeline step.
 #[derive(Clone)]
 pub struct PipelineStorage {
-    pool: SqlitePool,
+    pool: ApalisPool,
 }
 
 impl PipelineStorage {
     /// Create a new pipeline storage backed by the given pool.
     #[must_use]
-    pub fn new(pool: &SqlitePool) -> Self {
-        // clone() justified: SqlitePool is Arc-based
+    pub fn new(pool: &ApalisPool) -> Self {
+        // clone() justified: pool is Arc-based
         Self { pool: pool.clone() }
     }
 
@@ -91,7 +94,12 @@ impl PipelineStorage {
     ///
     /// Returns a stringified error if the job cannot be enqueued.
     pub async fn push_start(&self, account_id: String) -> Result<(), String> {
-        let mut storage = SqliteStorage::<Vec<u8>, _, _>::new(&self.pool);
+        #[cfg(feature = "sqlite")]
+        let mut storage = apalis_sqlite::SqliteStorage::<Vec<u8>, _, _>::new(&self.pool);
+
+        #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+        let mut storage = apalis_postgres::PostgresStorage::<Vec<u8>>::new(&self.pool);
+
         storage
             .push_start(account_id)
             .await
@@ -101,7 +109,7 @@ impl PipelineStorage {
 
 /// Shared application state passed to all route handlers via axum's State extractor.
 ///
-/// Each `JobStorage` wraps a cloned `SqlitePool` handle internally,
+/// Each `JobStorage` wraps a cloned pool handle internally,
 /// so cloning `AppState` is cheap and does not duplicate connections.
 #[derive(Clone)]
 pub struct AppState {

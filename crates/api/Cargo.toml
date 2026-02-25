@@ -7,6 +7,11 @@ edition = "2024"
 name = "budget"
 path = "src/main.rs"
 
+[features]
+default = ["sqlite"]
+sqlite = ["budget-jobs/sqlite", "dep:apalis-sqlite"]
+postgres = ["budget-jobs/postgres", "dep:apalis-postgres"]
+
 [dependencies]
 budget-core = { workspace = true }
 budget-jobs = { workspace = true }
@@ -18,7 +23,8 @@ rust_decimal = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true }
 apalis = { workspace = true }
-apalis-sqlite = { workspace = true }
+apalis-sqlite = { workspace = true, optional = true }
+apalis-postgres = { workspace = true, optional = true }
 apalis-workflow = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

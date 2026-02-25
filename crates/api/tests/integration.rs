@@ -1,9 +1,11 @@
+// Tests use in-memory SQLite — only compile when the sqlite feature is active.
+#![cfg(feature = "sqlite")]
+
 use axum::Router;
 use axum::body::Body;
 use axum::middleware;
 use http::Request;
 use http::StatusCode;
-use sqlx::SqlitePool;
 use tower::ServiceExt;
 
 use api::auth;
@@ -15,6 +17,7 @@ use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
     CategoryId, Project, Rule, Transaction, TransactionId,
 };
+use budget_jobs::ApalisPool;
 
 /// Bearer token used in all test requests.
 const TEST_SECRET: &str = "test-secret-key";
@@ -23,30 +26,35 @@ const TEST_SECRET: &str = "test-secret-key";
 // Shared test setup
 // ---------------------------------------------------------------------------
 
-/// Create an in-memory `SQLite` database with all migrations applied,
-/// build the full application `Router`, and return both.
+/// Create a shared named in-memory `SQLite` database with all migrations
+/// applied, build the full application `Router`, and return both.
 async fn setup() -> (Router, Db) {
-    let db = Db::connect("sqlite::memory:").await.expect("in-memory db");
+    let url = format!(
+        "sqlite:file:apitest_{}?mode=memory&cache=shared",
+        uuid::Uuid::new_v4().simple()
+    );
+    let db = Db::connect(&url).await.expect("in-memory db");
+    let apalis_pool = ApalisPool::connect(&url).await.expect("apalis pool");
 
     // Both migrators share the _sqlx_migrations table and must tolerate
     // each other's entries so restarts on persistent databases work.
     let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
     apalis_migrator.set_ignore_missing(true);
     apalis_migrator
-        .run(db.pool())
+        .run(&apalis_pool)
         .await
         .expect("apalis migrations");
 
-    db.run_migrations().await.expect("domain migrations");
+    db.run_migrations(&url).await.expect("domain migrations");
 
     let state = AppState {
         db: db.clone(),
         secret_key: TEST_SECRET.to_owned(),
-        sync_storage: JobStorage::new(db.pool()),
-        categorize_storage: JobStorage::new(db.pool()),
-        correlate_storage: JobStorage::new(db.pool()),
-        recompute_storage: JobStorage::new(db.pool()),
-        pipeline_storage: PipelineStorage::new(db.pool()),
+        sync_storage: JobStorage::new(&apalis_pool),
+        categorize_storage: JobStorage::new(&apalis_pool),
+        correlate_storage: JobStorage::new(&apalis_pool),
+        recompute_storage: JobStorage::new(&apalis_pool),
+        pipeline_storage: PipelineStorage::new(&apalis_pool),
         enable_banking_auth: None,
         host: "http://localhost:3000".to_owned(),
     };
@@ -1352,7 +1360,7 @@ async fn connections_callback_is_unauthenticated() {
 /// restart — must not produce `VersionMissing` or any other error.
 #[tokio::test]
 async fn migrations_are_idempotent_with_apalis() {
-    let pool = SqlitePool::connect("sqlite::memory:")
+    let pool = ApalisPool::connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
 
@@ -1396,7 +1404,7 @@ async fn migrations_are_idempotent_with_apalis() {
 /// domain versions when higher-numbered apalis entries already exist.
 #[tokio::test]
 async fn domain_migrations_apply_after_only_apalis() {
-    let pool = SqlitePool::connect("sqlite::memory:")
+    let pool = ApalisPool::connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
 

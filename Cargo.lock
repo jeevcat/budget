@@ -88,6 +88,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "apalis-postgres"
+version = "1.0.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3d02d73f376c33599fcb4a92eab84f057330577e2e0c0f0cf3d4fef705c234e"
+dependencies = [
+ "apalis-codec",
+ "apalis-core",
+ "apalis-sql",
+ "futures",
+ "pin-project",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "ulid",
+]
+
+[[package]]
 name = "apalis-sql"
 version = "1.0.0-rc.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -141,6 +160,7 @@ name = "api"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "apalis-postgres",
  "apalis-sqlite",
  "apalis-workflow",
  "axum",
@@ -337,6 +357,7 @@ name = "budget-jobs"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "apalis-postgres",
  "apalis-sqlite",
  "apalis-workflow",
  "budget-core",

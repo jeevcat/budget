@@ -1,21 +1,19 @@
 use std::sync::Arc;
 
 use apalis::prelude::*;
-use apalis_sqlite::SqliteStorage;
 use apalis_workflow::Workflow;
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_core::db::Db;
 use budget_jobs::{
-    BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
-    CorrelateTransactionJob, LlmClient, NoOpJob, SyncJob, pipeline,
+    ApalisPool, BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob,
+    CorrelateJob, CorrelateTransactionJob, LlmClient, NoOpJob, SyncJob, pipeline,
 };
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
     MockLlmProvider,
 };
-use sqlx::SqlitePool;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -37,8 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
 
     let db = Db::connect(&config.database_url).await?;
+    let apalis_pool = ApalisPool::connect(&config.database_url).await?;
 
-    run_migrations(&db).await?;
+    run_migrations(&db, &config.database_url, &apalis_pool).await?;
     tracing::info!("migrations applied");
 
     // Provider wrappers for apalis Data injection
@@ -47,15 +46,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = init_llm_provider(&config);
 
-    let pool = db.pool();
     let state = AppState {
         db: db.clone(),
         secret_key: config.secret_key,
-        sync_storage: JobStorage::new(pool),
-        categorize_storage: JobStorage::new(pool),
-        correlate_storage: JobStorage::new(pool),
-        recompute_storage: JobStorage::new(pool),
-        pipeline_storage: PipelineStorage::new(pool),
+        sync_storage: JobStorage::new(&apalis_pool),
+        categorize_storage: JobStorage::new(&apalis_pool),
+        correlate_storage: JobStorage::new(&apalis_pool),
+        recompute_storage: JobStorage::new(&apalis_pool),
+        pipeline_storage: PipelineStorage::new(&apalis_pool),
         enable_banking_auth,
         host: config
             .host
@@ -67,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::path::PathBuf::from,
     );
     let app = build_router(state, &frontend_dir);
-    let workers = build_workers(&db, bank_factory, llm);
+    let workers = build_workers(&db, &apalis_pool, bank_factory, llm);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
 
@@ -78,8 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = workers => {
             if let Err(e) = res { tracing::error!(%e, "worker error"); }
         }
-        // clone() justified: SqlitePool is Arc-based
-        () = reclaim_stale_jobs_loop(pool.clone()) => {}
+        // clone() justified: ApalisPool is Arc-based
+        () = reclaim_stale_jobs_loop(apalis_pool.clone()) => {}
     }
 
     Ok(())
@@ -137,22 +135,36 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// Both migrators share the `_sqlx_migrations` table.  Each must tolerate
 /// the other's entries (`ignore_missing`) so that restarts and incremental
 /// migrations work on persistent databases.
-async fn run_migrations(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    let pool = db.pool();
+async fn run_migrations(
+    db: &Db,
+    url: &str,
+    apalis_pool: &ApalisPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Apalis migrations first — they use high-numbered timestamp versions.
+    // Domain migrations run second with ignore_missing so both coexist in
+    // the shared _sqlx_migrations table.
+    #[cfg(feature = "sqlite")]
+    {
+        let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+        apalis_migrator.set_ignore_missing(true);
+        apalis_migrator.run(apalis_pool).await?;
+    }
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    {
+        apalis_postgres::PostgresStorage::setup(apalis_pool).await?;
+    }
 
     // PRAGMAs + domain migrations
-    db.run_migrations().await?;
-
-    let mut apalis_migrator = SqliteStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator.run(pool).await?;
+    db.run_migrations(url).await?;
 
     // No workers are active yet, so any "Running" jobs are stale locks from
     // a previous process. Reset them so workers pick them up immediately.
-    let reset = sqlx::query(
-        "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL WHERE status = 'Running'",
-    )
-    .execute(pool)
+    let reset = sqlx::query(&format!(
+        "UPDATE {} SET status = 'Pending', lock_by = NULL, lock_at = NULL WHERE status = 'Running'",
+        budget_jobs::JOBS_TABLE,
+    ))
+    .execute(apalis_pool)
     .await?;
     if reset.rows_affected() > 0 {
         tracing::info!(count = reset.rows_affected(), "reset stale running jobs");
@@ -165,20 +177,28 @@ async fn run_migrations(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// A lock older than 5 minutes indicates the worker died without completing.
 /// Resetting to `Pending` lets another worker pick the job up.
-async fn reclaim_stale_jobs_loop(pool: SqlitePool) {
+async fn reclaim_stale_jobs_loop(pool: ApalisPool) {
     const STALE_SECONDS: i64 = 300; // 5 minutes
+
+    #[cfg(feature = "sqlite")]
+    const RECLAIM_SQL: &str = "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
+         WHERE status = 'Running' AND lock_at < ?";
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    const RECLAIM_SQL: &str = "UPDATE apalis.jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
+         WHERE status = 'Running' AND lock_at < $1";
+
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
+
+        #[cfg(feature = "sqlite")]
         let cutoff = chrono::Utc::now().timestamp() - STALE_SECONDS;
-        match sqlx::query(
-            "UPDATE Jobs SET status = 'Pending', lock_by = NULL, lock_at = NULL \
-             WHERE status = 'Running' AND lock_at < ?",
-        )
-        .bind(cutoff)
-        .execute(&pool)
-        .await
-        {
+
+        #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(STALE_SECONDS);
+
+        match sqlx::query(RECLAIM_SQL).bind(cutoff).execute(&pool).await {
             Ok(res) if res.rows_affected() > 0 => {
                 tracing::info!(count = res.rows_affected(), "reclaimed stale jobs");
             }
@@ -286,13 +306,25 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
 /// Returns a future that resolves when any worker errors out.
 async fn build_workers(
     db: &Db,
+    apalis_pool: &ApalisPool,
     bank_factory: BankProviderFactory,
     llm: LlmClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pool = db.pool();
+    macro_rules! backend {
+        ($T:ty) => {{
+            #[cfg(feature = "sqlite")]
+            {
+                apalis_sqlite::SqliteStorage::<$T, _, _>::new(apalis_pool)
+            }
+            #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+            {
+                apalis_postgres::PostgresStorage::<$T>::new(apalis_pool)
+            }
+        }};
+    }
 
     // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
-    let pipeline_backend = SqliteStorage::<Vec<u8>, _, _>::new(pool);
+    let pipeline_backend = backend!(Vec<u8>);
     let pipeline_workflow = workflow_for(&pipeline_backend)
         .and_then(pipeline::step_sync)
         .and_then(pipeline::step_categorize)
@@ -302,46 +334,50 @@ async fn build_workers(
         .backend(pipeline_backend)
         .data(db.clone())
         .data(bank_factory.clone())
+        // clone() justified: ApalisPool is Arc-based
+        .data(apalis_pool.clone())
         .build(pipeline_workflow);
 
-    // clone() on db is justified: Db wraps an Arc-based SqlitePool
+    // clone() on db is justified: Db wraps an Arc-based pool
     let sync_worker = WorkerBuilder::new("budget-sync")
-        .backend(SqliteStorage::<SyncJob, _, _>::new(pool))
+        .backend(backend!(SyncJob))
         .data(db.clone())
         .data(bank_factory)
         .build(budget_jobs::handle_sync_job);
 
     // Fan-out handlers: apply rules, enqueue per-transaction LLM jobs
     let categorize_worker = WorkerBuilder::new("budget-categorize")
-        .backend(SqliteStorage::<CategorizeJob, _, _>::new(pool))
+        .backend(backend!(CategorizeJob))
         .data(db.clone())
+        .data(apalis_pool.clone())
         .build(budget_jobs::handle_categorize_job);
 
     let correlate_worker = WorkerBuilder::new("budget-correlate")
-        .backend(SqliteStorage::<CorrelateJob, _, _>::new(pool))
+        .backend(backend!(CorrelateJob))
         .data(db.clone())
+        .data(apalis_pool.clone())
         .build(budget_jobs::handle_correlate_job);
 
     // Per-transaction handlers: call LLM for individual transactions
     let categorize_txn_worker = WorkerBuilder::new("budget-categorize-txn")
-        .backend(SqliteStorage::<CategorizeTransactionJob, _, _>::new(pool))
+        .backend(backend!(CategorizeTransactionJob))
         .data(db.clone())
         .data(llm.clone())
         .build(budget_jobs::handle_categorize_transaction_job);
 
     let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
-        .backend(SqliteStorage::<CorrelateTransactionJob, _, _>::new(pool))
+        .backend(backend!(CorrelateTransactionJob))
         .data(db.clone())
         .data(llm)
         .build(budget_jobs::handle_correlate_transaction_job);
 
     let recompute_worker = WorkerBuilder::new("budget-recompute")
-        .backend(SqliteStorage::<BudgetRecomputeJob, _, _>::new(pool))
+        .backend(backend!(BudgetRecomputeJob))
         .data(db.clone())
         .build(budget_jobs::handle_recompute_job);
 
     let noop_worker = WorkerBuilder::new("budget-no-op")
-        .backend(SqliteStorage::<NoOpJob, _, _>::new(pool))
+        .backend(backend!(NoOpJob))
         .build(budget_jobs::handle_noop_job);
 
     tracing::info!("job queue initialized");
@@ -378,7 +414,7 @@ async fn build_workers(
 
 /// Create a [`Workflow`] whose Backend type parameter is inferred from a
 /// reference to the concrete backend. This avoids naming the full
-/// `SqliteStorage<Vec<u8>, JsonCodec<Vec<u8>>, SqliteFetcher>` type.
+/// backend-specific storage type.
 fn workflow_for<T, B>(_backend: &B) -> Workflow<T, T, B> {
     Workflow::new("full-sync-pipeline")
 }
