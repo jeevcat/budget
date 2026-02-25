@@ -44,3 +44,64 @@
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+/* Immich-style queue cards */
+.queue-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--oat-border);
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+
+.queue-card {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.queue-card + .queue-card {
+  border-top: 1px solid var(--oat-border);
+}
+
+.queue-card-title {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.queue-card-desc {
+  width: 100%;
+  font-size: 0.85rem;
+  color: var(--oat-secondary-text, #888);
+  margin-top: -0.25rem;
+}
+
+.queue-stat-row {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.queue-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--oat-border);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.queue-stat-label {
+  color: var(--oat-secondary-text, #888);
+}
+
+.queue-stat-value {
+  font-weight: 600;
+  font-family: var(--oat-font-mono, ui-monospace, monospace);
+}

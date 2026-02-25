@@ -7,7 +7,7 @@
 use apalis::prelude::*;
 use sqlx::SqlitePool;
 
-use super::{BankProviderFactory, LlmClient};
+use super::BankProviderFactory;
 
 /// Step 1: Sync transactions for the given account.
 ///
@@ -23,31 +23,29 @@ pub async fn step_sync(
     Ok(account_id)
 }
 
-/// Step 2: Categorize all uncategorized transactions.
+/// Step 2: Apply categorization rules and enqueue per-transaction LLM jobs.
 ///
 /// # Errors
 ///
-/// Returns an error if categorization fails.
+/// Returns an error if the fan-out fails.
 pub async fn step_categorize(
     account_id: String,
     pool: Data<SqlitePool>,
-    llm: Data<LlmClient>,
 ) -> Result<String, BoxDynError> {
-    super::categorize::categorize_transactions(&pool, &llm).await?;
+    super::categorize::categorize_fan_out(&pool).await?;
     Ok(account_id)
 }
 
-/// Step 3: Correlate uncorrelated transactions.
+/// Step 3: Apply correlation rules and enqueue per-transaction LLM jobs.
 ///
 /// # Errors
 ///
-/// Returns an error if correlation fails.
+/// Returns an error if the fan-out fails.
 pub async fn step_correlate(
     account_id: String,
     pool: Data<SqlitePool>,
-    llm: Data<LlmClient>,
 ) -> Result<String, BoxDynError> {
-    super::correlate::correlate_transactions(&pool, &llm).await?;
+    super::correlate::correlate_fan_out(&pool).await?;
     Ok(account_id)
 }
 

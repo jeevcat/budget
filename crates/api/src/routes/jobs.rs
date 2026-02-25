@@ -27,15 +27,58 @@ struct JobRecord {
     pipeline_step: Option<u64>,
 }
 
+/// Queue depth per job type for the Immich-style queue display.
+#[derive(Serialize)]
+struct QueueCount {
+    job_type: String,
+    active: i64,
+    waiting: i64,
+    completed: i64,
+    failed: i64,
+}
+
 /// Extract the pipeline step index from the apalis metadata JSON.
 ///
 /// The metadata stores `WorkflowContext { step_index }` under the fully
-/// qualified type name key. Returns `None` for non-pipeline jobs.
-fn extract_pipeline_step(metadata: &str) -> Option<u64> {
+/// qualified type name key. For pipeline jobs without a `WorkflowContext`
+/// (e.g. newly enqueued), defaults to step 0 (Sync).
+/// Returns `None` for non-pipeline jobs.
+fn extract_pipeline_step(job_type: &str, metadata: &str) -> Option<u64> {
+    let is_pipeline = job_type.contains("Vec<u8>") || job_type == "Vec<u8>";
+    if !is_pipeline {
+        return None;
+    }
+
     let obj: serde_json::Value = serde_json::from_str(metadata).ok()?;
-    obj.get("apalis_workflow::sequential::context::WorkflowContext")?
-        .get("step_index")?
-        .as_u64()
+    let step = obj
+        .get("apalis_workflow::sequential::context::WorkflowContext")
+        .and_then(|ctx| ctx.get("step_index"))
+        .and_then(serde_json::Value::as_u64);
+
+    // Pipeline job without WorkflowContext metadata defaults to step 0
+    Some(step.unwrap_or(0))
+}
+
+/// Sanitize the `last_result` JSON from apalis into a human-readable string.
+///
+/// - `{"Ok":"Done"}` or `{"Ok":{"Next":...}}` -> `None` (success, hide)
+/// - `{"Err":"msg"}` -> `Some("msg")` (show just the error message)
+/// - Unparseable -> return raw as-is
+fn sanitize_result(raw: &str) -> Option<String> {
+    let val: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Some(raw.to_owned()),
+    };
+
+    if val.get("Ok").is_some() {
+        return None;
+    }
+
+    if let Some(err) = val.get("Err") {
+        return Some(err.as_str().map_or_else(|| err.to_string(), str::to_owned));
+    }
+
+    Some(raw.to_owned())
 }
 
 /// Convert a Unix timestamp (seconds) to an ISO 8601 string.
@@ -49,6 +92,7 @@ fn unix_to_iso(ts: i64) -> String {
 ///
 /// Mounts:
 /// - `GET /` -- list recent jobs
+/// - `GET /counts` -- queue depth per job type
 /// - `POST /sync/{account_id}` -- enqueue a bank sync job
 /// - `POST /categorize` -- enqueue a categorization job
 /// - `POST /correlate` -- enqueue a correlation job
@@ -61,6 +105,7 @@ fn unix_to_iso(ts: i64) -> String {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_jobs))
+        .route("/counts", get(queue_counts))
         .route("/sync/{account_id}", post(trigger_sync))
         .route("/categorize", post(trigger_categorize))
         .route("/correlate", post(trigger_correlate))
@@ -98,7 +143,10 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
                 lock_by,
                 metadata,
             )| {
-                let pipeline_step = metadata.as_deref().and_then(extract_pipeline_step);
+                let pipeline_step = metadata
+                    .as_deref()
+                    .and_then(|m| extract_pipeline_step(&job_type, m));
+                let last_result = last_result.as_deref().and_then(sanitize_result);
                 JobRecord {
                     id,
                     job_type,
@@ -116,6 +164,42 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
         .collect();
 
     Ok(Json(jobs))
+}
+
+/// Return queue depth per job type for the Immich-style queue display.
+///
+/// # Errors
+///
+/// Returns `AppError` on database failure.
+async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCount>>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT job_type, status, COUNT(*) as count FROM Jobs GROUP BY job_type, status",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    // Aggregate into one QueueCount per job_type
+    let mut map = std::collections::HashMap::<String, QueueCount>::new();
+    for (job_type, status, count) in rows {
+        let entry = map.entry(job_type.clone()).or_insert_with(|| QueueCount {
+            job_type,
+            active: 0,
+            waiting: 0,
+            completed: 0,
+            failed: 0,
+        });
+        match status.as_str() {
+            "Pending" => entry.waiting += count,
+            "Running" => entry.active += count,
+            "Done" => entry.completed += count,
+            "Failed" | "Killed" => entry.failed += count,
+            _ => {}
+        }
+    }
+
+    let mut counts: Vec<QueueCount> = map.into_values().collect();
+    counts.sort_by(|a, b| a.job_type.cmp(&b.job_type));
+    Ok(Json(counts))
 }
 
 /// Enqueue a sync job for the specified account.
@@ -203,4 +287,52 @@ async fn trigger_pipeline(
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::ACCEPTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_result_hides_ok_done() {
+        assert_eq!(sanitize_result(r#"{"Ok":"Done"}"#), None);
+    }
+
+    #[test]
+    fn sanitize_result_hides_ok_next() {
+        assert_eq!(sanitize_result(r#"{"Ok":{"Next":"abc"}}"#), None);
+    }
+
+    #[test]
+    fn sanitize_result_extracts_error_message() {
+        assert_eq!(
+            sanitize_result(r#"{"Err":"connection timeout"}"#),
+            Some("connection timeout".to_owned()),
+        );
+    }
+
+    #[test]
+    fn sanitize_result_passes_through_unparseable() {
+        assert_eq!(sanitize_result("not json"), Some("not json".to_owned()),);
+    }
+
+    #[test]
+    fn extract_pipeline_step_returns_step_index() {
+        let metadata =
+            r#"{"apalis_workflow::sequential::context::WorkflowContext":{"step_index":2}}"#;
+        assert_eq!(extract_pipeline_step("Vec<u8>", metadata), Some(2));
+    }
+
+    #[test]
+    fn extract_pipeline_step_defaults_to_zero() {
+        // Pipeline job but no WorkflowContext in metadata
+        assert_eq!(extract_pipeline_step("Vec<u8>", "{}"), Some(0));
+    }
+
+    #[test]
+    fn extract_pipeline_step_none_for_non_pipeline() {
+        let metadata =
+            r#"{"apalis_workflow::sequential::context::WorkflowContext":{"step_index":1}}"#;
+        assert_eq!(extract_pipeline_step("SyncJob", metadata), None);
+    }
 }

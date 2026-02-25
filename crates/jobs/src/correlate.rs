@@ -1,7 +1,11 @@
 //! Correlate job handler: links related transactions across accounts
 //! (transfers, reimbursements) using deterministic rules and LLM fallback.
+//!
+//! The fan-out handler applies cheap deterministic rules in-line, then enqueues
+//! one `CorrelateTransactionJob` per remaining transaction for LLM processing.
 
 use apalis::prelude::*;
+use apalis_sqlite::SqliteStorage;
 use sqlx::SqlitePool;
 
 use budget_core::db;
@@ -9,7 +13,7 @@ use budget_core::models::{CorrelationType, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_correlation_rules};
 use budget_providers::TransactionSummary;
 
-use super::{CorrelateJob, LlmClient};
+use super::{CorrelateJob, CorrelateTransactionJob, LlmClient};
 
 /// Minimum LLM confidence required to auto-link a correlation.
 const LLM_CONFIDENCE_THRESHOLD: f64 = 0.8;
@@ -39,24 +43,13 @@ fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
     }
 }
 
-/// Correlate uncorrelated transactions using a two-layer approach:
-///
-/// 1. **Deterministic rules** -- user-defined correlation patterns are
-///    evaluated against each transaction and its candidate partners. The
-///    first match wins.
-/// 2. **LLM fallback** -- for plausible pairs (equal and opposite amounts),
-///    the LLM proposes whether they are a transfer or reimbursement. Only
-///    high-confidence results are accepted.
-///
-/// Both sides of a matched pair are updated with mutual correlation links.
+/// Apply deterministic rules in-line, then enqueue one
+/// `CorrelateTransactionJob` per remaining transaction for LLM processing.
 ///
 /// # Errors
 ///
-/// Returns an error if any database query or LLM call fails.
-pub(crate) async fn correlate_transactions(
-    pool: &SqlitePool,
-    llm: &LlmClient,
-) -> Result<(), BoxDynError> {
+/// Returns an error if any database query or enqueue operation fails.
+pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynError> {
     // -- Compile correlation rules -------------------------------------------
     let raw_rules = db::list_rules_by_type(pool, RuleType::Correlation).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
@@ -82,8 +75,8 @@ pub(crate) async fn correlate_transactions(
     let mut paired = std::collections::HashSet::<TransactionId>::new();
 
     let mut by_rule: u32 = 0;
-    let mut by_llm: u32 = 0;
-    let mut remaining: u32 = 0;
+    let mut enqueued: u32 = 0;
+    let mut storage = SqliteStorage::<CorrelateTransactionJob, _, _>::new(pool);
 
     for txn in &uncorrelated {
         if paired.contains(&txn.id) {
@@ -99,11 +92,10 @@ pub(crate) async fn correlate_transactions(
             .collect();
 
         if candidates.is_empty() {
-            remaining += 1;
             continue;
         }
 
-        // -- Layer 1: deterministic rules ------------------------------------
+        // -- Deterministic rules ---------------------------------------------
         if let Some((matched_id, corr_type)) =
             evaluate_correlation_rules(txn, &candidates, &compiled_rules)
         {
@@ -114,60 +106,92 @@ pub(crate) async fn correlate_transactions(
             continue;
         }
 
-        // -- Layer 2: LLM fallback for plausible pairs -----------------------
-        // Only consider candidates with equal and opposite amounts to limit
-        // LLM calls to likely matches.
-        let mut found_llm_match = false;
-        for candidate in &candidates {
-            if candidate.amount != -txn.amount {
-                continue;
-            }
-
-            let summary_a = to_summary(txn);
-            let summary_b = to_summary(candidate);
-
-            let result = llm.propose_correlation(&summary_a, &summary_b).await?;
-
-            if result.confidence >= LLM_CONFIDENCE_THRESHOLD
-                && let Some(ref provider_corr_type) = result.correlation_type
-            {
-                let domain_type = to_domain_correlation_type(provider_corr_type);
-                link_pair(pool, txn.id, candidate.id, domain_type).await?;
-                paired.insert(txn.id);
-                paired.insert(candidate.id);
-                by_llm += 1;
-                found_llm_match = true;
-                break;
-            }
-        }
-
-        if !found_llm_match {
-            remaining += 1;
-        }
+        // -- Enqueue for LLM processing -------------------------------------
+        storage
+            .push(CorrelateTransactionJob {
+                transaction_id: txn.id.to_string(),
+            })
+            .await?;
+        enqueued += 1;
     }
 
     tracing::info!(
         total = uncorrelated.len(),
         by_rule,
-        by_llm,
-        remaining,
-        "correlate job completed"
+        enqueued,
+        "correlate fan-out completed"
     );
 
     Ok(())
 }
 
-/// Apalis handler that delegates to [`correlate_transactions`].
+/// Correlate a single transaction via LLM.
+///
+/// Loads the transaction by ID, checks it is still uncorrelated (race-safe
+/// bail-out), finds candidates with the opposite amount, then calls the LLM
+/// to propose whether they are correlated.
 ///
 /// # Errors
 ///
-/// Returns an error if correlation fails.
-pub async fn handle_correlate_job(
-    _job: CorrelateJob,
+/// Returns an error if the database query or LLM call fails.
+pub async fn handle_correlate_transaction_job(
+    job: CorrelateTransactionJob,
     pool: Data<SqlitePool>,
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
-    correlate_transactions(&pool, &llm).await
+    let txn_id: TransactionId = job
+        .transaction_id
+        .parse::<uuid::Uuid>()
+        .map(TransactionId::from_uuid)
+        .map_err(|e| format!("invalid transaction id: {e}"))?;
+
+    let txn = db::get_transaction_by_id(&pool, txn_id)
+        .await?
+        .ok_or_else(|| format!("transaction {txn_id} not found"))?;
+
+    // Race-safe: already correlated by another job or rule
+    if txn.correlation_id.is_some() {
+        tracing::debug!(txn_id = %txn_id, "already correlated, skipping");
+        return Ok(());
+    }
+
+    // Find candidates: uncorrelated transactions with opposite amount
+    let candidates = db::get_correlation_candidates(&pool, -txn.amount, txn_id).await?;
+
+    for candidate in &candidates {
+        let summary_a = to_summary(&txn);
+        let summary_b = to_summary(candidate);
+
+        let result = llm.propose_correlation(&summary_a, &summary_b).await?;
+
+        if result.confidence >= LLM_CONFIDENCE_THRESHOLD
+            && let Some(ref provider_corr_type) = result.correlation_type
+        {
+            let domain_type = to_domain_correlation_type(provider_corr_type);
+            link_pair(&pool, txn_id, candidate.id, domain_type).await?;
+            tracing::debug!(
+                txn_id = %txn_id,
+                correlated_with = %candidate.id,
+                "correlated by LLM"
+            );
+            return Ok(());
+        }
+    }
+
+    tracing::debug!(txn_id = %txn_id, "no LLM correlation match found");
+    Ok(())
+}
+
+/// Apalis handler for the fan-out job: applies rules then enqueues per-txn jobs.
+///
+/// # Errors
+///
+/// Returns an error if the fan-out fails.
+pub async fn handle_correlate_job(
+    _job: CorrelateJob,
+    pool: Data<SqlitePool>,
+) -> Result<(), BoxDynError> {
+    correlate_fan_out(&pool).await
 }
 
 /// Persist a bidirectional correlation link between two transactions.

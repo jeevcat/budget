@@ -17,8 +17,8 @@ pub mod pipeline;
 pub mod recompute;
 pub mod sync;
 
-pub use categorize::handle_categorize_job;
-pub use correlate::handle_correlate_job;
+pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
+pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
 pub use recompute::handle_recompute_job;
 pub use sync::handle_sync_job;
 
@@ -301,6 +301,18 @@ pub struct CategorizeJob;
 /// Attempt to correlate uncorrelated transactions (transfers, reimbursements).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CorrelateJob;
+
+/// Categorize a single transaction via LLM (enqueued by the fan-out job).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CategorizeTransactionJob {
+    pub transaction_id: String,
+}
+
+/// Correlate a single transaction via LLM (enqueued by the fan-out job).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CorrelateTransactionJob {
+    pub transaction_id: String,
+}
 
 /// Recompute budget month boundaries and assign transactions to months.
 #[derive(Debug, Default, Serialize, Deserialize)]

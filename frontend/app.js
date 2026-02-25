@@ -1315,14 +1315,43 @@ function Connections() {
 // Jobs
 // ---------------------------------------------------------------------------
 
+// Queue card definitions for the Immich-style display
+const QUEUE_CARDS = [
+  {
+    key: "sync",
+    title: "Sync",
+    desc: "Fetch new transactions from connected bank accounts",
+    types: ["SyncJob", "Vec<u8>"],
+  },
+  {
+    key: "categorize",
+    title: "Categorize",
+    desc: "Classify transactions using rules and LLM",
+    types: ["CategorizeJob", "CategorizeTransactionJob"],
+  },
+  {
+    key: "correlate",
+    title: "Correlate",
+    desc: "Link related transactions (transfers, reimbursements)",
+    types: ["CorrelateJob", "CorrelateTransactionJob"],
+  },
+  {
+    key: "recompute",
+    title: "Recompute",
+    desc: "Recompute budget month boundaries",
+    types: ["BudgetRecomputeJob"],
+  },
+];
+
 function Jobs() {
   const [jobs, setJobs] = useState(null);
+  const [counts, setCounts] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [syncAccountId, setSyncAccountId] = useState("");
   const [triggering, setTriggering] = useState(null);
 
-  function load() {
+  function loadJobs() {
     Promise.all([api.get("/jobs"), api.get("/accounts")])
       .then(([j, a]) => {
         setJobs(j);
@@ -1331,14 +1360,27 @@ function Jobs() {
       .catch(setError);
   }
 
-  useEffect(load, []);
+  function loadCounts() {
+    api
+      .get("/jobs/counts")
+      .then(setCounts)
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    loadJobs();
+    loadCounts();
+    const interval = setInterval(loadCounts, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   async function trigger(path, name) {
     setTriggering(name);
     setError(null);
     try {
       await api.post(path);
-      load();
+      loadJobs();
+      loadCounts();
     } catch (err) {
       setError(err);
     } finally {
@@ -1366,7 +1408,9 @@ function Jobs() {
       : job.job_type;
     if (name === "SyncJob") return "Sync";
     if (name === "CategorizeJob") return "Categorize";
+    if (name === "CategorizeTransactionJob") return "Categorize (txn)";
     if (name === "CorrelateJob") return "Correlate";
+    if (name === "CorrelateTransactionJob") return "Correlate (txn)";
     if (name === "BudgetRecomputeJob") return "Recompute";
     if (name === "Vec<u8>" || job.job_type.includes("Vec<u8>")) {
       const step = PIPELINE_STEPS[job.pipeline_step] ?? "?";
@@ -1381,6 +1425,82 @@ function Jobs() {
     return d.toLocaleString();
   }
 
+  // Aggregate queue counts for a card's job types
+  function cardCounts(card) {
+    if (!counts) return { active: 0, waiting: 0, completed: 0, failed: 0 };
+    const agg = { active: 0, waiting: 0, completed: 0, failed: 0 };
+    for (const c of counts) {
+      const shortName = c.job_type.includes("::")
+        ? c.job_type.split("::").pop()
+        : c.job_type;
+      if (card.types.includes(shortName)) {
+        agg.active += c.active;
+        agg.waiting += c.waiting;
+        agg.completed += c.completed;
+        agg.failed += c.failed;
+      }
+    }
+    return agg;
+  }
+
+  function renderQueueCard(card) {
+    const c = cardCounts(card);
+    const isSync = card.key === "sync";
+
+    return html`
+      <div class="queue-card">
+        <span class="queue-card-title">${card.title}</span>
+        ${
+          c.failed > 0
+            ? html`<span class="badge danger">${c.failed} failed</span>`
+            : null
+        }
+        ${
+          isSync
+            ? html`
+                <select
+                  value=${syncAccountId}
+                  onChange=${(e) => setSyncAccountId(e.target.value)}
+                  style="font-size:0.85rem"
+                >
+                  <option value="">Account...</option>
+                  ${(accounts ?? []).map(
+                    (a) => html`<option value=${a.id}>${a.name}</option>`,
+                  )}
+                </select>
+                <button
+                  data-variant="primary" class="small"
+                  onClick=${triggerSync}
+                  disabled=${!syncAccountId || triggering === "sync"}
+                >
+                  ${triggering === "sync" ? "..." : "Sync"}
+                </button>
+              `
+            : html`
+                <button
+                  data-variant="primary" class="small"
+                  onClick=${() => trigger(`/jobs/${card.key === "recompute" ? "recompute" : card.key}`, card.key)}
+                  disabled=${triggering === card.key}
+                >
+                  ${triggering === card.key ? "..." : card.key === "recompute" ? "Run" : "Run All"}
+                </button>
+              `
+        }
+        <span class="queue-card-desc">${card.desc}</span>
+        <div class="queue-stat-row">
+          <div class="queue-stat">
+            <span class="queue-stat-label">Active</span>
+            <span class="queue-stat-value">${c.active}</span>
+          </div>
+          <div class="queue-stat">
+            <span class="queue-stat-label">Waiting</span>
+            <span class="queue-stat-value">${c.waiting}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   if (error && !jobs) return html`<p class="muted">${error.message}</p>`;
   if (!jobs) return html`<p class="muted">Loading...</p>`;
 
@@ -1389,59 +1509,21 @@ function Jobs() {
 
     ${error && html`<p role="alert" data-variant="error">${error.message}</p>`}
 
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1.5rem">
-      <button
-        data-variant="primary"
-        onClick=${() => trigger("/jobs/categorize", "categorize")}
-        disabled=${triggering === "categorize"}
-      >
-        ${triggering === "categorize" ? "Queuing..." : "Categorize"}
-      </button>
-      <button
-        data-variant="primary"
-        onClick=${() => trigger("/jobs/correlate", "correlate")}
-        disabled=${triggering === "correlate"}
-      >
-        ${triggering === "correlate" ? "Queuing..." : "Correlate"}
-      </button>
-      <button
-        data-variant="primary"
-        onClick=${() => trigger("/jobs/recompute", "recompute")}
-        disabled=${triggering === "recompute"}
-      >
-        ${triggering === "recompute" ? "Queuing..." : "Recompute"}
-      </button>
+    <div class="queue-cards">
+      ${QUEUE_CARDS.map(renderQueueCard)}
+    </div>
 
-      <span class="muted" style="margin:0 0.25rem">|</span>
-
-      <select
-        value=${syncAccountId}
-        onChange=${(e) => setSyncAccountId(e.target.value)}
-      >
-        <option value="">Select account...</option>
-        ${(accounts ?? []).map(
-          (a) => html`<option value=${a.id}>${a.name}</option>`,
-        )}
-      </select>
-      <button
-        data-variant="primary"
-        onClick=${triggerSync}
-        disabled=${!syncAccountId || triggering === "sync"}
-      >
-        ${triggering === "sync" ? "Queuing..." : "Sync"}
-      </button>
-
-      <span style="flex:1"></span>
-      <button onClick=${load}>Refresh</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <span class="muted">
+        ${jobs.length} job${jobs.length !== 1 ? "s" : ""} (latest 100)
+      </span>
+      <button class="small" onClick=${loadJobs}>Refresh</button>
     </div>
 
     ${
       jobs.length === 0
         ? html`<p class="muted">No jobs yet. Trigger one above to get started.</p>`
         : html`
-          <p class="muted" style="margin-bottom:1rem">
-            ${jobs.length} job${jobs.length !== 1 ? "s" : ""} (latest 100)
-          </p>
           <div class="table">
             <table>
               <thead>
@@ -1452,7 +1534,7 @@ function Jobs() {
                   <th>Attempts</th>
                   <th>Queued</th>
                   <th>Completed</th>
-                  <th>Error</th>
+                  <th>Result</th>
                 </tr>
               </thead>
               <tbody>

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 apalis = { workspace = true }
+apalis-sqlite = { workspace = true }
 apalis-workflow = { workspace = true }
 budget-core = { workspace = true }
 budget-providers = { workspace = true }
@@ -16,6 +17,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+apalis-sqlite = { workspace = true }
 chrono = { workspace = true }
 rust_decimal_macros = { workspace = true }
 sqlx = { workspace = true }

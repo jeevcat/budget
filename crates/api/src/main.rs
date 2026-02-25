@@ -7,8 +7,8 @@ use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_jobs::{
-    BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CorrelateJob, LlmClient, NoOpJob,
-    SyncJob, pipeline,
+    BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
+    CorrelateTransactionJob, LlmClient, NoOpJob, SyncJob, pipeline,
 };
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
@@ -290,7 +290,7 @@ async fn build_workers(
     bank_factory: BankProviderFactory,
     llm: LlmClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Pipeline workflow: sync -> categorize -> correlate -> recompute
+    // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
     let pipeline_backend = SqliteStorage::<Vec<u8>, _, _>::new(pool);
     let pipeline_workflow = workflow_for(&pipeline_backend)
         .and_then(pipeline::step_sync)
@@ -301,7 +301,6 @@ async fn build_workers(
         .backend(pipeline_backend)
         .data(pool.clone())
         .data(bank_factory.clone())
-        .data(llm.clone())
         .build(pipeline_workflow);
 
     // clone() on pool and storages is justified: they are Arc-based handles
@@ -311,17 +310,29 @@ async fn build_workers(
         .data(bank_factory)
         .build(budget_jobs::handle_sync_job);
 
+    // Fan-out handlers: apply rules, enqueue per-transaction LLM jobs
     let categorize_worker = WorkerBuilder::new("budget-categorize")
         .backend(SqliteStorage::<CategorizeJob, _, _>::new(pool))
         .data(pool.clone())
-        .data(llm.clone())
         .build(budget_jobs::handle_categorize_job);
 
     let correlate_worker = WorkerBuilder::new("budget-correlate")
         .backend(SqliteStorage::<CorrelateJob, _, _>::new(pool))
         .data(pool.clone())
-        .data(llm)
         .build(budget_jobs::handle_correlate_job);
+
+    // Per-transaction handlers: call LLM for individual transactions
+    let categorize_txn_worker = WorkerBuilder::new("budget-categorize-txn")
+        .backend(SqliteStorage::<CategorizeTransactionJob, _, _>::new(pool))
+        .data(pool.clone())
+        .data(llm.clone())
+        .build(budget_jobs::handle_categorize_transaction_job);
+
+    let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
+        .backend(SqliteStorage::<CorrelateTransactionJob, _, _>::new(pool))
+        .data(pool.clone())
+        .data(llm)
+        .build(budget_jobs::handle_correlate_transaction_job);
 
     let recompute_worker = WorkerBuilder::new("budget-recompute")
         .backend(SqliteStorage::<BudgetRecomputeJob, _, _>::new(pool))
@@ -341,8 +352,14 @@ async fn build_workers(
         res = categorize_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
         }
+        res = categorize_txn_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "categorize-txn worker error"); }
+        }
         res = correlate_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
+        }
+        res = correlate_txn_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
         }
         res = recompute_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }

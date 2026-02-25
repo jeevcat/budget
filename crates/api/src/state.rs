@@ -3,7 +3,10 @@ use std::sync::Arc;
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
 use apalis_workflow::WorkflowSink;
-use budget_jobs::{BudgetRecomputeJob, CategorizeJob, CorrelateJob, SyncJob};
+use budget_jobs::{
+    BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
+    CorrelateTransactionJob, SyncJob,
+};
 use budget_providers::EnableBankingAuth;
 use sqlx::SqlitePool;
 
@@ -59,7 +62,9 @@ macro_rules! impl_push {
 
 impl_push!(SyncJob);
 impl_push!(CategorizeJob);
+impl_push!(CategorizeTransactionJob);
 impl_push!(CorrelateJob);
+impl_push!(CorrelateTransactionJob);
 impl_push!(BudgetRecomputeJob);
 
 /// Storage wrapper for pushing jobs into the full-sync pipeline workflow.

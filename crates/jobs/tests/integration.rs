@@ -18,8 +18,10 @@ use budget_core::models::{
     TransactionId,
 };
 use budget_jobs::{
-    BankClient, BankProviderFactory, CategorizeJob, CorrelateJob, LlmClient, SyncJob,
-    handle_categorize_job, handle_correlate_job, handle_sync_job,
+    BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
+    CorrelateTransactionJob, LlmClient, SyncJob, handle_categorize_job,
+    handle_categorize_transaction_job, handle_correlate_job, handle_correlate_transaction_job,
+    handle_sync_job,
 };
 use budget_providers::{MockBankProvider, MockLlmProvider};
 
@@ -27,15 +29,27 @@ use budget_providers::{MockBankProvider, MockLlmProvider};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Create an in-memory `SQLite` pool and run all migrations.
+/// Create an in-memory `SQLite` pool and run all migrations (domain + apalis).
 async fn setup_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
         .expect("failed to create in-memory SQLite pool");
-    sqlx::migrate!("../../migrations")
+
+    // Apalis Jobs table (needed by fan-out handlers that enqueue per-txn jobs)
+    let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator
         .run(&pool)
         .await
-        .expect("failed to run migrations");
+        .expect("failed to run apalis migrations");
+
+    let mut domain_migrator = sqlx::migrate!("../../migrations");
+    domain_migrator.set_ignore_missing(true);
+    domain_migrator
+        .run(&pool)
+        .await
+        .expect("failed to run domain migrations");
+
     pool
 }
 
@@ -426,7 +440,6 @@ async fn sync_no_connection_no_fallback_returns_error() {
 async fn categorize_rule_based_assignment() {
     let pool = setup_pool().await;
     let account = seed_checking_account(&pool).await;
-    let llm = make_llm_client();
 
     let groceries_cat = seed_category(&pool, "Food:Groceries").await;
 
@@ -455,7 +468,8 @@ async fn categorize_rule_based_assignment() {
     )
     .await;
 
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()), Data::new(llm))
+    // Fan-out handler applies rules in-line (no LLM needed)
+    handle_categorize_job(CategorizeJob, Data::new(pool.clone()))
         .await
         .expect("categorize job should succeed");
 
@@ -480,7 +494,7 @@ async fn categorize_llm_high_confidence_assigns_category() {
     // "WHOLE FOODS" -- above the 0.80 threshold.
     let groceries_cat = seed_category(&pool, "Food:Groceries").await;
 
-    // No rules in the DB, so the handler will fall through to LLM
+    // No rules in the DB, so the per-txn handler calls LLM directly
     let txn = seed_transaction(
         &pool,
         account.id,
@@ -491,9 +505,12 @@ async fn categorize_llm_high_confidence_assigns_category() {
     )
     .await;
 
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()), Data::new(llm))
+    let job = CategorizeTransactionJob {
+        transaction_id: txn.id.to_string(),
+    };
+    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
         .await
-        .expect("categorize job should succeed");
+        .expect("categorize transaction job should succeed");
 
     let updated = db::list_transactions(&pool).await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
@@ -526,9 +543,12 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
     )
     .await;
 
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()), Data::new(llm))
+    let job = CategorizeTransactionJob {
+        transaction_id: txn.id.to_string(),
+    };
+    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
         .await
-        .expect("categorize job should succeed");
+        .expect("categorize transaction job should succeed");
 
     let updated = db::list_transactions(&pool).await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
@@ -543,7 +563,6 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
 async fn categorize_no_uncategorized_transactions_is_noop() {
     let pool = setup_pool().await;
     let account = seed_checking_account(&pool).await;
-    let llm = make_llm_client();
 
     let cat = seed_category(&pool, "Food:Groceries").await;
 
@@ -558,8 +577,8 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
     )
     .await;
 
-    // Should complete without error and without changing anything
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()), Data::new(llm))
+    // Fan-out should complete without error and without changing anything
+    handle_categorize_job(CategorizeJob, Data::new(pool.clone()))
         .await
         .expect("categorize job should succeed with nothing to do");
 
@@ -593,9 +612,12 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
     )
     .await;
 
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()), Data::new(llm))
+    let job = CategorizeTransactionJob {
+        transaction_id: txn.id.to_string(),
+    };
+    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
         .await
-        .expect("categorize job should succeed");
+        .expect("categorize transaction job should succeed");
 
     let updated = db::list_transactions(&pool).await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
@@ -615,7 +637,6 @@ async fn correlate_rule_based_linking() {
     let pool = setup_pool().await;
     let checking = seed_checking_account(&pool).await;
     let credit = seed_credit_card_account(&pool).await;
-    let llm = make_llm_client();
 
     let transfer_cat = seed_category(&pool, "Transfers").await;
 
@@ -655,7 +676,8 @@ async fn correlate_rule_based_linking() {
         .await
         .expect("insert correlation rule");
 
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()), Data::new(llm))
+    // Fan-out handler applies rules in-line (no LLM needed)
+    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed");
 
@@ -702,10 +724,13 @@ async fn correlate_llm_equal_opposite_amounts_links() {
     )
     .await;
 
-    // No rules in DB -- handler falls through to LLM for equal-opposite pairs
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()), Data::new(llm))
+    // Per-txn handler calls LLM directly for the first transaction
+    let job = CorrelateTransactionJob {
+        transaction_id: txn_a.id.to_string(),
+    };
+    handle_correlate_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
         .await
-        .expect("correlate job should succeed");
+        .expect("correlate transaction job should succeed");
 
     let all_txns = db::list_transactions(&pool).await.expect("list txns");
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
@@ -754,9 +779,13 @@ async fn correlate_bidirectional_both_sides_linked() {
     )
     .await;
 
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()), Data::new(llm))
+    // Per-txn handler calls LLM directly
+    let job = CorrelateTransactionJob {
+        transaction_id: txn_a.id.to_string(),
+    };
+    handle_correlate_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
         .await
-        .expect("correlate job should succeed");
+        .expect("correlate transaction job should succeed");
 
     let all_txns = db::list_transactions(&pool).await.expect("list txns");
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
@@ -771,10 +800,9 @@ async fn correlate_bidirectional_both_sides_linked() {
 #[tokio::test]
 async fn correlate_no_uncorrelated_transactions_is_noop() {
     let pool = setup_pool().await;
-    let llm = make_llm_client();
 
-    // No transactions at all -- handler should return Ok immediately
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()), Data::new(llm))
+    // No transactions at all -- fan-out should return Ok immediately
+    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed with no transactions");
 
@@ -787,7 +815,6 @@ async fn correlate_already_paired_not_correlated_again() {
     let pool = setup_pool().await;
     let checking = seed_checking_account(&pool).await;
     let credit = seed_credit_card_account(&pool).await;
-    let llm = make_llm_client();
 
     let cat = seed_category(&pool, "Transfers").await;
 
@@ -830,7 +857,8 @@ async fn correlate_already_paired_not_correlated_again() {
     )
     .await;
 
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()), Data::new(llm))
+    // Fan-out handler: txn_a/txn_b already correlated, txn_c enqueued for LLM
+    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
         .await
         .expect("correlate job should succeed");
 

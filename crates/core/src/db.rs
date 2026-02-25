@@ -345,6 +345,30 @@ pub async fn list_transactions(pool: &SqlitePool) -> Result<Vec<Transaction>, sq
     rows.iter().map(row_to_transaction).collect()
 }
 
+/// Get a single transaction by its ID.
+///
+/// Returns `None` if no transaction exists with the given ID.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_transaction_by_id(
+    pool: &SqlitePool,
+    id: TransactionId,
+) -> Result<Option<Transaction>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                merchant_name, description, posted_date, budget_month_id, project_id,
+                correlation_id, correlation_type, suggested_category
+         FROM transactions
+         WHERE id = ?1",
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(row_to_transaction).transpose()
+}
+
 /// Get transactions that have not yet been categorized.
 ///
 /// # Errors
@@ -383,6 +407,36 @@ pub async fn get_uncorrelated_transactions(
          FROM transactions
          WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
     )
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(row_to_transaction).collect()
+}
+
+/// Get uncorrelated transactions with the exact opposite amount of the given value.
+///
+/// Used by the per-transaction correlation handler to find candidate partners.
+/// Excludes the transaction identified by `exclude_id`.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` if the query fails.
+pub async fn get_correlation_candidates(
+    pool: &SqlitePool,
+    opposite_amount: Decimal,
+    exclude_id: TransactionId,
+) -> Result<Vec<Transaction>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                merchant_name, description, posted_date, budget_month_id, project_id,
+                correlation_id, correlation_type, suggested_category
+         FROM transactions
+         WHERE correlation_id IS NULL AND correlation_type IS NULL
+           AND category_id IS NOT NULL
+           AND amount = ?1
+           AND id != ?2",
+    )
+    .bind(opposite_amount.to_string())
+    .bind(exclude_id.to_string())
     .fetch_all(pool)
     .await?;
     rows.iter().map(row_to_transaction).collect()

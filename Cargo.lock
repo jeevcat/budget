@@ -337,6 +337,7 @@ name = "budget-jobs"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "apalis-sqlite",
  "apalis-workflow",
  "budget-core",
  "budget-providers",
