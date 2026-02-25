@@ -137,8 +137,8 @@ function Dashboard() {
     api.get("/budgets/status").then(setStatus).catch(setError);
   }, []);
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!status) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!status) return html`<p class="text-light">Loading...</p>`;
 
   return html`
     <h2>Budget Status</h2>
@@ -278,8 +278,8 @@ function Transactions() {
       .catch(setError);
   }, []);
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!txns) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!txns) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
   const acctMap = Object.fromEntries((accounts ?? []).map((a) => [a.id, a]));
@@ -287,7 +287,7 @@ function Transactions() {
   if (txns.length === 0)
     return html`
       <h2>Transactions</h2>
-      <p class="muted">
+      <p class="text-light">
         No transactions yet. Connect an account and run a sync job to pull in
         data.
       </p>
@@ -376,7 +376,7 @@ function Transactions() {
                       : null
                   }
                 </td>
-                <td class="muted">${acctMap[t.account_id]?.name ?? ""}</td>
+                <td class="text-light">${acctMap[t.account_id]?.name ?? ""}</td>
               </tr>
             `,
           )}
@@ -475,8 +475,8 @@ function Categories() {
     }
   }
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!categories) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!categories) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
   const existingNames = new Set(categories.map((c) => c.name));
@@ -497,7 +497,7 @@ function Categories() {
 
   return html`
     <h2>Categories</h2>
-    <p class="muted" style="margin-bottom:1rem">
+    <p class="text-light" style="margin-bottom:1rem">
       ${categories.length} categor${categories.length !== 1 ? "ies" : "y"}
     </p>
 
@@ -506,7 +506,7 @@ function Categories() {
       html`
         <div style="margin-bottom:1.5rem">
           <h3>LLM Suggestions</h3>
-          <p class="muted" style="margin-bottom:0.5rem">
+          <p class="text-light" style="margin-bottom:0.5rem">
             The LLM suggested these categories for uncategorized transactions.
             Accept to create the category, then re-run categorize.
           </p>
@@ -562,7 +562,7 @@ function Categories() {
 
     ${
       rows.length === 0
-        ? html`<p class="muted">No categories yet. Add one above.</p>`
+        ? html`<p class="text-light">No categories yet. Add one above.</p>`
         : html`
           <table>
             <thead>
@@ -579,7 +579,7 @@ function Categories() {
                       <span style="padding-left:${c.depth * 1.5}rem">
                         ${
                           c.depth > 0
-                            ? html`<span class="muted" style="font-size:0.85rem;margin-right:0.25rem"
+                            ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
                               >${catMap[c.parent_id]?.name} ></span
                             > `
                             : null
@@ -638,8 +638,8 @@ function Rules() {
 
   useEffect(load, []);
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!rules) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!rules) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
 
@@ -799,14 +799,14 @@ function Rules() {
     return html`
       <tr key=${rule.id}>
         <td>
-          <div class="rules-row-main">
+          <div class="hstack">
             <span class="mono" style="font-size:0.8rem;min-width:1.5rem;text-align:right">${rule.priority}</span>
             <span class="badge ${typeBadge(rule.rule_type)}"
               >${rule.rule_type}</span
             >
-            <span class="muted">${fieldLabel(rule.match_field)}</span>
+            <span class="text-light">${fieldLabel(rule.match_field)}</span>
             <code class="">${rule.match_pattern}</code>
-            <span class="muted">\u2192</span>
+            <span class="text-light">\u2192</span>
             <span>${ruleTarget(rule)}</span>
           </div>
         </td>
@@ -825,7 +825,7 @@ function Rules() {
   return html`
     <h2>Rules</h2>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-      <span class="muted">
+      <span class="text-light">
         ${rules.length} rule${rules.length !== 1 ? "s" : ""}${" \u2014 "}
         ${categorizationRules.length} categorization, ${correlationRules.length} correlation
       </span>
@@ -844,7 +844,7 @@ function Rules() {
     ${
       showForm &&
       html`
-      <form style="border:1px solid var(--oat-border);border-radius:4px;padding:1rem;margin-bottom:1rem;display:flex;flex-direction:column;gap:0.75rem" onSubmit=${handleSubmit}>
+      <form style="border:1px solid var(--border);border-radius:4px;padding:1rem;margin-bottom:1rem;display:flex;flex-direction:column;gap:0.75rem" onSubmit=${handleSubmit}>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">${renderFormFields()}</div>
         <button data-variant="primary" type="submit" disabled=${saving}>
           Create Rule
@@ -855,7 +855,7 @@ function Rules() {
 
     ${
       rules.length === 0
-        ? html`<p class="muted" style="margin-top:1rem">
+        ? html`<p class="text-light" style="margin-top:1rem">
           No rules yet. Add a rule to teach the system how to categorize and
           correlate your transactions.
         </p>`
@@ -949,14 +949,15 @@ function Budgets() {
     }
   }
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!periods || !categories) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!periods || !categories)
+    return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
 
   return html`
     <h2>Budget Periods</h2>
-    <p class="muted" style="margin-bottom:1rem">
+    <p class="text-light" style="margin-bottom:1rem">
       ${periods.length} budget period${periods.length !== 1 ? "s" : ""}
     </p>
 
@@ -999,7 +1000,7 @@ function Budgets() {
 
     ${
       periods.length === 0
-        ? html`<p class="muted">No budget periods yet. Add one above.</p>`
+        ? html`<p class="text-light">No budget periods yet. Add one above.</p>`
         : html`
           <table>
             <thead>
@@ -1134,12 +1135,13 @@ function Projects() {
     return project.end_date < new Date().toISOString().slice(0, 10);
   }
 
-  if (error && !projects) return html`<p class="muted">${error.message}</p>`;
-  if (!projects) return html`<p class="muted">Loading...</p>`;
+  if (error && !projects)
+    return html`<p class="text-light">${error.message}</p>`;
+  if (!projects) return html`<p class="text-light">Loading...</p>`;
 
   return html`
     <h2>Projects</h2>
-    <p class="muted" style="margin-bottom:1rem">
+    <p class="text-light" style="margin-bottom:1rem">
       ${projects.length} project${projects.length !== 1 ? "s" : ""}
     </p>
 
@@ -1199,7 +1201,7 @@ function Projects() {
 
     ${
       projects.length === 0
-        ? html`<p class="muted">No projects yet. Add one above.</p>`
+        ? html`<p class="text-light">No projects yet. Add one above.</p>`
         : html`
         <div class="table">
           <table>
@@ -1218,7 +1220,7 @@ function Projects() {
                 (p) => html`
                 <tr class=${isCompleted(p) ? "project-completed" : ""}>
                   <td><span style="font-weight:500">${p.name}</span></td>
-                  <td>${categoryName(catMap, p.category_id) ?? html`<span class="muted">unknown</span>`}</td>
+                  <td>${categoryName(catMap, p.category_id) ?? html`<span class="text-light">unknown</span>`}</td>
                   <td class="mono">${p.start_date}</td>
                   <td>
                     ${
@@ -1336,19 +1338,19 @@ function Connections() {
         )
       : aspsps;
 
-  if (error) return html`<p class="muted">${error.message}</p>`;
-  if (!connections) return html`<p class="muted">Loading...</p>`;
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!connections) return html`<p class="text-light">Loading...</p>`;
 
   return html`
     <h2>Connections</h2>
 
     ${
       connections.length === 0
-        ? html`<p class="muted" style="margin-bottom:1.5rem">
+        ? html`<p class="text-light" style="margin-bottom:1.5rem">
             No bank connections yet. Search for your bank below to get started.
           </p>`
         : html`
-            <p class="muted" style="margin-bottom:1rem">
+            <p class="text-light" style="margin-bottom:1rem">
               ${connections.length} connection${connections.length !== 1 ? "s" : ""}
             </p>
             <table>
@@ -1463,7 +1465,7 @@ function Connections() {
                         </tbody>
                       </table>
                     `
-                  : html`<p class="muted">No banks found matching your search.</p>`
+                  : html`<p class="text-light">No banks found matching your search.</p>`
               }
             `
           : null
@@ -1625,8 +1627,8 @@ function Jobs() {
     `;
   }
 
-  if (error && !counts) return html`<p class="muted">${error.message}</p>`;
-  if (!counts) return html`<p class="muted">Loading...</p>`;
+  if (error && !counts) return html`<p class="text-light">${error.message}</p>`;
+  if (!counts) return html`<p class="text-light">Loading...</p>`;
 
   return html`
     <h2>Jobs</h2>
@@ -1666,7 +1668,7 @@ function Login({ onLogin }) {
     >
       <form onSubmit=${submit} style="width:320px">
         <h2>Budget</h2>
-        <p class="muted" style="margin-bottom:1rem">Enter your API token.</p>
+        <p class="text-light" style="margin-bottom:1rem">Enter your API token.</p>
         ${error && html`<p role="alert" data-variant="error">${error}</p>`}
         <input
           type="password"
@@ -1700,7 +1702,7 @@ function App() {
     if (route === "/projects") return html`<${Projects} />`;
     if (route === "/connections") return html`<${Connections} />`;
     if (route === "/jobs") return html`<${Jobs} />`;
-    return html`<p class="muted">Not found.</p>`;
+    return html`<p class="text-light">Not found.</p>`;
   };
 
   return html`

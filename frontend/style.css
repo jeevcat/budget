@@ -1,48 +1,22 @@
-/* Minimal overrides on top of oat */
-
-[data-sidebar] a {
-  display: block;
-  padding: 0.4rem 0.6rem;
-  border-radius: 4px;
-  color: inherit;
-  text-decoration: none;
-}
-
-[data-sidebar] a:hover,
-[data-sidebar] a[aria-current="page"] {
-  background: var(--oat-border);
-}
+/* Overrides on top of oat — check frontend/oat-reference.md before adding */
 
 .main {
-  max-width: 960px;
-  padding: 1.5rem 2rem;
+  --container-max: 960px;
+  max-width: var(--container-max);
+  padding: var(--space-6) var(--space-8);
 }
 
 .mono {
-  font-family: var(--oat-font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
 }
-
-.muted {
-  color: var(--oat-secondary-text, #888);
-}
-
 .amount-positive {
-  color: var(--oat-success);
+  color: var(--success);
 }
-
 .row-correlated {
   opacity: 0.6;
 }
-
 .project-completed {
   opacity: 0.55;
-}
-
-.rules-row-main {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 /* Immich-style queue cards */
@@ -50,7 +24,7 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  border: 1px solid var(--oat-border);
+  border: 1px solid var(--border);
   border-radius: 6px;
   margin-bottom: 1.5rem;
   overflow: hidden;
@@ -65,7 +39,7 @@
 }
 
 .queue-card + .queue-card {
-  border-top: 1px solid var(--oat-border);
+  border-top: 1px solid var(--border);
 }
 
 .queue-card-title {
@@ -76,7 +50,7 @@
 .queue-card-desc {
   width: 100%;
   font-size: 0.85rem;
-  color: var(--oat-secondary-text, #888);
+  color: var(--muted-foreground);
   margin-top: -0.25rem;
 }
 
@@ -92,18 +66,18 @@
   align-items: center;
   gap: 0.35rem;
   padding: 0.25rem 0.6rem;
-  border: 1px solid var(--oat-border);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 0.85rem;
 }
 
 .queue-stat-label {
-  color: var(--oat-secondary-text, #888);
+  color: var(--muted-foreground);
 }
 
 .queue-stat-value {
   font-weight: 600;
-  font-family: var(--oat-font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
 }
 
 /* Transactions */
@@ -124,7 +98,7 @@
 }
 
 .cat-parent {
-  color: var(--muted);
+  color: var(--muted-foreground);
   margin-right: 0.15em;
 }
 
@@ -141,7 +115,7 @@
 }
 
 .txn-dl dt {
-  color: var(--muted);
+  color: var(--muted-foreground);
   white-space: nowrap;
 }
 .txn-dl dd {
