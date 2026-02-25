@@ -152,6 +152,27 @@ fn post_empty(uri: &str) -> Request<Body> {
         .expect("build request")
 }
 
+/// Helper: build an uncategorized transaction with the given merchant and account.
+fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
+    Transaction {
+        id: TransactionId::new(),
+        account_id,
+        category_id: None,
+        amount: rust_decimal::Decimal::new(1000, 2),
+        original_amount: None,
+        original_currency: None,
+        merchant_name: merchant.to_owned(),
+        description: String::new(),
+        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
+        budget_month_id: None,
+        project_id: None,
+        correlation_id: None,
+        correlation_type: None,
+        category_method: None,
+        suggested_category: None,
+    }
+}
+
 /// Helper: build a GET request without any auth header.
 fn get_unauthenticated(uri: &str) -> Request<Body> {
     Request::builder()
@@ -648,6 +669,366 @@ async fn rules_create_invalid_rule_type_returns_400() {
 
     let (status, _body) = send(app, post_json("/api/rules", &payload)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ===========================================================================
+// Rules: Generate & Apply
+// ===========================================================================
+
+#[tokio::test]
+async fn rules_generate_returns_empty_when_no_categorized_transactions() {
+    let (app, _db) = setup().await;
+
+    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["proposals"].as_array().expect("array").len(), 0);
+    assert_eq!(resp["analyzed_groups"], 0);
+    assert_eq!(resp["filtered_by_existing_rules"], 0);
+}
+
+#[tokio::test]
+async fn rules_generate_proposes_rule_from_categorized_transactions() {
+    let (app, db) = setup().await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-gen-1".to_owned(),
+        name: "Gen Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let category = Category {
+        id: CategoryId::new(),
+        name: "Groceries".to_owned(),
+        parent_id: None,
+    };
+    db.insert_category(&category).await.expect("category");
+
+    // Insert 2+ categorized transactions with the same merchant to cross HAVING >= 2 threshold
+    for i in 0_u32..3 {
+        let txn = Transaction {
+            id: TransactionId::new(),
+            account_id: account.id,
+            category_id: Some(category.id),
+            amount: rust_decimal::Decimal::new(i64::from(2500 + i), 2),
+            original_amount: None,
+            original_currency: None,
+            merchant_name: "WHOLE FOODS MARKET".to_owned(),
+            description: "Groceries".to_owned(),
+            posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 10 + i).expect("date"),
+            budget_month_id: None,
+            project_id: None,
+            correlation_id: None,
+            correlation_type: None,
+            category_method: None,
+            suggested_category: None,
+        };
+        db.upsert_transaction(&txn, None).await.expect("insert txn");
+    }
+
+    // Also insert an uncategorized transaction that the mock pattern should match
+    let uncat_txn = Transaction {
+        id: TransactionId::new(),
+        account_id: account.id,
+        category_id: None,
+        amount: rust_decimal::Decimal::new(3100, 2),
+        original_amount: None,
+        original_currency: None,
+        merchant_name: "WHOLE FOODS MARKET #42".to_owned(),
+        description: "Weekly shop".to_owned(),
+        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 20).expect("date"),
+        budget_month_id: None,
+        project_id: None,
+        correlation_id: None,
+        correlation_type: None,
+        category_method: None,
+        suggested_category: None,
+    };
+    db.upsert_transaction(&uncat_txn, None)
+        .await
+        .expect("insert uncat");
+
+    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert!(resp["analyzed_groups"].as_u64().expect("u64") >= 1);
+
+    let proposals = resp["proposals"].as_array().expect("array");
+    assert_eq!(proposals.len(), 1);
+
+    let proposal = &proposals[0];
+    assert_eq!(proposal["category_name"], "Groceries");
+    assert_eq!(proposal["target_category_id"], category.id.to_string());
+    // MockLlmProvider uses first merchant example as the pattern
+    assert_eq!(proposal["match_pattern"], "WHOLE FOODS MARKET");
+    assert!(proposal["matches_count"].as_u64().expect("u64") >= 1);
+}
+
+#[tokio::test]
+async fn rules_generate_filters_merchants_covered_by_existing_rules() {
+    let (app, db) = setup().await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-gen-filt".to_owned(),
+        name: "Filter Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let category = Category {
+        id: CategoryId::new(),
+        name: "Coffee".to_owned(),
+        parent_id: None,
+    };
+    db.insert_category(&category).await.expect("category");
+
+    // Insert an existing rule that already covers "STARBUCKS"
+    let rule = Rule {
+        id: budget_core::models::RuleId::new(),
+        rule_type: budget_core::models::RuleType::Categorization,
+        match_field: budget_core::models::MatchField::Merchant,
+        match_pattern: "STARBUCKS".to_owned(),
+        target_category_id: Some(category.id),
+        target_correlation_type: None,
+        priority: 10,
+    };
+    db.insert_rule(&rule).await.expect("rule");
+
+    // Insert 2 categorized transactions for the already-covered merchant
+    for i in 0_u32..2 {
+        let txn = Transaction {
+            id: TransactionId::new(),
+            account_id: account.id,
+            category_id: Some(category.id),
+            amount: rust_decimal::Decimal::new(i64::from(550 + i), 2),
+            original_amount: None,
+            original_currency: None,
+            merchant_name: "STARBUCKS".to_owned(),
+            description: "Coffee".to_owned(),
+            posted_date: chrono::NaiveDate::from_ymd_opt(2025, 2, 1 + i).expect("date"),
+            budget_month_id: None,
+            project_id: None,
+            correlation_id: None,
+            correlation_type: None,
+            category_method: None,
+            suggested_category: None,
+        };
+        db.upsert_transaction(&txn, None).await.expect("insert txn");
+    }
+
+    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    // The merchant group was analyzed but filtered out
+    assert!(resp["analyzed_groups"].as_u64().expect("u64") >= 1);
+    assert_eq!(resp["filtered_by_existing_rules"], 1);
+    assert_eq!(resp["proposals"].as_array().expect("array").len(), 0);
+}
+
+#[tokio::test]
+async fn rules_apply_with_no_rules_categorizes_nothing() {
+    let (app, db) = setup().await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-apply-1".to_owned(),
+        name: "Apply Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let txn = Transaction {
+        id: TransactionId::new(),
+        account_id: account.id,
+        category_id: None,
+        amount: rust_decimal::Decimal::new(1000, 2),
+        original_amount: None,
+        original_currency: None,
+        merchant_name: "RANDOM SHOP".to_owned(),
+        description: "Stuff".to_owned(),
+        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 15).expect("date"),
+        budget_month_id: None,
+        project_id: None,
+        correlation_id: None,
+        correlation_type: None,
+        category_method: None,
+        suggested_category: None,
+    };
+    db.upsert_transaction(&txn, None).await.expect("insert");
+
+    let (status, body) = send(app, post_empty("/api/rules/apply")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["categorized_count"], 0);
+}
+
+#[tokio::test]
+async fn rules_apply_categorizes_matching_transactions() {
+    let (app, db) = setup().await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-apply-2".to_owned(),
+        name: "Apply Match Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let category = Category {
+        id: CategoryId::new(),
+        name: "Groceries".to_owned(),
+        parent_id: None,
+    };
+    db.insert_category(&category).await.expect("category");
+
+    // Create a rule matching "LIDL"
+    let rule = Rule {
+        id: budget_core::models::RuleId::new(),
+        rule_type: budget_core::models::RuleType::Categorization,
+        match_field: budget_core::models::MatchField::Merchant,
+        match_pattern: "LIDL".to_owned(),
+        target_category_id: Some(category.id),
+        target_correlation_type: None,
+        priority: 10,
+    };
+    db.insert_rule(&rule).await.expect("rule");
+
+    // Insert two uncategorized matching transactions and one non-matching
+    let txn_match_1 = make_uncategorized_txn(account.id, "LIDL GB 1234", 10);
+    let txn_match_2 = make_uncategorized_txn(account.id, "LIDL DE 5678", 12);
+    let txn_nomatch = make_uncategorized_txn(account.id, "ALDI", 14);
+
+    db.upsert_transaction(&txn_match_1, None)
+        .await
+        .expect("insert");
+    db.upsert_transaction(&txn_match_2, None)
+        .await
+        .expect("insert");
+    db.upsert_transaction(&txn_nomatch, None)
+        .await
+        .expect("insert");
+
+    let (status, body) = send(app, post_empty("/api/rules/apply")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["categorized_count"], 2);
+
+    // Verify the matching transactions are categorized and the non-matching one is not
+    let updated_1 = db
+        .get_transaction_by_id(txn_match_1.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert_eq!(updated_1.category_id, Some(category.id));
+
+    let updated_2 = db
+        .get_transaction_by_id(txn_match_2.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert_eq!(updated_2.category_id, Some(category.id));
+
+    let unchanged = db
+        .get_transaction_by_id(txn_nomatch.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert!(unchanged.category_id.is_none());
+}
+
+#[tokio::test]
+async fn rules_apply_skips_already_categorized_transactions() {
+    let (app, db) = setup().await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-apply-3".to_owned(),
+        name: "Apply Skip Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let category_a = Category {
+        id: CategoryId::new(),
+        name: "Coffee".to_owned(),
+        parent_id: None,
+    };
+    let category_b = Category {
+        id: CategoryId::new(),
+        name: "Tea".to_owned(),
+        parent_id: None,
+    };
+    db.insert_category(&category_a).await.expect("category");
+    db.insert_category(&category_b).await.expect("category");
+
+    // Rule matches "STARBUCKS"
+    let rule = Rule {
+        id: budget_core::models::RuleId::new(),
+        rule_type: budget_core::models::RuleType::Categorization,
+        match_field: budget_core::models::MatchField::Merchant,
+        match_pattern: "STARBUCKS".to_owned(),
+        target_category_id: Some(category_a.id),
+        target_correlation_type: None,
+        priority: 10,
+    };
+    db.insert_rule(&rule).await.expect("rule");
+
+    // Already-categorized transaction — should not be re-categorized
+    let txn = Transaction {
+        id: TransactionId::new(),
+        account_id: account.id,
+        category_id: Some(category_b.id),
+        amount: rust_decimal::Decimal::new(550, 2),
+        original_amount: None,
+        original_currency: None,
+        merchant_name: "STARBUCKS RESERVE".to_owned(),
+        description: "Coffee".to_owned(),
+        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date"),
+        budget_month_id: None,
+        project_id: None,
+        correlation_id: None,
+        correlation_type: None,
+        category_method: None,
+        suggested_category: None,
+    };
+    db.upsert_transaction(&txn, None).await.expect("insert");
+
+    let (status, body) = send(app, post_empty("/api/rules/apply")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["categorized_count"], 0);
+
+    // Verify the existing category was preserved
+    let fetched = db
+        .get_transaction_by_id(txn.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert_eq!(fetched.category_id, Some(category_b.id));
 }
 
 // ===========================================================================

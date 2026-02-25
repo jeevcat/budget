@@ -2240,6 +2240,111 @@ mod tests {
         assert_eq!(fetched.budget_amount, Some(dec!(5000.00)));
     }
 
+    // -----------------------------------------------------------------------
+    // Categorized merchant groups
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_categorized_merchant_groups_empty() {
+        let db = setup_db().await;
+        let groups = db.get_categorized_merchant_groups().await.unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_categorized_merchant_groups_excludes_single_occurrence() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Groceries");
+        db.insert_category(&cat).await.unwrap();
+
+        // Only one categorized transaction for this merchant — below the HAVING >= 2 threshold
+        let mut txn = make_transaction(acct.id);
+        txn.category_id = Some(cat.id);
+        txn.merchant_name = "LIDL 1234".into();
+        db.upsert_transaction(&txn, None).await.unwrap();
+
+        let groups = db.get_categorized_merchant_groups().await.unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_categorized_merchant_groups_returns_qualifying() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Groceries");
+        db.insert_category(&cat).await.unwrap();
+
+        // Two transactions with the same (category, merchant) — qualifies
+        for _ in 0..3 {
+            let mut txn = make_transaction(acct.id);
+            txn.category_id = Some(cat.id);
+            txn.merchant_name = "LIDL 1234".into();
+            db.upsert_transaction(&txn, None).await.unwrap();
+        }
+
+        let groups = db.get_categorized_merchant_groups().await.unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0, cat.id);
+        assert_eq!(groups[0].1, "LIDL 1234");
+        assert_eq!(groups[0].2, 3);
+    }
+
+    #[tokio::test]
+    async fn test_get_categorized_merchant_groups_excludes_uncategorized() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        // Two uncategorized transactions with the same merchant — should NOT appear
+        for _ in 0..2 {
+            let mut txn = make_transaction(acct.id);
+            txn.merchant_name = "LIDL 1234".into();
+            db.upsert_transaction(&txn, None).await.unwrap();
+        }
+
+        let groups = db.get_categorized_merchant_groups().await.unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_categorized_merchant_groups_orders_by_count_desc() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        // 2 transactions for merchant A
+        for _ in 0..2 {
+            let mut txn = make_transaction(acct.id);
+            txn.category_id = Some(cat.id);
+            txn.merchant_name = "ALDI".into();
+            db.upsert_transaction(&txn, None).await.unwrap();
+        }
+
+        // 4 transactions for merchant B
+        for _ in 0..4 {
+            let mut txn = make_transaction(acct.id);
+            txn.category_id = Some(cat.id);
+            txn.merchant_name = "LIDL".into();
+            db.upsert_transaction(&txn, None).await.unwrap();
+        }
+
+        let groups = db.get_categorized_merchant_groups().await.unwrap();
+        assert_eq!(groups.len(), 2);
+        // Higher count first
+        assert_eq!(groups[0].1, "LIDL");
+        assert_eq!(groups[0].2, 4);
+        assert_eq!(groups[1].1, "ALDI");
+        assert_eq!(groups[1].2, 2);
+    }
+
     #[tokio::test]
     async fn test_delete_project() {
         let db = setup_db().await;
