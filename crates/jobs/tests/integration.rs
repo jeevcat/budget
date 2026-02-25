@@ -898,6 +898,149 @@ async fn correlate_already_paired_not_correlated_again() {
 }
 
 // ===========================================================================
+// queries.rs tests
+// ===========================================================================
+
+/// Push a `CategorizeJob` into the apalis queue.
+async fn push_categorize_job(pool: &ApalisPool) {
+    use apalis::prelude::*;
+    let mut storage = apalis_sqlite::SqliteStorage::<CategorizeJob, _, _>::new(pool);
+    storage.push(CategorizeJob).await.expect("push job");
+}
+
+const TEST_WORKER_ID: &str = "test-worker-1";
+
+/// Register a fake worker in the Workers table so `lock_by` FK is satisfied.
+async fn register_test_worker(pool: &ApalisPool) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO Workers (id, worker_type, storage_name) \
+         VALUES (?, 'test', 'test')",
+    )
+    .bind(TEST_WORKER_ID)
+    .execute(pool)
+    .await
+    .expect("register test worker");
+}
+
+/// Set all jobs in the queue to Running with a given `lock_at` timestamp.
+async fn set_all_jobs_running(pool: &ApalisPool, lock_at: i64) {
+    register_test_worker(pool).await;
+    sqlx::query(&format!(
+        "UPDATE {} SET status = 'Running', lock_by = ?, lock_at = ?",
+        budget_jobs::JOBS_TABLE,
+    ))
+    .bind(TEST_WORKER_ID)
+    .bind(lock_at)
+    .execute(pool)
+    .await
+    .expect("set jobs to Running");
+}
+
+#[tokio::test]
+async fn queries_list_jobs_empty() {
+    let (_db, pool) = setup_db().await;
+
+    let jobs = budget_jobs::queries::list_jobs(&pool)
+        .await
+        .expect("list_jobs");
+    assert!(jobs.is_empty());
+}
+
+#[tokio::test]
+async fn queries_list_jobs_returns_enqueued() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+
+    let jobs = budget_jobs::queries::list_jobs(&pool)
+        .await
+        .expect("list_jobs");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, "Pending");
+    assert!(jobs[0].job_type.contains("CategorizeJob"));
+}
+
+#[tokio::test]
+async fn queries_queue_counts_aggregates() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+    push_categorize_job(&pool).await;
+
+    let counts = budget_jobs::queries::queue_counts(&pool)
+        .await
+        .expect("queue_counts");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].waiting, 2);
+    assert_eq!(counts[0].active, 0);
+    assert_eq!(counts[0].completed, 0);
+    assert_eq!(counts[0].failed, 0);
+}
+
+#[tokio::test]
+async fn queries_reset_all_running_resets_to_pending() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+    set_all_jobs_running(&pool, 1000).await;
+
+    let reset = budget_jobs::queries::reset_all_running(&pool)
+        .await
+        .expect("reset_all_running");
+    assert_eq!(reset, 1);
+
+    let jobs = budget_jobs::queries::list_jobs(&pool)
+        .await
+        .expect("list_jobs");
+    assert_eq!(jobs[0].status, "Pending");
+}
+
+#[tokio::test]
+async fn queries_reset_all_running_ignores_pending() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+
+    // Job is already Pending — reset should affect 0 rows
+    let reset = budget_jobs::queries::reset_all_running(&pool)
+        .await
+        .expect("reset_all_running");
+    assert_eq!(reset, 0);
+}
+
+#[tokio::test]
+async fn queries_reclaim_stale_reclaims_old_locks() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+    set_all_jobs_running(&pool, 0).await;
+
+    let reclaimed = budget_jobs::queries::reclaim_stale(&pool, 300)
+        .await
+        .expect("reclaim_stale");
+    assert_eq!(reclaimed, 1);
+
+    let jobs = budget_jobs::queries::list_jobs(&pool)
+        .await
+        .expect("list_jobs");
+    assert_eq!(jobs[0].status, "Pending");
+}
+
+#[tokio::test]
+async fn queries_reclaim_stale_ignores_recent_locks() {
+    let (_db, pool) = setup_db().await;
+    push_categorize_job(&pool).await;
+    let now = chrono::Utc::now().timestamp();
+    set_all_jobs_running(&pool, now).await;
+
+    // 300s threshold — lock is fresh, should not be reclaimed
+    let reclaimed = budget_jobs::queries::reclaim_stale(&pool, 300)
+        .await
+        .expect("reclaim_stale");
+    assert_eq!(reclaimed, 0);
+
+    let jobs = budget_jobs::queries::list_jobs(&pool)
+        .await
+        .expect("list_jobs");
+    assert_eq!(jobs[0].status, "Running");
+}
+
+// ===========================================================================
 // recompute.rs tests
 // ===========================================================================
 
