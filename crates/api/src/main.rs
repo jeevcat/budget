@@ -262,8 +262,9 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
     let build_epoch: u64 = env!("SOURCE_DATE_EPOCH")
         .parse()
         .expect("SOURCE_DATE_EPOCH must be a valid u64");
-    let build_time =
-        httpdate::fmt_http_date(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(build_epoch));
+    let build_time = httpdate::fmt_http_date(
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(build_epoch),
+    );
     let last_modified = http::HeaderValue::from_str(&build_time).expect("valid HTTP date");
 
     let static_files = ServeDir::new(frontend_dir)
