@@ -177,6 +177,7 @@
 
           commonArgs = {
             strictDeps = true;
+            env.SQLX_OFFLINE = "true";
             nativeBuildInputs = with pkgs; [
               pkg-config
             ];
