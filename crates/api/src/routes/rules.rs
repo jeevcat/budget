@@ -200,12 +200,23 @@ struct GenerateRulesResponse {
 async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesResponse>, AppError> {
     let groups = state.db.get_categorized_merchant_groups().await?;
     let analyzed_groups = groups.len();
+    tracing::info!(
+        analyzed_groups,
+        "rule generation: loaded categorized merchant groups"
+    );
+    for (category_id, merchant_name, count) in &groups {
+        tracing::debug!(%category_id, %merchant_name, count, "  group");
+    }
 
     // Load and compile existing categorization rules
     let raw_rules = state
         .db
         .list_rules_by_type(RuleType::Categorization)
         .await?;
+    tracing::info!(
+        raw_rules = raw_rules.len(),
+        "rule generation: loaded existing categorization rules"
+    );
     let compiled_rules: Vec<_> = raw_rules
         .iter()
         .filter_map(|rule| compile_rule_pattern(rule).ok())
@@ -227,6 +238,7 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
         });
 
         if already_covered {
+            tracing::debug!(%merchant_name, %category_id, "  filtered: already covered by existing rule");
             filtered_count += 1;
             continue;
         }
@@ -237,6 +249,12 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
             .push(merchant_name.clone());
     }
 
+    tracing::info!(
+        clusters = clusters.len(),
+        filtered = filtered_count,
+        "rule generation: clustered merchants"
+    );
+
     // Load categories for name lookup
     let categories = state.db.list_categories().await?;
     let cat_map: HashMap<CategoryId, String> =
@@ -244,20 +262,40 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
 
     // Load uncategorized transactions once for match previews
     let uncategorized = state.db.get_uncategorized_transactions().await?;
+    tracing::info!(
+        uncategorized = uncategorized.len(),
+        "rule generation: loaded uncategorized transactions for match preview"
+    );
 
     let mut proposals = Vec::new();
 
     for (category_id, merchants) in &clusters {
         let category_name = match cat_map.get(category_id) {
             Some(name) => name.clone(),
-            None => continue,
+            None => {
+                tracing::warn!(%category_id, "rule generation: skipping cluster, category not found");
+                continue;
+            }
         };
+
+        tracing::info!(
+            %category_id,
+            %category_name,
+            merchant_count = merchants.len(),
+            "rule generation: requesting LLM proposal"
+        );
 
         let proposed = state
             .llm
             .propose_rule(merchants, &category_name)
             .await
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("LLM error: {e}")))?;
+
+        tracing::info!(
+            match_field = ?proposed.match_field,
+            match_pattern = %proposed.match_pattern,
+            "rule generation: LLM proposed pattern"
+        );
 
         // Validate the proposed regex compiles by building a temporary Rule
         let match_field_domain = match proposed.match_field {
@@ -274,6 +312,10 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
             priority: 0,
         };
         let Ok(compiled) = compile_rule_pattern(&test_rule) else {
+            tracing::warn!(
+                pattern = %proposed.match_pattern,
+                "rule generation: skipping proposal, pattern failed to compile"
+            );
             continue;
         };
 
@@ -284,6 +326,13 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
                 evaluate_categorization_rules(txn, std::slice::from_ref(&compiled)).is_some()
             })
             .collect();
+
+        tracing::info!(
+            %category_name,
+            pattern = %proposed.match_pattern,
+            matches = matching.len(),
+            "rule generation: proposal ready"
+        );
 
         let sample_matches: Vec<SampleMatch> = matching
             .iter()
@@ -307,6 +356,13 @@ async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesRes
             sample_matches,
         });
     }
+
+    tracing::info!(
+        proposals = proposals.len(),
+        analyzed_groups,
+        filtered = filtered_count,
+        "rule generation: complete"
+    );
 
     Ok(Json(GenerateRulesResponse {
         proposals,
