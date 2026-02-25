@@ -350,7 +350,7 @@ function Transactions() {
     ${
       (filterCat || filterAcct) &&
       html`
-      <div class="chip-group" style="margin-bottom:0.75rem">
+      <div class="hstack gap-2" style="margin-bottom:0.75rem">
         ${
           filterCat &&
           html`
@@ -553,7 +553,7 @@ function Categories() {
             The LLM suggested these categories for uncategorized transactions.
             Select to accept, then re-run categorize.
           </p>
-          <div class="chip-group" role="group" aria-label="Suggested categories" style="margin-bottom:0.75rem">
+          <div class="hstack gap-2" role="group" aria-label="Suggested categories" style="margin-bottom:0.75rem">
             ${pendingSuggestions.map(
               (s) => html`
                 <button
@@ -1646,7 +1646,7 @@ function Jobs() {
               `
         }
         <span class="queue-card-desc">${card.desc}</span>
-        <div class="chip-group" style="width:100%;margin-top:0.25rem">
+        <div class="hstack gap-2" style="width:100%;margin-top:0.25rem">
           <span class="chip outline"><span class="text-light">Active</span> <span class="mono">${c.active}</span></span>
           <span class="chip outline"><span class="text-light">Waiting</span> <span class="mono">${c.waiting}</span></span>
         </div>

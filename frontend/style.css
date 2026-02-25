@@ -54,13 +54,6 @@
   margin-top: -0.25rem;
 }
 
-.chip-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
-}
-
 /* Transactions */
 .txn-search {
   flex: 1;
