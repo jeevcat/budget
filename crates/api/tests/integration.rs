@@ -17,7 +17,8 @@ use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
     CategoryId, Project, Rule, Transaction, TransactionId,
 };
-use budget_jobs::ApalisPool;
+use budget_jobs::{ApalisPool, LlmClient};
+use budget_providers::MockLlmProvider;
 
 /// Bearer token used in all test requests.
 const TEST_SECRET: &str = "test-secret-key";
@@ -57,6 +58,7 @@ async fn setup() -> (Router, Db) {
         pipeline_storage: PipelineStorage::new(&apalis_pool),
         apalis_pool: apalis_pool.clone(),
         enable_banking_auth: None,
+        llm: LlmClient::new(MockLlmProvider::new()),
         host: "http://localhost:3000".to_owned(),
     };
 

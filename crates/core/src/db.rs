@@ -600,6 +600,38 @@ impl Db {
             .collect()
     }
 
+    /// Group categorized transactions by (category, merchant) for batch rule generation.
+    ///
+    /// Returns `(category_id, merchant_name, count)` tuples for merchants that
+    /// appear at least twice with the same category. Ordered by count descending.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn get_categorized_merchant_groups(
+        &self,
+    ) -> Result<Vec<(CategoryId, String, i64)>, sqlx::Error> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT category_id, merchant_name, COUNT(*) as cnt
+             FROM transactions
+             WHERE category_id IS NOT NULL
+             GROUP BY category_id, merchant_name
+             HAVING COUNT(*) >= 2
+             ORDER BY cnt DESC",
+        )
+        .fetch_all(pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                let category_id = CategoryId::from_uuid(parse_uuid(row, "category_id")?);
+                let merchant_name: String = row.try_get("merchant_name")?;
+                let count: i64 = row.try_get("cnt")?;
+                Ok((category_id, merchant_name, count))
+            })
+            .collect()
+    }
+
     /// List all distinct category names currently in the categories table.
     ///
     /// Used to pass existing categories to the LLM so it maps to known names.

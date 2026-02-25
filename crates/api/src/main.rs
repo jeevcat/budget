@@ -56,6 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pipeline_storage: PipelineStorage::new(&apalis_pool),
         apalis_pool: apalis_pool.clone(),
         enable_banking_auth,
+        // clone() justified: LlmClient wraps an Arc, workers also need their own handle
+        llm: llm.clone(),
         host: config
             .host
             .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),

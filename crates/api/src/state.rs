@@ -5,7 +5,7 @@ use apalis_workflow::WorkflowSink;
 use budget_core::db::Db;
 use budget_jobs::{
     ApalisPool, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
-    CorrelateTransactionJob, SyncJob,
+    CorrelateTransactionJob, LlmClient, SyncJob,
 };
 use budget_providers::EnableBankingAuth;
 
@@ -131,6 +131,8 @@ pub struct AppState {
     pub apalis_pool: ApalisPool,
     /// Enable Banking auth provider (None if not configured).
     pub enable_banking_auth: Option<Arc<EnableBankingAuth>>,
+    /// LLM provider for rule generation.
+    pub llm: LlmClient,
     /// Public base URL (e.g. `https://budget.example.com`). Derived from
     /// `server_port` when not explicitly configured.
     pub host: String,

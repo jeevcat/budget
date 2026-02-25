@@ -230,27 +230,33 @@ JSON response:"#,
 
     async fn propose_rule(
         &self,
-        merchant_name: &str,
+        merchant_examples: &[String],
         user_category: &str,
     ) -> Result<ProposedRule, ProviderError> {
+        let merchants_block = merchant_examples
+            .iter()
+            .map(|m| format!("- {m}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let prompt = format!(
             r#"You propose deterministic categorization rules for a personal budgeting tool.
 
-The user has categorized a transaction and you need to propose a rule that would automatically categorize similar transactions in the future.
+The user has categorized several transactions with the same category. You need to propose a single regex rule that would automatically categorize all similar transactions in the future.
 
 Rules can match on:
 - "Merchant" — match against the merchant/payee name
 - "Description" — match against the transaction description
 
-The match_pattern should be a regex pattern that would catch this merchant and similar variations. Keep it simple and precise — avoid overly broad patterns.
+The match_pattern should be a regex pattern that would catch all the merchant variations listed below and similar ones. Keep it simple and precise — avoid overly broad patterns.
 
 Respond with a JSON object containing:
 - "match_field": "Merchant" or "Description"
 - "match_pattern": string — a regex pattern
 - "explanation": string — brief explanation of the rule
 
-Merchant: {merchant_name}
-Category: {user_category}
+Merchant examples (all categorized as "{user_category}"):
+{merchants_block}
 
 JSON response:"#
         );
@@ -489,7 +495,7 @@ mod tests {
             .await;
 
         let result = provider
-            .propose_rule("WHOLE FOODS MARKET", "Food:Groceries")
+            .propose_rule(&["WHOLE FOODS MARKET".to_owned()], "Food:Groceries")
             .await
             .unwrap();
         assert_eq!(result.match_field, MatchField::Merchant);
@@ -675,7 +681,7 @@ mod live_tests {
     async fn live_propose_rule() {
         let provider = require_provider();
         let result = provider
-            .propose_rule("TRADER JOE'S #123", "Food:Groceries")
+            .propose_rule(&["TRADER JOE'S #123".to_owned()], "Food:Groceries")
             .await
             .unwrap();
 

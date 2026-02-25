@@ -69,7 +69,7 @@ pub trait LlmProvider {
 
     async fn propose_rule(
         &self,
-        merchant_name: &str,
+        merchant_examples: &[String],
         user_category: &str,
     ) -> Result<ProposedRule, ProviderError>;
 }

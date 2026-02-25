@@ -714,6 +714,10 @@ function Rules() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [proposals, setProposals] = useState(null);
+  const [applying, setApplying] = useState(false);
+  const [expandedProposal, setExpandedProposal] = useState(null);
 
   const emptyForm = {
     rule_type: "categorization",
@@ -798,6 +802,65 @@ function Rules() {
       load();
     } catch (err) {
       setError(err);
+    }
+  }
+
+  async function handleGenerate() {
+    setGenerating(true);
+    setError(null);
+    try {
+      const result = await api.post("/rules/generate");
+      setProposals(result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleAccept(proposal, priority) {
+    try {
+      await api.post("/rules", {
+        rule_type: "categorization",
+        match_field: proposal.match_field,
+        match_pattern: proposal.match_pattern,
+        target_category_id: proposal.target_category_id,
+        target_correlation_type: null,
+        priority: Number(priority),
+      });
+      setProposals((prev) => ({
+        ...prev,
+        proposals: prev.proposals.filter((p) => p !== proposal),
+      }));
+      load();
+    } catch (err) {
+      setError(err);
+    }
+  }
+
+  function handleReject(proposal) {
+    setProposals((prev) => ({
+      ...prev,
+      proposals: prev.proposals.filter((p) => p !== proposal),
+    }));
+  }
+
+  async function handleApplyAll() {
+    setApplying(true);
+    setError(null);
+    try {
+      const result = await api.post("/rules/apply");
+      setApplying(false);
+      setProposals(null);
+      load();
+      if (result.categorized_count > 0) {
+        alert(
+          `Categorized ${result.categorized_count} transaction${result.categorized_count !== 1 ? "s" : ""}`,
+        );
+      }
+    } catch (err) {
+      setError(err);
+      setApplying(false);
     }
   }
 
@@ -913,6 +976,71 @@ function Rules() {
     `;
   }
 
+  function renderProposal(proposal, idx) {
+    const isExpanded = expandedProposal === idx;
+    return html`
+      <div key=${idx} style="border:1px solid var(--border);border-radius:4px;padding:1rem;margin-bottom:0.75rem">
+        <div class="hstack" style="justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+          <div class="hstack" style="flex-wrap:wrap;gap:0.5rem">
+            <span class="chip outline success">${proposal.category_name}</span>
+            <code>${proposal.match_pattern}</code>
+            ${
+              proposal.matches_count > 0
+                ? html`<span class="chip">${proposal.matches_count} match${proposal.matches_count !== 1 ? "es" : ""}</span>`
+                : html`<span class="text-light">no matches</span>`
+            }
+          </div>
+          <div class="hstack" style="gap:0.25rem">
+            <input
+              type="number"
+              value=${proposal._priority ?? 0}
+              onInput=${(e) => {
+                proposal._priority = Number(e.target.value);
+              }}
+              style="width:4rem"
+              placeholder="Pri"
+            />
+            <button data-variant="primary" class="small" onClick=${() => handleAccept(proposal, proposal._priority ?? 0)}>
+              Accept
+            </button>
+            <button data-variant="danger" class="small" onClick=${() => handleReject(proposal)}>
+              Reject
+            </button>
+          </div>
+        </div>
+        <p class="text-light" style="margin:0.5rem 0 0.25rem">${proposal.explanation}</p>
+        <div class="hstack" style="flex-wrap:wrap;gap:0.25rem;margin-top:0.25rem">
+          ${proposal.merchant_examples.map(
+            (m) =>
+              html`<span class="chip outline" style="font-size:0.8rem">${m}</span>`,
+          )}
+        </div>
+        ${
+          proposal.sample_matches.length > 0 &&
+          html`
+          <button class="small" style="margin-top:0.5rem" onClick=${() => setExpandedProposal(isExpanded ? null : idx)}>
+            ${isExpanded ? "Hide" : "Show"} sample matches
+          </button>
+          ${
+            isExpanded &&
+            html`
+            <table style="margin-top:0.5rem;font-size:0.85rem">
+              <thead><tr><th>Merchant</th><th>Amount</th><th>Date</th></tr></thead>
+              <tbody>
+                ${proposal.sample_matches.map(
+                  (s) =>
+                    html`<tr key=${s.id}><td>${s.merchant_name}</td><td class="mono">${s.amount}</td><td>${s.posted_date}</td></tr>`,
+                )}
+              </tbody>
+            </table>
+          `
+          }
+        `
+        }
+      </div>
+    `;
+  }
+
   const sorted = [...rules].sort((a, b) => b.priority - a.priority);
 
   return html`
@@ -922,17 +1050,56 @@ function Rules() {
         ${rules.length} rule${rules.length !== 1 ? "s" : ""}${" \u2014 "}
         ${categorizationRules.length} categorization, ${correlationRules.length} correlation
       </span>
-      <button
-        data-variant="primary"
-        onClick=${() => {
-          setShowForm(!showForm);
-          setEditingId(null);
-          setForm(emptyForm);
-        }}
-      >
-        ${showForm ? "Cancel" : "Add Rule"}
-      </button>
+      <div class="hstack">
+        <button
+          onClick=${handleGenerate}
+          disabled=${generating}
+        >
+          ${generating ? "Generating..." : "Generate Rules"}
+        </button>
+        <button
+          data-variant="primary"
+          onClick=${() => {
+            setShowForm(!showForm);
+            setEditingId(null);
+            setForm(emptyForm);
+          }}
+        >
+          ${showForm ? "Cancel" : "Add Rule"}
+        </button>
+      </div>
     </div>
+
+    ${
+      proposals &&
+      html`
+        <div style="margin-bottom:1.5rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+            <h3 style="margin:0">Proposals</h3>
+            <div class="hstack">
+              <span class="text-light">
+                ${proposals.analyzed_groups} group${proposals.analyzed_groups !== 1 ? "s" : ""} analyzed,
+                ${proposals.filtered_by_existing_rules} filtered
+              </span>
+              ${
+                proposals.proposals.length > 0 &&
+                html`
+                <button data-variant="primary" onClick=${handleApplyAll} disabled=${applying}>
+                  ${applying ? "Applying..." : "Apply All Rules"}
+                </button>
+              `
+              }
+              <button class="small" onClick=${() => setProposals(null)}>Dismiss</button>
+            </div>
+          </div>
+          ${
+            proposals.proposals.length === 0
+              ? html`<p class="text-light">No new rules to propose. All merchant groups are already covered.</p>`
+              : proposals.proposals.map(renderProposal)
+          }
+        </div>
+      `
+    }
 
     ${
       showForm &&

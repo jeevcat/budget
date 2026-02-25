@@ -241,19 +241,19 @@ impl LlmClient {
         self.inner.propose_correlation_erased(txn_a, txn_b).await
     }
 
-    /// Ask the LLM to propose a deterministic rule based on a user's
-    /// manual categorization of a transaction.
+    /// Ask the LLM to propose a deterministic rule from multiple merchant
+    /// examples that share the same category.
     ///
     /// # Errors
     ///
     /// Propagates any [`ProviderError`] from the underlying provider.
     pub async fn propose_rule(
         &self,
-        merchant_name: &str,
+        merchant_examples: &[String],
         user_category: &str,
     ) -> Result<ProposedRule, ProviderError> {
         self.inner
-            .propose_rule_erased(merchant_name, user_category)
+            .propose_rule_erased(merchant_examples, user_category)
             .await
     }
 }
@@ -276,7 +276,7 @@ trait ErasedLlmProvider {
 
     fn propose_rule_erased<'a>(
         &'a self,
-        merchant_name: &'a str,
+        merchant_examples: &'a [String],
         user_category: &'a str,
     ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>>;
 }
@@ -302,10 +302,10 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
 
     fn propose_rule_erased<'a>(
         &'a self,
-        merchant_name: &'a str,
+        merchant_examples: &'a [String],
         user_category: &'a str,
     ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>> {
-        Box::pin(self.propose_rule(merchant_name, user_category))
+        Box::pin(self.propose_rule(merchant_examples, user_category))
     }
 }
 

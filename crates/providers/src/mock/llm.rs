@@ -164,14 +164,17 @@ impl LlmProvider for MockLlmProvider {
 
     async fn propose_rule(
         &self,
-        merchant_name: &str,
+        merchant_examples: &[String],
         user_category: &str,
     ) -> Result<ProposedRule, ProviderError> {
+        let pattern = merchant_examples
+            .first()
+            .map_or_else(String::new, Clone::clone);
         Ok(ProposedRule {
             match_field: crate::llm::MatchField::Merchant,
-            match_pattern: merchant_name.to_owned(),
+            match_pattern: pattern.clone(),
             explanation: format!(
-                "Transactions from \"{merchant_name}\" are typically \"{user_category}\""
+                "Transactions from \"{pattern}\" are typically \"{user_category}\""
             ),
         })
     }
@@ -315,7 +318,13 @@ mod tests {
     async fn propose_rule_returns_merchant_match() {
         let provider = MockLlmProvider::new();
         let rule = provider
-            .propose_rule("WHOLE FOODS MARKET", "Food:Groceries")
+            .propose_rule(
+                &[
+                    "WHOLE FOODS MARKET".to_owned(),
+                    "WHOLE FOODS #123".to_owned(),
+                ],
+                "Food:Groceries",
+            )
             .await
             .unwrap();
         assert_eq!(rule.match_field, crate::llm::MatchField::Merchant);
