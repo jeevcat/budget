@@ -113,7 +113,7 @@ function cleanDescription(desc) {
   if (!desc) return null;
   const m = desc.match(/remittanceinformation:(.*)/);
   if (!m) return desc;
-  let info = m[1].trim();
+  const info = m[1].trim();
   if (!info) return null;
   if (/^NR XXXX \d{4}\s/.test(info)) return null;
   return info;
@@ -207,7 +207,8 @@ function TxnDetail({
   // Pre-select LLM suggestion when no manual category is set
   const suggestedCategoryId =
     !txn.category_id && txn.suggested_category
-      ? (categories ?? []).find((c) => c.name === txn.suggested_category)?.id ?? null
+      ? ((categories ?? []).find((c) => c.name === txn.suggested_category)
+          ?.id ?? null)
       : null;
 
   const ref = (el) => {
