@@ -148,6 +148,7 @@ dependencies = [
  "budget-providers",
  "chrono",
  "http",
+ "httpdate",
  "rust_decimal",
  "serde",
  "serde_json",

@@ -15,6 +15,7 @@ use budget_providers::{
     MockLlmProvider,
 };
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -256,17 +257,30 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
             auth::require_bearer_token,
         ));
 
+    // Use build timestamp for Last-Modified so Cloudflare cache invalidates on deploy.
+    // Nix store files have epoch timestamps which never change between builds.
+    let build_time = httpdate::fmt_http_date(std::time::SystemTime::UNIX_EPOCH
+        + std::time::Duration::from_secs(env!("SOURCE_DATE_EPOCH").parse().unwrap_or(0)));
+    let last_modified = http::HeaderValue::from_str(&build_time).unwrap();
+
+    let static_files = ServeDir::new(frontend_dir)
+        .append_index_html_on_directories(true)
+        .fallback(tower_http::services::ServeFile::new(
+            frontend_dir.join("index.html"),
+        ));
+
+    let static_service = tower::ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            http::header::LAST_MODIFIED,
+            last_modified,
+        ))
+        .service(static_files);
+
     Router::new()
         .route("/health", get(health))
         .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
-        .fallback_service(
-            ServeDir::new(frontend_dir)
-                .append_index_html_on_directories(true)
-                .fallback(tower_http::services::ServeFile::new(
-                    frontend_dir.join("index.html"),
-                )),
-        )
+        .fallback_service(static_service)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
