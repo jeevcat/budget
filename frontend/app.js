@@ -193,7 +193,15 @@ function CategoryBadge({ catMap, id, suggested }) {
   return html`<span class="chip outline warning">uncategorized</span>`;
 }
 
-function TxnDetail({ txn, catMap, acctMap, onClose }) {
+function TxnDetail({
+  txn,
+  catMap,
+  categories,
+  acctMap,
+  onCategorize,
+  onClose,
+}) {
+  const [saving, setSaving] = useState(false);
   if (!txn) return null;
   const ref = (el) => {
     if (el && !el.open) {
@@ -202,7 +210,20 @@ function TxnDetail({ txn, catMap, acctMap, onClose }) {
     }
   };
   const desc = cleanDescription(txn.description);
-  const label = categoryLabel(catMap, txn.category_id);
+
+  async function handleCategorize(categoryId) {
+    if (!categoryId || categoryId === txn.category_id) return;
+    setSaving(true);
+    try {
+      await api.post(`/transactions/${txn.id}/categorize`, {
+        category_id: categoryId,
+      });
+      onCategorize(txn.id, categoryId);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return html`
     <dialog ref=${ref} closedby="any">
       <form method="dialog">
@@ -221,7 +242,24 @@ function TxnDetail({ txn, catMap, acctMap, onClose }) {
                 : null
             }
             <dt>Category</dt>
-            <dd>${label ? (label.parent ? `${label.parent} > ${label.short}` : label.short) : html`<span class="text-light">uncategorized</span>`}</dd>
+            <dd>
+              <select
+                value=${txn.category_id ?? ""}
+                disabled=${saving}
+                onChange=${(e) => handleCategorize(e.target.value)}
+              >
+                <option value="">uncategorized</option>
+                ${(categories ?? []).map(
+                  (c) =>
+                    html`<option value=${c.id}>${categoryName(catMap, c.id)}</option>`,
+                )}
+              </select>
+              ${
+                !txn.category_id && txn.suggested_category
+                  ? html`<span class="text-lighter small" style="margin-left:0.5rem" title="LLM suggestion">${txn.suggested_category}</span>`
+                  : null
+              }
+            </dd>
             <dt>Account</dt><dd>${acctMap[txn.account_id]?.name ?? txn.account_id}</dd>
             ${
               txn.correlation_type
@@ -413,7 +451,22 @@ function Transactions() {
     <${TxnDetail}
       txn=${selected}
       catMap=${catMap}
+      categories=${categories}
       acctMap=${acctMap}
+      onCategorize=${(txnId, categoryId) => {
+        setTxns((prev) =>
+          prev.map((t) =>
+            t.id === txnId
+              ? { ...t, category_id: categoryId, suggested_category: null }
+              : t,
+          ),
+        );
+        setSelected((prev) =>
+          prev && prev.id === txnId
+            ? { ...prev, category_id: categoryId, suggested_category: null }
+            : prev,
+        );
+      }}
       onClose=${() => setSelected(null)}
     />
   `;
