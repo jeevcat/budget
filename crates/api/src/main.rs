@@ -60,7 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),
     };
 
-    let app = build_router(state);
+    let frontend_dir = config.frontend_dir.map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend"),
+        std::path::PathBuf::from,
+    );
+    let app = build_router(state, &frontend_dir);
     let workers = build_workers(&pool, bank_factory, llm);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
@@ -254,7 +258,7 @@ fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
 }
 
 /// Build the axum router with all API routes, auth middleware, and static file serving.
-fn build_router(state: AppState) -> Router {
+fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
     let api_routes = Router::new()
         .nest("/accounts", routes::accounts::router())
         .nest("/transactions", routes::transactions::router())
@@ -268,8 +272,6 @@ fn build_router(state: AppState) -> Router {
             state.clone(),
             auth::require_bearer_token,
         ));
-
-    let frontend_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend");
 
     Router::new()
         .route("/health", get(health))

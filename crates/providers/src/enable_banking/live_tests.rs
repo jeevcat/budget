@@ -1,9 +1,15 @@
 //! Live sandbox tests for the Enable Banking integration.
 //!
-//! These tests hit the real Enable Banking sandbox API and require valid
-//! credentials in `~/.config/budget/default.toml`.
+//! These tests hit the real Enable Banking sandbox API.
 //!
 //! Run with: `cargo test -p budget-providers -- --ignored`
+//!
+//! Credentials are resolved in order:
+//!   1. `EB_APP_ID` + `EB_PRIVATE_KEY_PATH` env vars (preferred for sandbox)
+//!   2. Config file (`~/.config/budget/default-config.toml`)
+//!
+//! This lets the config file hold production credentials while tests use
+//! sandbox credentials via env vars.
 //!
 //! Session-dependent tests (transactions, balances, accounts) require a
 //! sandbox session. Set `EB_SESSION_ID` and `EB_ACCOUNT_UID` env vars
@@ -28,24 +34,41 @@ use crate::bank::{AccountId, BankProvider};
 fn require_config() -> EnableBankingConfig {
     let config = budget_core::load_config().expect("failed to load budget config");
 
-    let app_id = config
-        .enable_banking_app_id
-        .expect("enable_banking_app_id not set in config");
+    // Resolve sandbox credentials in priority order:
+    //   1. Sandbox-specific config fields
+    //   2. EB_APP_ID + EB_PRIVATE_KEY_PATH env vars
+    //   3. Main config fields (production)
+    let (app_id, raw_path) = config
+        .enable_banking_sandbox_app_id
+        .zip(config.enable_banking_sandbox_private_key_path)
+        .or_else(|| {
+            std::env::var("EB_APP_ID")
+                .ok()
+                .zip(std::env::var("EB_PRIVATE_KEY_PATH").ok())
+        })
+        .or_else(|| {
+            config
+                .enable_banking_app_id
+                .zip(config.enable_banking_private_key_path)
+        })
+        .expect(
+            "no Enable Banking credentials found — set sandbox fields in config, \
+             EB_APP_ID + EB_PRIVATE_KEY_PATH env vars, or main config fields",
+        );
 
-    let raw_path = config
-        .enable_banking_private_key_path
-        .expect("enable_banking_private_key_path not set in config");
-
-    let key_path = if raw_path.starts_with('~') {
-        home_dir().join(&raw_path[2..])
-    } else {
-        PathBuf::from(raw_path)
-    };
-
+    let key_path = resolve_path(&raw_path);
     let pem = fs::read(&key_path)
         .unwrap_or_else(|e| panic!("failed to read private key at {}: {e}", key_path.display()));
 
     EnableBankingConfig::new(app_id, pem)
+}
+
+fn resolve_path(raw: &str) -> PathBuf {
+    if raw.starts_with('~') {
+        home_dir().join(&raw[2..])
+    } else {
+        PathBuf::from(raw)
+    }
 }
 
 fn home_dir() -> PathBuf {

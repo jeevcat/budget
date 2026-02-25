@@ -18,8 +18,12 @@ pub struct Config {
     pub server_port: u16,
     pub enable_banking_app_id: Option<String>,
     pub enable_banking_private_key_path: Option<String>,
+    /// Sandbox credentials for live tests (overrides the main fields in tests).
+    pub enable_banking_sandbox_app_id: Option<String>,
+    pub enable_banking_sandbox_private_key_path: Option<String>,
     pub host: Option<String>,
     pub log_path: Option<String>,
+    pub frontend_dir: Option<String>,
 }
 
 impl Default for Config {
@@ -35,8 +39,11 @@ impl Default for Config {
             server_port: 3000,
             enable_banking_app_id: None,
             enable_banking_private_key_path: None,
+            enable_banking_sandbox_app_id: None,
+            enable_banking_sandbox_private_key_path: None,
             host: None,
             log_path: None,
+            frontend_dir: None,
         }
     }
 }
