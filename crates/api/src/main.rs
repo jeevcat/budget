@@ -277,7 +277,13 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .route("/health", get(health))
         .merge(routes::connections::callback_router())
         .nest("/api", api_routes)
-        .fallback_service(ServeDir::new(frontend_dir))
+        .fallback_service(
+            ServeDir::new(frontend_dir)
+                .append_index_html_on_directories(true)
+                .fallback(tower_http::services::ServeFile::new(
+                    frontend_dir.join("index.html"),
+                )),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

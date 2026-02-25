@@ -1344,33 +1344,29 @@ const QUEUE_CARDS = [
 ];
 
 function Jobs() {
-  const [jobs, setJobs] = useState(null);
   const [counts, setCounts] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [syncAccountId, setSyncAccountId] = useState("");
   const [triggering, setTriggering] = useState(null);
 
-  function loadJobs() {
-    Promise.all([api.get("/jobs"), api.get("/accounts")])
-      .then(([j, a]) => {
-        setJobs(j);
+  function load() {
+    Promise.all([api.get("/jobs/counts"), api.get("/accounts")])
+      .then(([c, a]) => {
+        setCounts(c);
         setAccounts(a);
       })
       .catch(setError);
   }
 
-  function loadCounts() {
-    api
-      .get("/jobs/counts")
-      .then(setCounts)
-      .catch(() => {});
-  }
-
   useEffect(() => {
-    loadJobs();
-    loadCounts();
-    const interval = setInterval(loadCounts, 5000);
+    load();
+    const interval = setInterval(() => {
+      api
+        .get("/jobs/counts")
+        .then(setCounts)
+        .catch(() => {});
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1379,8 +1375,7 @@ function Jobs() {
     setError(null);
     try {
       await api.post(path);
-      loadJobs();
-      loadCounts();
+      load();
     } catch (err) {
       setError(err);
     } finally {
@@ -1391,38 +1386,6 @@ function Jobs() {
   async function triggerSync() {
     if (!syncAccountId) return;
     await trigger(`/jobs/pipeline/${syncAccountId}`, "sync");
-  }
-
-  function statusBadge(status) {
-    if (status === "Done") return "success";
-    if (status === "Failed" || status === "Killed") return "danger";
-    if (status === "Running") return "primary";
-    return "";
-  }
-
-  const PIPELINE_STEPS = ["Sync", "Categorize", "Correlate", "Recompute"];
-
-  function friendlyType(job) {
-    const name = job.job_type.includes("::")
-      ? job.job_type.split("::").pop()
-      : job.job_type;
-    if (name === "SyncJob") return "Sync";
-    if (name === "CategorizeJob") return "Categorize";
-    if (name === "CategorizeTransactionJob") return "Categorize (txn)";
-    if (name === "CorrelateJob") return "Correlate";
-    if (name === "CorrelateTransactionJob") return "Correlate (txn)";
-    if (name === "BudgetRecomputeJob") return "Recompute";
-    if (name === "Vec<u8>" || job.job_type.includes("Vec<u8>")) {
-      const step = PIPELINE_STEPS[job.pipeline_step] ?? "?";
-      return `Pipeline / ${step}`;
-    }
-    return name;
-  }
-
-  function formatTs(iso) {
-    if (!iso) return "\u2014";
-    const d = new Date(iso);
-    return d.toLocaleString();
   }
 
   // Aggregate queue counts for a card's job types
@@ -1501,8 +1464,8 @@ function Jobs() {
     `;
   }
 
-  if (error && !jobs) return html`<p class="muted">${error.message}</p>`;
-  if (!jobs) return html`<p class="muted">Loading...</p>`;
+  if (error && !counts) return html`<p class="muted">${error.message}</p>`;
+  if (!counts) return html`<p class="muted">Loading...</p>`;
 
   return html`
     <h2>Jobs</h2>
@@ -1512,60 +1475,6 @@ function Jobs() {
     <div class="queue-cards">
       ${QUEUE_CARDS.map(renderQueueCard)}
     </div>
-
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-      <span class="muted">
-        ${jobs.length} job${jobs.length !== 1 ? "s" : ""} (latest 100)
-      </span>
-      <button class="small" onClick=${loadJobs}>Refresh</button>
-    </div>
-
-    ${
-      jobs.length === 0
-        ? html`<p class="muted">No jobs yet. Trigger one above to get started.</p>`
-        : html`
-          <div class="table">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Attempts</th>
-                  <th>Queued</th>
-                  <th>Completed</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${jobs.map(
-                  (j) => html`
-                    <tr>
-                      <td class="mono" title=${j.id}>${j.id.slice(0, 8)}</td>
-                      <td>${friendlyType(j)}</td>
-                      <td>
-                        <span class="badge ${statusBadge(j.status)}">${j.status}</span>
-                      </td>
-                      <td class="mono">${j.attempts}/${j.max_attempts}</td>
-                      <td class="mono" style="font-size:0.85rem">${formatTs(j.run_at)}</td>
-                      <td class="mono" style="font-size:0.85rem">${formatTs(j.done_at)}</td>
-                      <td>
-                        ${
-                          j.last_result
-                            ? html`<span class="muted" style="font-size:0.85rem" title=${j.last_result}>
-                                ${j.last_result.length > 60 ? j.last_result.slice(0, 60) + "..." : j.last_result}
-                              </span>`
-                            : null
-                        }
-                      </td>
-                    </tr>
-                  `,
-                )}
-              </tbody>
-            </table>
-          </div>
-        `
-    }
   `;
 }
 
