@@ -309,6 +309,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        category_method: None,
         suggested_category: None,
     };
     db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
@@ -329,6 +330,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        category_method: None,
         suggested_category: None,
     };
     db.upsert_transaction(&txn_uncategorized, Some("txn-uncat-1"))
@@ -388,6 +390,7 @@ async fn transactions_categorize_success() {
         project_id: None,
         correlation_id: None,
         correlation_type: None,
+        category_method: None,
         suggested_category: None,
     };
     db.upsert_transaction(&txn, Some("txn-to-categorize"))

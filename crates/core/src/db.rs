@@ -6,8 +6,9 @@ use uuid::Uuid;
 
 use crate::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetPeriodId,
-    Category, CategoryId, Connection, ConnectionId, ConnectionStatus, CorrelationType, MatchField,
-    PeriodType, Project, ProjectId, Rule, RuleId, RuleType, Transaction, TransactionId,
+    Category, CategoryId, CategoryMethod, Connection, ConnectionId, ConnectionStatus,
+    CorrelationType, MatchField, PeriodType, Project, ProjectId, Rule, RuleId, RuleType,
+    Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,7 @@ fn row_to_transaction(row: &AnyRow) -> Result<Transaction, sqlx::Error> {
         project_id: parse_uuid_opt(row, "project_id")?.map(ProjectId::from_uuid),
         correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
+        category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
         suggested_category: row.try_get("suggested_category")?,
     })
 }
@@ -401,7 +403,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              ORDER BY posted_date DESC, merchant_name ASC",
         )
@@ -425,7 +427,7 @@ impl Db {
         let row = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE id = $1",
         )
@@ -445,7 +447,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE category_id IS NULL",
         )
@@ -467,7 +469,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
         )
@@ -493,7 +495,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
@@ -516,10 +518,12 @@ impl Db {
         &self,
         id: TransactionId,
         category_id: CategoryId,
+        method: CategoryMethod,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET category_id = $1 WHERE id = $2")
+        sqlx::query("UPDATE transactions SET category_id = $1, category_method = $2 WHERE id = $3")
             .bind(category_id.to_string())
+            .bind(method.to_string())
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -643,7 +647,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id, project_id,
-                    correlation_id, correlation_type, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE account_id = $1",
         )
@@ -1288,8 +1292,8 @@ mod tests {
 
     use crate::models::{
         Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetPeriodId,
-        Category, CategoryId, CorrelationType, MatchField, PeriodType, Project, ProjectId, Rule,
-        RuleId, RuleType, Transaction, TransactionId,
+        Category, CategoryId, CategoryMethod, CorrelationType, MatchField, PeriodType, Project,
+        ProjectId, Rule, RuleId, RuleType, Transaction, TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1341,6 +1345,7 @@ mod tests {
             project_id: None,
             correlation_id: None,
             correlation_type: None,
+            category_method: None,
             suggested_category: None,
         }
     }
@@ -1542,7 +1547,7 @@ mod tests {
             .unwrap();
 
         // Locally enrich the transaction with category and budget month.
-        db.update_transaction_category(txn.id, cat.id)
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
             .await
             .unwrap();
         db.update_transaction_budget_month(txn.id, bm.id)
@@ -1635,12 +1640,84 @@ mod tests {
         let txn = make_transaction(acct.id);
         db.upsert_transaction(&txn, None).await.unwrap();
 
-        db.update_transaction_category(txn.id, cat.id)
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
             .await
             .unwrap();
 
         let all = db.list_transactions().await.unwrap();
         assert_eq!(all[0].category_id, Some(cat.id));
+        assert_eq!(all[0].category_method, Some(CategoryMethod::Manual));
+    }
+
+    #[tokio::test]
+    async fn test_update_transaction_category_method_all_variants() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        for method in [
+            CategoryMethod::Manual,
+            CategoryMethod::Rule,
+            CategoryMethod::Llm,
+        ] {
+            let txn = make_transaction(acct.id);
+            db.upsert_transaction(&txn, None).await.unwrap();
+
+            db.update_transaction_category(txn.id, cat.id, method)
+                .await
+                .unwrap();
+
+            let fetched = db.get_transaction_by_id(txn.id).await.unwrap().unwrap();
+            assert_eq!(fetched.category_method, Some(method));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_new_transaction_has_no_category_method() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let txn = make_transaction(acct.id);
+        db.upsert_transaction(&txn, None).await.unwrap();
+
+        let fetched = db.get_transaction_by_id(txn.id).await.unwrap().unwrap();
+        assert!(fetched.category_method.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_category_method_survives_provider_resync() {
+        let db = setup_db().await;
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Transport");
+        db.insert_category(&cat).await.unwrap();
+
+        let txn = make_transaction(acct.id);
+        db.upsert_transaction(&txn, Some("PROV-METHOD-001"))
+            .await
+            .unwrap();
+
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Rule)
+            .await
+            .unwrap();
+
+        // Simulate provider re-sync with same provider_transaction_id
+        let mut txn_updated = make_transaction(acct.id);
+        txn_updated.merchant_name = "Updated Merchant".into();
+        db.upsert_transaction(&txn_updated, Some("PROV-METHOD-001"))
+            .await
+            .unwrap();
+
+        let fetched = db.list_transactions().await.unwrap();
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].merchant_name, "Updated Merchant");
+        assert_eq!(fetched[0].category_id, Some(cat.id));
+        assert_eq!(fetched[0].category_method, Some(CategoryMethod::Rule));
     }
 
     #[tokio::test]

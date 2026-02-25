@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use budget_core::models::{CategoryId, Transaction, TransactionId};
+use budget_core::models::{CategoryId, CategoryMethod, Transaction, TransactionId};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -75,7 +75,7 @@ async fn categorize(
 
     state
         .db
-        .update_transaction_category(txn_id, category_id)
+        .update_transaction_category(txn_id, category_id, CategoryMethod::Manual)
         .await?;
     Ok(StatusCode::OK)
 }

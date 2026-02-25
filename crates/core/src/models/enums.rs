@@ -190,6 +190,37 @@ impl std::str::FromStr for ConnectionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CategoryMethod {
+    Manual,
+    Rule,
+    Llm,
+}
+
+impl fmt::Display for CategoryMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Manual => write!(f, "manual"),
+            Self::Rule => write!(f, "rule"),
+            Self::Llm => write!(f, "llm"),
+        }
+    }
+}
+
+impl std::str::FromStr for CategoryMethod {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "manual" => Ok(Self::Manual),
+            "rule" => Ok(Self::Rule),
+            "llm" => Ok(Self::Llm),
+            _ => Err(Error::InvalidCategoryMethod(s.to_owned())),
+        }
+    }
+}
+
 /// Budget status pace indicator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -197,4 +228,55 @@ pub enum PaceIndicator {
     UnderBudget,
     OnTrack,
     OverBudget,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_method_display_roundtrip() {
+        for (variant, expected) in [
+            (CategoryMethod::Manual, "manual"),
+            (CategoryMethod::Rule, "rule"),
+            (CategoryMethod::Llm, "llm"),
+        ] {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<CategoryMethod>().unwrap(), variant);
+        }
+    }
+
+    #[test]
+    fn category_method_from_str_invalid() {
+        assert!("unknown".parse::<CategoryMethod>().is_err());
+    }
+
+    #[test]
+    fn category_method_serde_roundtrip() {
+        for variant in [
+            CategoryMethod::Manual,
+            CategoryMethod::Rule,
+            CategoryMethod::Llm,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let deserialized: CategoryMethod = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
+
+    #[test]
+    fn category_method_serde_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&CategoryMethod::Manual).unwrap(),
+            "\"manual\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CategoryMethod::Rule).unwrap(),
+            "\"rule\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CategoryMethod::Llm).unwrap(),
+            "\"llm\""
+        );
+    }
 }

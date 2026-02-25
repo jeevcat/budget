@@ -26,6 +26,9 @@ pub enum Error {
     #[error("invalid connection status: {0}")]
     InvalidConnectionStatus(String),
 
+    #[error("invalid category method: {0}")]
+    InvalidCategoryMethod(String),
+
     #[error("invalid rule pattern: {0}")]
     InvalidRulePattern(String),
 }

@@ -196,6 +196,7 @@ mod tests {
             project_id: None,
             correlation_id: None,
             correlation_type: None,
+            category_method: None,
             suggested_category: None,
         }
     }

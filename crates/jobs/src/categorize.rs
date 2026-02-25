@@ -7,7 +7,7 @@
 use apalis::prelude::*;
 
 use budget_core::db::Db;
-use budget_core::models::{RuleType, TransactionId};
+use budget_core::models::{CategoryMethod, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_categorization_rules};
 
 use super::{ApalisPool, CategorizeJob, CategorizeTransactionJob, LlmClient};
@@ -57,7 +57,8 @@ pub(crate) async fn categorize_fan_out(
 
     for txn in &uncategorized {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
-            db.update_transaction_category(txn.id, category_id).await?;
+            db.update_transaction_category(txn.id, category_id, CategoryMethod::Rule)
+                .await?;
             by_rule += 1;
             continue;
         }
@@ -141,7 +142,8 @@ pub async fn handle_categorize_transaction_job(
     }
 
     if let Some(category) = db.get_category_by_name(&result.category_name).await? {
-        db.update_transaction_category(txn_id, category.id).await?;
+        db.update_transaction_category(txn_id, category.id, CategoryMethod::Llm)
+            .await?;
         tracing::debug!(txn_id = %txn_id, category = %result.category_name, "categorized by LLM");
     } else {
         tracing::debug!(

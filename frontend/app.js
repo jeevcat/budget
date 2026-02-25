@@ -255,6 +255,11 @@ function TxnDetail({
                 )}
               </select>
               ${
+                txn.category_id && txn.category_method
+                  ? html`<span class="chip outline small" style="margin-left:0.5rem">${txn.category_method}</span>`
+                  : null
+              }
+              ${
                 !txn.category_id && txn.suggested_category
                   ? html`<span class="text-lighter small" style="margin-left:0.5rem" title="LLM suggestion">${txn.suggested_category}</span>`
                   : null
