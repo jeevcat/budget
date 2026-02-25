@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{Category, CategoryId};
 
 use crate::routes::AppError;
@@ -51,7 +50,7 @@ pub fn router() -> Router<AppState> {
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Category>>, AppError> {
-    let categories = db::list_categories(&state.pool).await?;
+    let categories = state.db.list_categories().await?;
     Ok(Json(categories))
 }
 
@@ -66,7 +65,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Category>>, AppE
 async fn suggestions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SuggestionEntry>>, AppError> {
-    let histogram = db::get_suggestion_histogram(&state.pool).await?;
+    let histogram = state.db.get_suggestion_histogram().await?;
     let entries = histogram
         .into_iter()
         .map(|(category_name, count)| SuggestionEntry {
@@ -102,7 +101,7 @@ async fn create(
         parent_id,
     };
 
-    db::insert_category(&state.pool, &category).await?;
+    state.db.insert_category(&category).await?;
     Ok((StatusCode::CREATED, Json(category)))
 }
 
@@ -120,6 +119,6 @@ async fn remove(
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let category_id = CategoryId::from_uuid(uuid);
 
-    db::delete_category(&state.pool, category_id).await?;
+    state.db.delete_category(category_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

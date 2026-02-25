@@ -10,7 +10,7 @@ use api::auth;
 use api::routes;
 use api::state::{AppState, JobStorage, PipelineStorage};
 
-use budget_core::db;
+use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
     CategoryId, Project, Rule, Transaction, TransactionId,
@@ -25,29 +25,28 @@ const TEST_SECRET: &str = "test-secret-key";
 
 /// Create an in-memory `SQLite` database with all migrations applied,
 /// build the full application `Router`, and return both.
-async fn setup() -> (Router, SqlitePool) {
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory pool");
+async fn setup() -> (Router, Db) {
+    let db = Db::connect("sqlite::memory:").await.expect("in-memory db");
 
     // Both migrators share the _sqlx_migrations table and must tolerate
     // each other's entries so restarts on persistent databases work.
     let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
     apalis_migrator.set_ignore_missing(true);
-    apalis_migrator.run(&pool).await.expect("apalis migrations");
+    apalis_migrator
+        .run(db.pool())
+        .await
+        .expect("apalis migrations");
 
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator.run(&pool).await.expect("domain migrations");
+    db.run_migrations().await.expect("domain migrations");
 
     let state = AppState {
-        pool: pool.clone(),
+        db: db.clone(),
         secret_key: TEST_SECRET.to_owned(),
-        sync_storage: JobStorage::new(&pool),
-        categorize_storage: JobStorage::new(&pool),
-        correlate_storage: JobStorage::new(&pool),
-        recompute_storage: JobStorage::new(&pool),
-        pipeline_storage: PipelineStorage::new(&pool),
+        sync_storage: JobStorage::new(db.pool()),
+        categorize_storage: JobStorage::new(db.pool()),
+        correlate_storage: JobStorage::new(db.pool()),
+        recompute_storage: JobStorage::new(db.pool()),
+        pipeline_storage: PipelineStorage::new(db.pool()),
         enable_banking_auth: None,
         host: "http://localhost:3000".to_owned(),
     };
@@ -72,7 +71,7 @@ async fn setup() -> (Router, SqlitePool) {
         .nest("/api", api_routes)
         .with_state(state);
 
-    (app, pool)
+    (app, db)
 }
 
 /// Health check handler (mirrors main.rs).
@@ -157,7 +156,7 @@ fn get_unauthenticated(uri: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn accounts_list_empty() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
     let (status, body) = send(app, get("/api/accounts")).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -167,7 +166,7 @@ async fn accounts_list_empty() {
 
 #[tokio::test]
 async fn accounts_create_and_list() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-123",
@@ -198,7 +197,7 @@ async fn accounts_create_and_list() {
 
 #[tokio::test]
 async fn accounts_get_nonexistent_returns_404() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
     let fake_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, get(&format!("/api/accounts/{fake_id}"))).await;
@@ -207,7 +206,7 @@ async fn accounts_get_nonexistent_returns_404() {
 
 #[tokio::test]
 async fn accounts_get_after_creation() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-456",
@@ -234,7 +233,7 @@ async fn accounts_get_after_creation() {
 
 #[tokio::test]
 async fn accounts_create_invalid_account_type_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "provider_account_id": "prov-789",
@@ -254,7 +253,7 @@ async fn accounts_create_invalid_account_type_returns_400() {
 
 #[tokio::test]
 async fn transactions_list_empty() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, body) = send(app, get("/api/transactions")).await;
     assert_eq!(status, StatusCode::OK);
@@ -265,7 +264,7 @@ async fn transactions_list_empty() {
 
 #[tokio::test]
 async fn transactions_uncategorized_returns_only_uncategorized() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     // Insert an account directly so we can reference it
     let account = Account {
@@ -277,16 +276,14 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         currency: "USD".to_owned(),
         connection_id: None,
     };
-    db::upsert_account(&pool, &account).await.expect("account");
+    db.upsert_account(&account).await.expect("account");
 
     let category = Category {
         id: CategoryId::new(),
         name: "Groceries".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     // Insert one categorized and one uncategorized transaction
     let txn_categorized = Transaction {
@@ -305,7 +302,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         correlation_type: None,
         suggested_category: None,
     };
-    db::upsert_transaction(&pool, &txn_categorized, Some("txn-cat-1"))
+    db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
         .await
         .expect("insert categorized");
 
@@ -325,7 +322,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
         correlation_type: None,
         suggested_category: None,
     };
-    db::upsert_transaction(&pool, &txn_uncategorized, Some("txn-uncat-1"))
+    db.upsert_transaction(&txn_uncategorized, Some("txn-uncat-1"))
         .await
         .expect("insert uncategorized");
 
@@ -348,7 +345,7 @@ async fn transactions_uncategorized_returns_only_uncategorized() {
 
 #[tokio::test]
 async fn transactions_categorize_success() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let account = Account {
         id: AccountId::new(),
@@ -359,16 +356,14 @@ async fn transactions_categorize_success() {
         currency: "USD".to_owned(),
         connection_id: None,
     };
-    db::upsert_account(&pool, &account).await.expect("account");
+    db.upsert_account(&account).await.expect("account");
 
     let category = Category {
         id: CategoryId::new(),
         name: "Dining".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let txn = Transaction {
         id: TransactionId::new(),
@@ -386,7 +381,7 @@ async fn transactions_categorize_success() {
         correlation_type: None,
         suggested_category: None,
     };
-    db::upsert_transaction(&pool, &txn, Some("txn-to-categorize"))
+    db.upsert_transaction(&txn, Some("txn-to-categorize"))
         .await
         .expect("insert");
 
@@ -405,7 +400,7 @@ async fn transactions_categorize_success() {
     assert_eq!(status, StatusCode::OK);
 
     // Verify via DB that the category was set
-    let updated_txns = db::list_transactions(&pool).await.expect("list");
+    let updated_txns = db.list_transactions().await.expect("list");
     let updated = updated_txns
         .iter()
         .find(|t| t.id == txn.id)
@@ -415,7 +410,7 @@ async fn transactions_categorize_success() {
 
 #[tokio::test]
 async fn transactions_categorize_invalid_uuid_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "category_id": "not-a-uuid"
@@ -440,7 +435,7 @@ async fn transactions_categorize_invalid_uuid_returns_400() {
 
 #[tokio::test]
 async fn categories_create_and_list() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "name": "Entertainment"
@@ -464,7 +459,7 @@ async fn categories_create_and_list() {
 
 #[tokio::test]
 async fn categories_delete_returns_204() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({ "name": "ToDelete" });
     let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
@@ -489,7 +484,7 @@ async fn categories_delete_returns_204() {
 
 #[tokio::test]
 async fn categories_create_with_parent() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     // Create parent
     let parent_payload = serde_json::json!({ "name": "Food" });
@@ -522,7 +517,7 @@ async fn categories_create_with_parent() {
 
 #[tokio::test]
 async fn rules_create_and_list() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     // Rules with target_category_id need a valid category for context,
     // but the DB schema only has a FK constraint. Insert a category first.
@@ -531,9 +526,7 @@ async fn rules_create_and_list() {
         name: "Groceries".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
@@ -560,16 +553,14 @@ async fn rules_create_and_list() {
 
 #[tokio::test]
 async fn rules_update() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Transport".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
@@ -606,7 +597,7 @@ async fn rules_update() {
 
 #[tokio::test]
 async fn rules_delete() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
@@ -632,7 +623,7 @@ async fn rules_delete() {
 
 #[tokio::test]
 async fn rules_create_invalid_rule_type_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "rule_type": "invalid_type",
@@ -651,7 +642,7 @@ async fn rules_create_invalid_rule_type_returns_400() {
 
 #[tokio::test]
 async fn budgets_status_returns_404_when_no_months() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, get("/api/budgets/status")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -659,16 +650,14 @@ async fn budgets_status_returns_404_when_no_months() {
 
 #[tokio::test]
 async fn budgets_create_period() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Rent".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "category_id": category.id.to_string(),
@@ -686,7 +675,7 @@ async fn budgets_create_period() {
 
 #[tokio::test]
 async fn budgets_months_empty() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, body) = send(app, get("/api/budgets/months")).await;
     assert_eq!(status, StatusCode::OK);
@@ -697,16 +686,14 @@ async fn budgets_months_empty() {
 
 #[tokio::test]
 async fn budgets_delete_period() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Utils".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "category_id": category.id.to_string(),
@@ -726,22 +713,20 @@ async fn budgets_delete_period() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify the period is gone via the DB
-    let periods = db::list_budget_periods(&pool).await.expect("list");
+    let periods = db.list_budget_periods().await.expect("list");
     assert!(periods.is_empty());
 }
 
 #[tokio::test]
 async fn budgets_status_with_current_month() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Food".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     // Create a budget period
     let bp_payload = serde_json::json!({
@@ -759,9 +744,7 @@ async fn budgets_status_with_current_month() {
         end_date: None,
         salary_transactions_detected: 1,
     };
-    db::replace_budget_months(&pool, &[month])
-        .await
-        .expect("months");
+    db.replace_budget_months(&[month]).await.expect("months");
 
     let (status, body) = send(app, get("/api/budgets/status")).await;
     assert_eq!(status, StatusCode::OK);
@@ -778,16 +761,14 @@ async fn budgets_status_with_current_month() {
 
 #[tokio::test]
 async fn projects_create_and_list() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Home".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "name": "Kitchen Renovation",
@@ -827,16 +808,14 @@ async fn projects_create_and_list() {
 
 #[tokio::test]
 async fn projects_update() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Travel".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "name": "Trip to Paris",
@@ -873,16 +852,14 @@ async fn projects_update() {
 
 #[tokio::test]
 async fn projects_delete() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Misc".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "name": "Temp Project",
@@ -910,16 +887,14 @@ async fn projects_delete() {
 
 #[tokio::test]
 async fn projects_create_invalid_date_returns_400() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Bad Date Category".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "name": "Bad Date Project",
@@ -937,7 +912,7 @@ async fn projects_create_invalid_date_returns_400() {
 
 #[tokio::test]
 async fn jobs_sync_returns_202() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
     let account_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, post_empty(&format!("/api/jobs/sync/{account_id}"))).await;
@@ -946,7 +921,7 @@ async fn jobs_sync_returns_202() {
 
 #[tokio::test]
 async fn jobs_categorize_returns_202() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/categorize")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -954,7 +929,7 @@ async fn jobs_categorize_returns_202() {
 
 #[tokio::test]
 async fn jobs_correlate_returns_202() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/correlate")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -962,7 +937,7 @@ async fn jobs_correlate_returns_202() {
 
 #[tokio::test]
 async fn jobs_recompute_returns_202() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/recompute")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -970,7 +945,7 @@ async fn jobs_recompute_returns_202() {
 
 #[tokio::test]
 async fn jobs_pipeline_returns_202() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
     let account_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, post_empty(&format!("/api/jobs/pipeline/{account_id}"))).await;
@@ -979,7 +954,7 @@ async fn jobs_pipeline_returns_202() {
 
 #[tokio::test]
 async fn jobs_list_returns_empty_array() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, body) = send(app, get("/api/jobs")).await;
     assert_eq!(status, StatusCode::OK);
@@ -990,7 +965,7 @@ async fn jobs_list_returns_empty_array() {
 
 #[tokio::test]
 async fn jobs_list_returns_enqueued_job() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     // Enqueue a categorize job
     let (status, _body) = send(app.clone(), post_empty("/api/jobs/categorize")).await;
@@ -1013,7 +988,7 @@ async fn jobs_list_returns_enqueued_job() {
 
 #[tokio::test]
 async fn accounts_get_invalid_uuid_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, get("/api/accounts/not-a-uuid")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1022,7 +997,7 @@ async fn accounts_get_invalid_uuid_returns_400() {
 #[tokio::test]
 async fn categories_delete_nonexistent_returns_204() {
     // DELETE on a nonexistent row is not an error -- the SQL succeeds with 0 rows affected
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
     let fake_id = uuid::Uuid::new_v4();
 
     let (status, _body) = send(app, delete(&format!("/api/categories/{fake_id}"))).await;
@@ -1031,7 +1006,7 @@ async fn categories_delete_nonexistent_returns_204() {
 
 #[tokio::test]
 async fn rules_create_correlation_rule() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
@@ -1061,16 +1036,14 @@ async fn rules_create_correlation_rule() {
 
 #[tokio::test]
 async fn budgets_update_period() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Insurance".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "category_id": category.id.to_string(),
@@ -1106,16 +1079,14 @@ async fn budgets_update_period() {
 
 #[tokio::test]
 async fn projects_create_without_optional_fields() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "Minimal".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "name": "Minimal Project",
@@ -1134,7 +1105,7 @@ async fn projects_create_without_optional_fields() {
 
 #[tokio::test]
 async fn transactions_categorize_with_invalid_txn_id_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "category_id": uuid::Uuid::new_v4().to_string()
@@ -1150,7 +1121,7 @@ async fn transactions_categorize_with_invalid_txn_id_returns_400() {
 
 #[tokio::test]
 async fn rules_create_invalid_match_field_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
@@ -1165,16 +1136,14 @@ async fn rules_create_invalid_match_field_returns_400() {
 
 #[tokio::test]
 async fn budgets_create_period_invalid_amount_returns_400() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "BadAmount".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "category_id": category.id.to_string(),
@@ -1188,7 +1157,7 @@ async fn budgets_create_period_invalid_amount_returns_400() {
 
 #[tokio::test]
 async fn accounts_create_all_types() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     for account_type in &[
         "checking",
@@ -1223,16 +1192,14 @@ async fn accounts_create_all_types() {
 
 #[tokio::test]
 async fn budgets_create_period_invalid_period_type_returns_400() {
-    let (app, pool) = setup().await;
+    let (app, db) = setup().await;
 
     let category = Category {
         id: CategoryId::new(),
         name: "BadPeriod".to_owned(),
         parent_id: None,
     };
-    db::insert_category(&pool, &category)
-        .await
-        .expect("category");
+    db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
         "category_id": category.id.to_string(),
@@ -1246,7 +1213,7 @@ async fn budgets_create_period_invalid_period_type_returns_400() {
 
 #[tokio::test]
 async fn projects_create_invalid_category_uuid_returns_400() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let payload = serde_json::json!({
         "name": "Bad UUID Project",
@@ -1264,7 +1231,7 @@ async fn projects_create_invalid_category_uuid_returns_400() {
 
 #[tokio::test]
 async fn auth_health_is_unauthenticated() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, body) = send(app, get_unauthenticated("/health")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1275,7 +1242,7 @@ async fn auth_health_is_unauthenticated() {
 
 #[tokio::test]
 async fn auth_api_rejects_missing_token() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, get_unauthenticated("/api/accounts")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -1283,7 +1250,7 @@ async fn auth_api_rejects_missing_token() {
 
 #[tokio::test]
 async fn auth_api_rejects_wrong_token() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let request = Request::builder()
         .uri("/api/accounts")
@@ -1298,7 +1265,7 @@ async fn auth_api_rejects_wrong_token() {
 
 #[tokio::test]
 async fn auth_api_rejects_malformed_header() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let request = Request::builder()
         .uri("/api/accounts")
@@ -1313,7 +1280,7 @@ async fn auth_api_rejects_malformed_header() {
 
 #[tokio::test]
 async fn auth_api_accepts_valid_token() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, get("/api/accounts")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1325,7 +1292,7 @@ async fn auth_api_accepts_valid_token() {
 
 #[tokio::test]
 async fn connections_list_empty() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, body) = send(app, get("/api/connections")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1337,7 +1304,7 @@ async fn connections_list_empty() {
 
 #[tokio::test]
 async fn connections_aspsps_returns_501_when_not_configured() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     let (status, _body) = send(app, get("/api/connections/aspsps?country=FI")).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
@@ -1345,7 +1312,7 @@ async fn connections_aspsps_returns_501_when_not_configured() {
 
 #[tokio::test]
 async fn connections_callback_rejects_invalid_state() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     // The callback endpoint should return 501 because enable_banking_auth is None.
     // But if it were configured, an invalid state token would return 400.
@@ -1360,7 +1327,7 @@ async fn connections_callback_rejects_invalid_state() {
 
 #[tokio::test]
 async fn connections_callback_is_unauthenticated() {
-    let (app, _pool) = setup().await;
+    let (app, _db) = setup().await;
 
     // The callback endpoint should NOT return 401, proving it's unauthenticated.
     // It should return 501 (not configured) rather than 401 (unauthorized).

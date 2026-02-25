@@ -8,7 +8,6 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use budget_core::budget::compute_budget_status;
-use budget_core::db;
 use budget_core::models::{
     BudgetMonth, BudgetPeriod, BudgetPeriodId, BudgetStatus, CategoryId, PeriodType,
 };
@@ -60,10 +59,10 @@ pub fn router() -> Router<AppState> {
 /// Returns 404 if no current budget month exists.
 /// Returns `AppError` if any database query fails.
 async fn status(State(state): State<AppState>) -> Result<Json<Vec<BudgetStatus>>, AppError> {
-    let transactions = db::list_transactions(&state.pool).await?;
-    let categories = db::list_categories(&state.pool).await?;
-    let budget_periods = db::list_budget_periods(&state.pool).await?;
-    let budget_months = db::list_budget_months(&state.pool).await?;
+    let transactions = state.db.list_transactions().await?;
+    let categories = state.db.list_categories().await?;
+    let budget_periods = state.db.list_budget_periods().await?;
+    let budget_months = state.db.list_budget_months().await?;
 
     // The current month is the one with no end date
     let current_month = budget_months
@@ -109,7 +108,7 @@ fn parse_budget_period_body(
 
 /// List all budget periods.
 async fn list_periods(State(state): State<AppState>) -> Result<Json<Vec<BudgetPeriod>>, AppError> {
-    let periods = db::list_budget_periods(&state.pool).await?;
+    let periods = state.db.list_budget_periods().await?;
     Ok(Json(periods))
 }
 
@@ -124,7 +123,7 @@ async fn create_period(
     Json(body): Json<CreateBudgetPeriod>,
 ) -> Result<(StatusCode, Json<BudgetPeriod>), AppError> {
     let bp = parse_budget_period_body(&body, BudgetPeriodId::new())?;
-    db::insert_budget_period(&state.pool, &bp).await?;
+    state.db.insert_budget_period(&bp).await?;
     Ok((StatusCode::CREATED, Json(bp)))
 }
 
@@ -142,7 +141,7 @@ async fn update_period(
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let bp = parse_budget_period_body(&body, BudgetPeriodId::from_uuid(uuid))?;
-    db::update_budget_period(&state.pool, &bp).await?;
+    state.db.update_budget_period(&bp).await?;
     Ok(Json(bp))
 }
 
@@ -158,7 +157,10 @@ async fn delete_period(
 ) -> Result<StatusCode, AppError> {
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    db::delete_budget_period(&state.pool, BudgetPeriodId::from_uuid(uuid)).await?;
+    state
+        .db
+        .delete_budget_period(BudgetPeriodId::from_uuid(uuid))
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -168,6 +170,6 @@ async fn delete_period(
 ///
 /// Returns `AppError` if the database query fails.
 async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMonth>>, AppError> {
-    let months = db::list_budget_months(&state.pool).await?;
+    let months = state.db.list_budget_months().await?;
     Ok(Json(months))
 }

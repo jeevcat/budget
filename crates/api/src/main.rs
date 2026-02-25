@@ -6,6 +6,7 @@ use apalis_workflow::Workflow;
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
+use budget_core::db::Db;
 use budget_jobs::{
     BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
     CorrelateTransactionJob, LlmClient, NoOpJob, SyncJob, pipeline,
@@ -35,9 +36,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing(&config);
     tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
 
-    let pool = SqlitePool::connect(&config.database_url).await?;
+    let db = Db::connect(&config.database_url).await?;
 
-    run_migrations(&pool).await?;
+    run_migrations(&db).await?;
     tracing::info!("migrations applied");
 
     // Provider wrappers for apalis Data injection
@@ -46,14 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = init_llm_provider(&config);
 
+    let pool = db.pool();
     let state = AppState {
-        pool: pool.clone(),
+        db: db.clone(),
         secret_key: config.secret_key,
-        sync_storage: JobStorage::new(&pool),
-        categorize_storage: JobStorage::new(&pool),
-        correlate_storage: JobStorage::new(&pool),
-        recompute_storage: JobStorage::new(&pool),
-        pipeline_storage: PipelineStorage::new(&pool),
+        sync_storage: JobStorage::new(pool),
+        categorize_storage: JobStorage::new(pool),
+        correlate_storage: JobStorage::new(pool),
+        recompute_storage: JobStorage::new(pool),
+        pipeline_storage: PipelineStorage::new(pool),
         enable_banking_auth,
         host: config
             .host
@@ -65,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::path::PathBuf::from,
     );
     let app = build_router(state, &frontend_dir);
-    let workers = build_workers(&pool, bank_factory, llm);
+    let workers = build_workers(&db, bank_factory, llm);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
 
@@ -76,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = workers => {
             if let Err(e) = res { tracing::error!(%e, "worker error"); }
         }
-        // clone() justified: SqlitePool is Arc-based; build_workers borrows pool
+        // clone() justified: SqlitePool is Arc-based
         () = reclaim_stale_jobs_loop(pool.clone()) => {}
     }
 
@@ -130,29 +132,20 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Configure `SQLite` PRAGMAs and run both apalis and domain migrations.
+/// Run domain migrations (via `Db`), apalis migrations, and reset stale jobs.
 ///
 /// Both migrators share the `_sqlx_migrations` table.  Each must tolerate
 /// the other's entries (`ignore_missing`) so that restarts and incremental
 /// migrations work on persistent databases.
-async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
-    sqlx::query("PRAGMA journal_mode = 'WAL'")
-        .execute(pool)
-        .await?;
-    sqlx::query("PRAGMA synchronous = NORMAL")
-        .execute(pool)
-        .await?;
-    sqlx::query("PRAGMA cache_size = 64000")
-        .execute(pool)
-        .await?;
+async fn run_migrations(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = db.pool();
+
+    // PRAGMAs + domain migrations
+    db.run_migrations().await?;
 
     let mut apalis_migrator = SqliteStorage::migrations();
     apalis_migrator.set_ignore_missing(true);
     apalis_migrator.run(pool).await?;
-
-    let mut migrator = sqlx::migrate!("../../migrations");
-    migrator.set_ignore_missing(true);
-    migrator.run(pool).await?;
 
     // No workers are active yet, so any "Running" jobs are stale locks from
     // a previous process. Reset them so workers pick them up immediately.
@@ -292,10 +285,12 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
 ///
 /// Returns a future that resolves when any worker errors out.
 async fn build_workers(
-    pool: &SqlitePool,
+    db: &Db,
     bank_factory: BankProviderFactory,
     llm: LlmClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = db.pool();
+
     // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
     let pipeline_backend = SqliteStorage::<Vec<u8>, _, _>::new(pool);
     let pipeline_workflow = workflow_for(&pipeline_backend)
@@ -305,44 +300,44 @@ async fn build_workers(
         .and_then(pipeline::step_recompute);
     let pipeline_worker = WorkerBuilder::new("budget-pipeline")
         .backend(pipeline_backend)
-        .data(pool.clone())
+        .data(db.clone())
         .data(bank_factory.clone())
         .build(pipeline_workflow);
 
-    // clone() on pool and storages is justified: they are Arc-based handles
+    // clone() on db is justified: Db wraps an Arc-based SqlitePool
     let sync_worker = WorkerBuilder::new("budget-sync")
         .backend(SqliteStorage::<SyncJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .data(bank_factory)
         .build(budget_jobs::handle_sync_job);
 
     // Fan-out handlers: apply rules, enqueue per-transaction LLM jobs
     let categorize_worker = WorkerBuilder::new("budget-categorize")
         .backend(SqliteStorage::<CategorizeJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .build(budget_jobs::handle_categorize_job);
 
     let correlate_worker = WorkerBuilder::new("budget-correlate")
         .backend(SqliteStorage::<CorrelateJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .build(budget_jobs::handle_correlate_job);
 
     // Per-transaction handlers: call LLM for individual transactions
     let categorize_txn_worker = WorkerBuilder::new("budget-categorize-txn")
         .backend(SqliteStorage::<CategorizeTransactionJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .data(llm.clone())
         .build(budget_jobs::handle_categorize_transaction_job);
 
     let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
         .backend(SqliteStorage::<CorrelateTransactionJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .data(llm)
         .build(budget_jobs::handle_correlate_transaction_job);
 
     let recompute_worker = WorkerBuilder::new("budget-recompute")
         .backend(SqliteStorage::<BudgetRecomputeJob, _, _>::new(pool))
-        .data(pool.clone())
+        .data(db.clone())
         .build(budget_jobs::handle_recompute_job);
 
     let noop_worker = WorkerBuilder::new("budget-no-op")

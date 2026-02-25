@@ -3,11 +3,11 @@
 
 use apalis::prelude::*;
 use chrono::NaiveDate;
-use sqlx::SqlitePool;
 
 use budget_core::budget::detect_budget_month_boundaries;
+use budget_core::db::Db;
+use budget_core::load_config;
 use budget_core::models::{BudgetMonth, BudgetMonthId};
-use budget_core::{db, load_config};
 
 use super::BudgetRecomputeJob;
 
@@ -44,14 +44,14 @@ fn find_budget_month_for_date(date: NaiveDate, months: &[BudgetMonth]) -> Option
 /// - The "Salary" category does not exist.
 /// - Budget month detection fails (e.g. no salary category configured).
 /// - Any database read or write fails.
-pub(crate) async fn recompute_budgets(pool: &SqlitePool) -> Result<(), BoxDynError> {
+pub(crate) async fn recompute_budgets(db: &Db) -> Result<(), BoxDynError> {
     let config = load_config().map_err(|e| format!("config error: {e}"))?;
 
-    let transactions = db::list_transactions(pool).await?;
-    let categories = db::list_categories(pool).await?;
+    let transactions = db.list_transactions().await?;
+    let categories = db.list_categories().await?;
 
     // Resolve the salary category by well-known name
-    let salary_category = db::get_category_by_name(pool, "Salary").await?;
+    let salary_category = db.get_category_by_name("Salary").await?;
     let salary_category_id = salary_category.map(|c| c.id);
 
     let budget_months = detect_budget_month_boundaries(
@@ -62,7 +62,7 @@ pub(crate) async fn recompute_budgets(pool: &SqlitePool) -> Result<(), BoxDynErr
     )?;
 
     // Atomically replace all budget months
-    db::replace_budget_months(pool, &budget_months).await?;
+    db.replace_budget_months(&budget_months).await?;
 
     // Assign each transaction to its budget month based on posted_date
     let mut assigned: u32 = 0;
@@ -70,7 +70,7 @@ pub(crate) async fn recompute_budgets(pool: &SqlitePool) -> Result<(), BoxDynErr
 
     for txn in &transactions {
         if let Some(month_id) = find_budget_month_for_date(txn.posted_date, &budget_months) {
-            db::update_transaction_budget_month(pool, txn.id, month_id).await?;
+            db.update_transaction_budget_month(txn.id, month_id).await?;
             assigned += 1;
         } else {
             unassigned += 1;
@@ -94,7 +94,7 @@ pub(crate) async fn recompute_budgets(pool: &SqlitePool) -> Result<(), BoxDynErr
 /// Returns an error if budget recomputation fails.
 pub async fn handle_recompute_job(
     _job: BudgetRecomputeJob,
-    pool: Data<SqlitePool>,
+    db: Data<Db>,
 ) -> Result<(), BoxDynError> {
-    recompute_budgets(&pool).await
+    recompute_budgets(&db).await
 }

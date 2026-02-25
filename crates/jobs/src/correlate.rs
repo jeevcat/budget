@@ -6,9 +6,8 @@
 
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
-use sqlx::SqlitePool;
 
-use budget_core::db;
+use budget_core::db::Db;
 use budget_core::models::{CorrelationType, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_correlation_rules};
 use budget_providers::TransactionSummary;
@@ -49,9 +48,9 @@ fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
 /// # Errors
 ///
 /// Returns an error if any database query or enqueue operation fails.
-pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynError> {
+pub(crate) async fn correlate_fan_out(db: &Db) -> Result<(), BoxDynError> {
     // -- Compile correlation rules -------------------------------------------
-    let raw_rules = db::list_rules_by_type(pool, RuleType::Correlation).await?;
+    let raw_rules = db.list_rules_by_type(RuleType::Correlation).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
         .iter()
         .filter_map(|rule| match compile_rule_pattern(rule) {
@@ -64,7 +63,7 @@ pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynErr
         .collect();
 
     // -- Load uncorrelated transactions --------------------------------------
-    let uncorrelated = db::get_uncorrelated_transactions(pool).await?;
+    let uncorrelated = db.get_uncorrelated_transactions().await?;
     if uncorrelated.is_empty() {
         tracing::info!("no uncorrelated transactions, nothing to do");
         return Ok(());
@@ -76,7 +75,7 @@ pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynErr
 
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
-    let mut storage = SqliteStorage::<CorrelateTransactionJob, _, _>::new(pool);
+    let mut storage = SqliteStorage::<CorrelateTransactionJob, _, _>::new(db.pool());
 
     for txn in &uncorrelated {
         if paired.contains(&txn.id) {
@@ -99,7 +98,7 @@ pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynErr
         if let Some((matched_id, corr_type)) =
             evaluate_correlation_rules(txn, &candidates, &compiled_rules)
         {
-            link_pair(pool, txn.id, matched_id, corr_type).await?;
+            link_pair(db, txn.id, matched_id, corr_type).await?;
             paired.insert(txn.id);
             paired.insert(matched_id);
             by_rule += 1;
@@ -136,7 +135,7 @@ pub(crate) async fn correlate_fan_out(pool: &SqlitePool) -> Result<(), BoxDynErr
 /// Returns an error if the database query or LLM call fails.
 pub async fn handle_correlate_transaction_job(
     job: CorrelateTransactionJob,
-    pool: Data<SqlitePool>,
+    db: Data<Db>,
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
     let txn_id: TransactionId = job
@@ -145,7 +144,8 @@ pub async fn handle_correlate_transaction_job(
         .map(TransactionId::from_uuid)
         .map_err(|e| format!("invalid transaction id: {e}"))?;
 
-    let txn = db::get_transaction_by_id(&pool, txn_id)
+    let txn = db
+        .get_transaction_by_id(txn_id)
         .await?
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
 
@@ -156,7 +156,7 @@ pub async fn handle_correlate_transaction_job(
     }
 
     // Find candidates: uncorrelated transactions with opposite amount
-    let candidates = db::get_correlation_candidates(&pool, -txn.amount, txn_id).await?;
+    let candidates = db.get_correlation_candidates(-txn.amount, txn_id).await?;
 
     for candidate in &candidates {
         let summary_a = to_summary(&txn);
@@ -168,7 +168,7 @@ pub async fn handle_correlate_transaction_job(
             && let Some(ref provider_corr_type) = result.correlation_type
         {
             let domain_type = to_domain_correlation_type(provider_corr_type);
-            link_pair(&pool, txn_id, candidate.id, domain_type).await?;
+            link_pair(&db, txn_id, candidate.id, domain_type).await?;
             tracing::debug!(
                 txn_id = %txn_id,
                 correlated_with = %candidate.id,
@@ -187,21 +187,20 @@ pub async fn handle_correlate_transaction_job(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn handle_correlate_job(
-    _job: CorrelateJob,
-    pool: Data<SqlitePool>,
-) -> Result<(), BoxDynError> {
-    correlate_fan_out(&pool).await
+pub async fn handle_correlate_job(_job: CorrelateJob, db: Data<Db>) -> Result<(), BoxDynError> {
+    correlate_fan_out(&db).await
 }
 
 /// Persist a bidirectional correlation link between two transactions.
 async fn link_pair(
-    pool: &SqlitePool,
+    db: &Db,
     id_a: TransactionId,
     id_b: TransactionId,
     corr_type: CorrelationType,
 ) -> Result<(), BoxDynError> {
-    db::update_transaction_correlation(pool, id_a, id_b, corr_type).await?;
-    db::update_transaction_correlation(pool, id_b, id_a, corr_type).await?;
+    db.update_transaction_correlation(id_a, id_b, corr_type)
+        .await?;
+    db.update_transaction_correlation(id_b, id_a, corr_type)
+        .await?;
     Ok(())
 }

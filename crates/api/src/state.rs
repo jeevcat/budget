@@ -3,6 +3,7 @@ use std::sync::Arc;
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
 use apalis_workflow::WorkflowSink;
+use budget_core::db::Db;
 use budget_jobs::{
     BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
     CorrelateTransactionJob, SyncJob,
@@ -104,8 +105,8 @@ impl PipelineStorage {
 /// so cloning `AppState` is cheap and does not duplicate connections.
 #[derive(Clone)]
 pub struct AppState {
-    /// Database connection pool for all queries.
-    pub pool: SqlitePool,
+    /// Database handle for all domain queries.
+    pub db: Db,
     /// Static bearer token for API authentication.
     pub secret_key: String,
     /// Job queue storage for bank account sync jobs.

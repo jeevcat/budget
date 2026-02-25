@@ -2,10 +2,9 @@
 //! into the local database.
 
 use apalis::prelude::*;
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use budget_core::db;
+use budget_core::db::Db;
 use budget_core::models::{AccountId, ConnectionStatus, Transaction, TransactionId};
 
 use super::{BankProviderFactory, SyncJob};
@@ -26,7 +25,7 @@ use super::{BankProviderFactory, SyncJob};
 /// - Any database write fails.
 pub(crate) async fn sync_account(
     raw_account_id: &str,
-    pool: &SqlitePool,
+    db: &Db,
     factory: &BankProviderFactory,
 ) -> Result<(), BoxDynError> {
     let uuid: Uuid = raw_account_id
@@ -34,7 +33,8 @@ pub(crate) async fn sync_account(
         .map_err(|e| format!("invalid account_id UUID: {e}"))?;
     let account_id = AccountId::from_uuid(uuid);
 
-    let account = db::get_account(pool, account_id)
+    let account = db
+        .get_account(account_id)
         .await?
         .ok_or_else(|| format!("account {account_id} not found"))?;
 
@@ -49,7 +49,7 @@ pub(crate) async fn sync_account(
     // Resolve the bank provider from the account's connection
     let provider_name = match account.connection_id {
         Some(conn_id) => {
-            let connection = db::get_connection(pool, conn_id).await?.ok_or_else(|| {
+            let connection = db.get_connection(conn_id).await?.ok_or_else(|| {
                 format!("connection {conn_id} not found for account {account_id}")
             })?;
 
@@ -80,7 +80,7 @@ pub(crate) async fn sync_account(
 
     // Use the most recent transaction date as a starting point (with overlap),
     // or fetch all available history for the initial sync.
-    let latest = db::get_latest_transaction_date(pool, account.id).await?;
+    let latest = db.get_latest_transaction_date(account.id).await?;
     let since = latest.map(|date| date - chrono::Duration::days(7));
     tracing::debug!(since = ?since, latest_in_db = ?latest, provider_account_id = %account.provider_account_id, "fetching transactions");
     let provider_txns = bank.fetch_transactions(&provider_account_id, since).await?;
@@ -105,7 +105,8 @@ pub(crate) async fn sync_account(
             suggested_category: None,
         };
 
-        db::upsert_transaction(pool, &txn, Some(&ptxn.provider_transaction_id)).await?;
+        db.upsert_transaction(&txn, Some(&ptxn.provider_transaction_id))
+            .await?;
     }
 
     tracing::info!(
@@ -124,8 +125,8 @@ pub(crate) async fn sync_account(
 /// Returns an error if the sync fails.
 pub async fn handle_sync_job(
     job: SyncJob,
-    pool: Data<SqlitePool>,
+    db: Data<Db>,
     factory: Data<BankProviderFactory>,
 ) -> Result<(), BoxDynError> {
-    sync_account(&job.account_id, &pool, &factory).await
+    sync_account(&job.account_id, &db, &factory).await
 }

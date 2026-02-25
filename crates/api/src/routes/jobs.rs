@@ -51,7 +51,7 @@ async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCou
     let rows = sqlx::query_as::<_, (String, String, i64)>(
         "SELECT job_type, status, COUNT(*) as count FROM Jobs GROUP BY job_type, status",
     )
-    .fetch_all(&state.pool)
+    .fetch_all(state.db.pool())
     .await?;
 
     // Aggregate into one QueueCount per job_type

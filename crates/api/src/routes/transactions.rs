@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{CategoryId, Transaction, TransactionId};
 
 use crate::routes::AppError;
@@ -41,7 +40,7 @@ pub fn router() -> Router<AppState> {
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
-    let transactions = db::list_transactions(&state.pool).await?;
+    let transactions = state.db.list_transactions().await?;
     Ok(Json(transactions))
 }
 
@@ -51,7 +50,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, A
 ///
 /// Returns `AppError` if the database query fails.
 async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
-    let transactions = db::get_uncategorized_transactions(&state.pool).await?;
+    let transactions = state.db.get_uncategorized_transactions().await?;
     Ok(Json(transactions))
 }
 
@@ -74,6 +73,9 @@ async fn categorize(
     let txn_id = TransactionId::from_uuid(txn_uuid);
     let category_id = CategoryId::from_uuid(cat_uuid);
 
-    db::update_transaction_category(&state.pool, txn_id, category_id).await?;
+    state
+        .db
+        .update_transaction_category(txn_id, category_id)
+        .await?;
     Ok(StatusCode::OK)
 }

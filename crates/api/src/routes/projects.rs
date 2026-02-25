@@ -7,7 +7,6 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{CategoryId, Project, ProjectId};
 
 use crate::routes::AppError;
@@ -87,7 +86,7 @@ fn parse_project_body(body: &CreateProject, id: ProjectId) -> Result<Project, Ap
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Project>>, AppError> {
-    let projects = db::list_projects(&state.pool).await?;
+    let projects = state.db.list_projects().await?;
     Ok(Json(projects))
 }
 
@@ -102,7 +101,7 @@ async fn create(
     Json(body): Json<CreateProject>,
 ) -> Result<(StatusCode, Json<Project>), AppError> {
     let project = parse_project_body(&body, ProjectId::new())?;
-    db::insert_project(&state.pool, &project).await?;
+    state.db.insert_project(&project).await?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -120,7 +119,7 @@ async fn update(
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let project = parse_project_body(&body, ProjectId::from_uuid(uuid))?;
-    db::update_project(&state.pool, &project).await?;
+    state.db.update_project(&project).await?;
     Ok(Json(project))
 }
 
@@ -136,6 +135,6 @@ async fn remove(
 ) -> Result<StatusCode, AppError> {
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    db::delete_project(&state.pool, ProjectId::from_uuid(uuid)).await?;
+    state.db.delete_project(ProjectId::from_uuid(uuid)).await?;
     Ok(StatusCode::NO_CONTENT)
 }

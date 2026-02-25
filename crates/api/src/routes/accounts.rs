@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{Account, AccountId, AccountType};
 
 use crate::routes::AppError;
@@ -48,7 +47,7 @@ pub fn router() -> Router<AppState> {
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Account>>, AppError> {
-    let accounts = db::list_accounts(&state.pool).await?;
+    let accounts = state.db.list_accounts().await?;
     Ok(Json(accounts))
 }
 
@@ -79,7 +78,7 @@ async fn create(
         connection_id: None,
     };
 
-    db::upsert_account(&state.pool, &account).await?;
+    state.db.upsert_account(&account).await?;
     Ok((StatusCode::CREATED, Json(account)))
 }
 
@@ -97,7 +96,9 @@ async fn get_by_id(
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let account_id = AccountId::from_uuid(uuid);
 
-    let account = db::get_account(&state.pool, account_id)
+    let account = state
+        .db
+        .get_account(account_id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
 

@@ -8,10 +8,9 @@
 use apalis::prelude::Data;
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use budget_core::db;
+use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, Connection, ConnectionId,
     ConnectionStatus, CorrelationType, MatchField, Rule, RuleId, RuleType, Transaction,
@@ -29,28 +28,26 @@ use budget_providers::{MockBankProvider, MockLlmProvider};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Create an in-memory `SQLite` pool and run all migrations (domain + apalis).
-async fn setup_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:")
+/// Create an in-memory `SQLite` database and run all migrations (domain + apalis).
+async fn setup_db() -> Db {
+    let db = Db::connect("sqlite::memory:")
         .await
-        .expect("failed to create in-memory SQLite pool");
+        .expect("failed to create in-memory SQLite database");
 
     // Apalis Jobs table (needed by fan-out handlers that enqueue per-txn jobs)
     let mut apalis_migrator = apalis_sqlite::SqliteStorage::migrations();
     apalis_migrator.set_ignore_missing(true);
     apalis_migrator
-        .run(&pool)
+        .run(db.pool())
         .await
         .expect("failed to run apalis migrations");
 
-    let mut domain_migrator = sqlx::migrate!("../../migrations");
-    domain_migrator.set_ignore_missing(true);
-    domain_migrator
-        .run(&pool)
+    // Domain migrations via Db
+    db.run_migrations()
         .await
         .expect("failed to run domain migrations");
 
-    pool
+    db
 }
 
 fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -58,7 +55,7 @@ fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 }
 
 /// Seed the "mock-checking-001" account so that sync can find it.
-async fn seed_checking_account(pool: &SqlitePool) -> Account {
+async fn seed_checking_account(db: &Db) -> Account {
     let account = Account {
         id: AccountId::new(),
         provider_account_id: "mock-checking-001".to_owned(),
@@ -68,14 +65,14 @@ async fn seed_checking_account(pool: &SqlitePool) -> Account {
         currency: "USD".to_owned(),
         connection_id: None,
     };
-    db::upsert_account(pool, &account)
+    db.upsert_account(&account)
         .await
         .expect("seed checking account");
     account
 }
 
 /// Seed the "mock-credit-001" credit card account.
-async fn seed_credit_card_account(pool: &SqlitePool) -> Account {
+async fn seed_credit_card_account(db: &Db) -> Account {
     let account = Account {
         id: AccountId::new(),
         provider_account_id: "mock-credit-001".to_owned(),
@@ -85,28 +82,26 @@ async fn seed_credit_card_account(pool: &SqlitePool) -> Account {
         currency: "USD".to_owned(),
         connection_id: None,
     };
-    db::upsert_account(pool, &account)
+    db.upsert_account(&account)
         .await
         .expect("seed credit card account");
     account
 }
 
 /// Insert a category and return it.
-async fn seed_category(pool: &SqlitePool, name: &str) -> Category {
+async fn seed_category(db: &Db, name: &str) -> Category {
     let cat = Category {
         id: CategoryId::new(),
         name: name.to_owned(),
         parent_id: None,
     };
-    db::insert_category(pool, &cat)
-        .await
-        .expect("seed category");
+    db.insert_category(&cat).await.expect("seed category");
     cat
 }
 
 /// Insert a transaction directly into the database.
 async fn seed_transaction(
-    pool: &SqlitePool,
+    db: &Db,
     account_id: AccountId,
     merchant: &str,
     amount: rust_decimal::Decimal,
@@ -129,7 +124,7 @@ async fn seed_transaction(
         correlation_type: None,
         suggested_category: None,
     };
-    db::upsert_transaction(pool, &txn, None)
+    db.upsert_transaction(&txn, None)
         .await
         .expect("seed transaction");
     txn
@@ -145,7 +140,7 @@ fn make_bank_factory_no_fallback() -> BankProviderFactory {
 }
 
 /// Seed an active connection and return it.
-async fn seed_connection(pool: &SqlitePool, status: ConnectionStatus) -> Connection {
+async fn seed_connection(db: &Db, status: ConnectionStatus) -> Connection {
     let connection = Connection {
         id: ConnectionId::new(),
         provider: "enable_banking".to_owned(),
@@ -154,14 +149,14 @@ async fn seed_connection(pool: &SqlitePool, status: ConnectionStatus) -> Connect
         valid_until: "2099-12-31".to_owned(),
         status,
     };
-    db::insert_connection(pool, &connection)
+    db.insert_connection(&connection)
         .await
         .expect("seed connection");
     connection
 }
 
 /// Seed an account linked to a connection.
-async fn seed_connected_account(pool: &SqlitePool, connection_id: ConnectionId) -> Account {
+async fn seed_connected_account(db: &Db, connection_id: ConnectionId) -> Account {
     let account = Account {
         id: AccountId::new(),
         provider_account_id: "mock-checking-001".to_owned(),
@@ -171,7 +166,7 @@ async fn seed_connected_account(pool: &SqlitePool, connection_id: ConnectionId) 
         currency: "EUR".to_owned(),
         connection_id: Some(connection_id),
     };
-    db::upsert_account(pool, &account)
+    db.upsert_account(&account)
         .await
         .expect("seed connected account");
     account
@@ -187,19 +182,20 @@ fn make_llm_client() -> LlmClient {
 
 #[tokio::test]
 async fn sync_valid_account_upserts_transactions() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    handle_sync_job(job, Data::new(pool.clone()), Data::new(bank))
+    handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
         .await
         .expect("sync job should succeed");
 
-    let txns = db::list_transactions_by_account(&pool, account.id)
+    let txns = db
+        .list_transactions_by_account(account.id)
         .await
         .expect("list transactions");
 
@@ -216,7 +212,7 @@ async fn sync_valid_account_upserts_transactions() {
 
 #[tokio::test]
 async fn sync_nonexistent_account_returns_error() {
-    let pool = setup_pool().await;
+    let db = setup_db().await;
     let bank = make_bank_factory();
 
     // Valid UUID but no matching row in the accounts table
@@ -224,7 +220,7 @@ async fn sync_nonexistent_account_returns_error() {
         account_id: Uuid::new_v4().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(bank)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
     assert!(result.is_err(), "sync with nonexistent account should fail");
 
     let err_msg = result.unwrap_err().to_string();
@@ -236,14 +232,14 @@ async fn sync_nonexistent_account_returns_error() {
 
 #[tokio::test]
 async fn sync_invalid_uuid_returns_error() {
-    let pool = setup_pool().await;
+    let db = setup_db().await;
     let bank = make_bank_factory();
 
     let job = SyncJob {
         account_id: "not-a-uuid".to_owned(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(bank)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
     assert!(result.is_err(), "sync with invalid UUID should fail");
 
     let err_msg = result.unwrap_err().to_string();
@@ -255,8 +251,8 @@ async fn sync_invalid_uuid_returns_error() {
 
 #[tokio::test]
 async fn sync_deduplicates_on_rerun() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
     let bank = make_bank_factory();
 
     // Run sync twice
@@ -264,12 +260,13 @@ async fn sync_deduplicates_on_rerun() {
         let job = SyncJob {
             account_id: account.id.as_uuid().to_string(),
         };
-        handle_sync_job(job, Data::new(pool.clone()), Data::new(bank.clone()))
+        handle_sync_job(job, Data::new(db.clone()), Data::new(bank.clone()))
             .await
             .expect("sync job should succeed");
     }
 
-    let txns = db::list_transactions_by_account(&pool, account.id)
+    let txns = db
+        .list_transactions_by_account(account.id)
         .await
         .expect("list transactions");
 
@@ -284,11 +281,12 @@ async fn sync_deduplicates_on_rerun() {
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
     };
-    handle_sync_job(job, Data::new(pool.clone()), Data::new(bank))
+    handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
         .await
         .expect("sync job third run should succeed");
 
-    let txns_after_three = db::list_transactions_by_account(&pool, account.id)
+    let txns_after_three = db
+        .list_transactions_by_account(account.id)
         .await
         .expect("list transactions");
     assert_eq!(
@@ -304,9 +302,9 @@ async fn sync_deduplicates_on_rerun() {
 
 #[tokio::test]
 async fn sync_with_active_connection_uses_factory() {
-    let pool = setup_pool().await;
-    let connection = seed_connection(&pool, ConnectionStatus::Active).await;
-    let account = seed_connected_account(&pool, connection.id).await;
+    let db = setup_db().await;
+    let connection = seed_connection(&db, ConnectionStatus::Active).await;
+    let account = seed_connected_account(&db, connection.id).await;
 
     // Factory with mock as the Enable Banking provider stand-in.
     // The account's connection.provider is "enable_banking", but since we
@@ -319,7 +317,7 @@ async fn sync_with_active_connection_uses_factory() {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -330,16 +328,16 @@ async fn sync_with_active_connection_uses_factory() {
 
 #[tokio::test]
 async fn sync_expired_connection_returns_error() {
-    let pool = setup_pool().await;
-    let connection = seed_connection(&pool, ConnectionStatus::Expired).await;
-    let account = seed_connected_account(&pool, connection.id).await;
+    let db = setup_db().await;
+    let connection = seed_connection(&db, ConnectionStatus::Expired).await;
+    let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
 
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
     assert!(result.is_err(), "sync with expired connection should fail");
 
     let err_msg = result.unwrap_err().to_string();
@@ -351,16 +349,16 @@ async fn sync_expired_connection_returns_error() {
 
 #[tokio::test]
 async fn sync_revoked_connection_returns_error() {
-    let pool = setup_pool().await;
-    let connection = seed_connection(&pool, ConnectionStatus::Revoked).await;
-    let account = seed_connected_account(&pool, connection.id).await;
+    let db = setup_db().await;
+    let connection = seed_connection(&db, ConnectionStatus::Revoked).await;
+    let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
 
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
     assert!(result.is_err(), "sync with revoked connection should fail");
 
     let err_msg = result.unwrap_err().to_string();
@@ -372,7 +370,7 @@ async fn sync_revoked_connection_returns_error() {
 
 #[tokio::test]
 async fn sync_unsupported_provider_returns_error() {
-    let pool = setup_pool().await;
+    let db = setup_db().await;
 
     // Connection with an unknown provider type
     let connection = Connection {
@@ -383,18 +381,18 @@ async fn sync_unsupported_provider_returns_error() {
         valid_until: "2099-12-31".to_owned(),
         status: ConnectionStatus::Active,
     };
-    db::insert_connection(&pool, &connection)
+    db.insert_connection(&connection)
         .await
         .expect("seed connection");
 
-    let account = seed_connected_account(&pool, connection.id).await;
+    let account = seed_connected_account(&db, connection.id).await;
     let factory = make_bank_factory();
 
     let job = SyncJob {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
     assert!(
         result.is_err(),
         "sync with unsupported provider should fail"
@@ -409,8 +407,8 @@ async fn sync_unsupported_provider_returns_error() {
 
 #[tokio::test]
 async fn sync_no_connection_no_fallback_returns_error() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
 
     // Factory without a fallback provider
     let factory = make_bank_factory_no_fallback();
@@ -419,7 +417,7 @@ async fn sync_no_connection_no_fallback_returns_error() {
         account_id: account.id.as_uuid().to_string(),
     };
 
-    let result = handle_sync_job(job, Data::new(pool), Data::new(factory)).await;
+    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
     assert!(
         result.is_err(),
         "sync without connection or fallback should fail"
@@ -438,10 +436,10 @@ async fn sync_no_connection_no_fallback_returns_error() {
 
 #[tokio::test]
 async fn categorize_rule_based_assignment() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
 
-    let groceries_cat = seed_category(&pool, "Food:Groceries").await;
+    let groceries_cat = seed_category(&db, "Food:Groceries").await;
 
     // Insert a categorization rule that matches "WHOLE FOODS"
     let rule = Rule {
@@ -453,13 +451,13 @@ async fn categorize_rule_based_assignment() {
         target_correlation_type: None,
         priority: 100,
     };
-    db::insert_rule(&pool, &rule)
+    db.insert_rule(&rule)
         .await
         .expect("insert categorization rule");
 
     // Seed an uncategorized transaction matching the rule
     let txn = seed_transaction(
-        &pool,
+        &db,
         account.id,
         "WHOLE FOODS MARKET",
         dec!(-72.34),
@@ -469,11 +467,11 @@ async fn categorize_rule_based_assignment() {
     .await;
 
     // Fan-out handler applies rules in-line (no LLM needed)
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()))
+    handle_categorize_job(CategorizeJob, Data::new(db.clone()))
         .await
         .expect("categorize job should succeed");
 
-    let updated = db::list_transactions(&pool).await.expect("list txns");
+    let updated = db.list_transactions().await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
@@ -485,18 +483,18 @@ async fn categorize_rule_based_assignment() {
 
 #[tokio::test]
 async fn categorize_llm_high_confidence_assigns_category() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
     // Create the category that the MockLlmProvider will propose
     // MockLlmProvider returns "Food:Groceries" at 0.92 confidence for
     // "WHOLE FOODS" -- above the 0.80 threshold.
-    let groceries_cat = seed_category(&pool, "Food:Groceries").await;
+    let groceries_cat = seed_category(&db, "Food:Groceries").await;
 
     // No rules in the DB, so the per-txn handler calls LLM directly
     let txn = seed_transaction(
-        &pool,
+        &db,
         account.id,
         "WHOLE FOODS MARKET",
         dec!(-72.34),
@@ -508,11 +506,11 @@ async fn categorize_llm_high_confidence_assigns_category() {
     let job = CategorizeTransactionJob {
         transaction_id: txn.id.to_string(),
     };
-    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
+    handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
         .expect("categorize transaction job should succeed");
 
-    let updated = db::list_transactions(&pool).await.expect("list txns");
+    let updated = db.list_transactions().await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
@@ -524,17 +522,17 @@ async fn categorize_llm_high_confidence_assigns_category() {
 
 #[tokio::test]
 async fn categorize_llm_low_confidence_leaves_uncategorized() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
     // "AMAZON" triggers MockLlmProvider to return "Shopping" at 0.70,
     // which is below the 0.80 threshold. Even if the category exists
     // in the DB, the transaction should remain uncategorized.
-    let _shopping_cat = seed_category(&pool, "Shopping").await;
+    let _shopping_cat = seed_category(&db, "Shopping").await;
 
     let txn = seed_transaction(
-        &pool,
+        &db,
         account.id,
         "AMAZON.COM",
         dec!(-45.99),
@@ -546,11 +544,11 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
     let job = CategorizeTransactionJob {
         transaction_id: txn.id.to_string(),
     };
-    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
+    handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
         .expect("categorize transaction job should succeed");
 
-    let updated = db::list_transactions(&pool).await.expect("list txns");
+    let updated = db.list_transactions().await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
@@ -561,14 +559,14 @@ async fn categorize_llm_low_confidence_leaves_uncategorized() {
 
 #[tokio::test]
 async fn categorize_no_uncategorized_transactions_is_noop() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
 
-    let cat = seed_category(&pool, "Food:Groceries").await;
+    let cat = seed_category(&db, "Food:Groceries").await;
 
     // Seed an already-categorized transaction
     seed_transaction(
-        &pool,
+        &db,
         account.id,
         "WHOLE FOODS MARKET",
         dec!(-72.34),
@@ -578,11 +576,11 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
     .await;
 
     // Fan-out should complete without error and without changing anything
-    handle_categorize_job(CategorizeJob, Data::new(pool.clone()))
+    handle_categorize_job(CategorizeJob, Data::new(db.clone()))
         .await
         .expect("categorize job should succeed with nothing to do");
 
-    let txns = db::list_transactions(&pool).await.expect("list txns");
+    let txns = db.list_transactions().await.expect("list txns");
     assert_eq!(txns.len(), 1);
     assert_eq!(
         txns[0].category_id,
@@ -593,8 +591,8 @@ async fn categorize_no_uncategorized_transactions_is_noop() {
 
 #[tokio::test]
 async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
-    let pool = setup_pool().await;
-    let account = seed_checking_account(&pool).await;
+    let db = setup_db().await;
+    let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
     // MockLlmProvider returns "Entertainment:Subscriptions" for NETFLIX at
@@ -603,7 +601,7 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
     // Deliberately do NOT seed "Entertainment:Subscriptions".
 
     let txn = seed_transaction(
-        &pool,
+        &db,
         account.id,
         "NETFLIX.COM",
         dec!(-15.99),
@@ -615,11 +613,11 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
     let job = CategorizeTransactionJob {
         transaction_id: txn.id.to_string(),
     };
-    handle_categorize_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
+    handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
         .expect("categorize transaction job should succeed");
 
-    let updated = db::list_transactions(&pool).await.expect("list txns");
+    let updated = db.list_transactions().await.expect("list txns");
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
@@ -634,16 +632,16 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized() {
 
 #[tokio::test]
 async fn correlate_rule_based_linking() {
-    let pool = setup_pool().await;
-    let checking = seed_checking_account(&pool).await;
-    let credit = seed_credit_card_account(&pool).await;
+    let db = setup_db().await;
+    let checking = seed_checking_account(&db).await;
+    let credit = seed_credit_card_account(&db).await;
 
-    let transfer_cat = seed_category(&pool, "Transfers").await;
+    let transfer_cat = seed_category(&db, "Transfers").await;
 
     // Seed two categorized transactions (correlation only considers
     // categorized, uncorrelated transactions)
     let txn_a = seed_transaction(
-        &pool,
+        &db,
         checking.id,
         "CHASE CREDIT CRD AUTOPAY",
         dec!(-1500.00),
@@ -653,7 +651,7 @@ async fn correlate_rule_based_linking() {
     .await;
 
     let txn_b = seed_transaction(
-        &pool,
+        &db,
         credit.id,
         "PAYMENT RECEIVED",
         dec!(1500.00),
@@ -672,16 +670,16 @@ async fn correlate_rule_based_linking() {
         target_correlation_type: Some(CorrelationType::Transfer),
         priority: 100,
     };
-    db::insert_rule(&pool, &rule)
+    db.insert_rule(&rule)
         .await
         .expect("insert correlation rule");
 
     // Fan-out handler applies rules in-line (no LLM needed)
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
         .await
         .expect("correlate job should succeed");
 
-    let all_txns = db::list_transactions(&pool).await.expect("list txns");
+    let all_txns = db.list_transactions().await.expect("list txns");
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
 
@@ -695,17 +693,17 @@ async fn correlate_rule_based_linking() {
 
 #[tokio::test]
 async fn correlate_llm_equal_opposite_amounts_links() {
-    let pool = setup_pool().await;
-    let checking = seed_checking_account(&pool).await;
-    let credit = seed_credit_card_account(&pool).await;
+    let db = setup_db().await;
+    let checking = seed_checking_account(&db).await;
+    let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
 
-    let cat = seed_category(&pool, "Transfers").await;
+    let cat = seed_category(&db, "Transfers").await;
 
     // Equal and opposite amounts, same date -- MockLlmProvider returns
     // Transfer at 0.95 confidence (close dates + cancelling amounts).
     let txn_a = seed_transaction(
-        &pool,
+        &db,
         checking.id,
         "BANK TRANSFER OUT",
         dec!(-500.00),
@@ -715,7 +713,7 @@ async fn correlate_llm_equal_opposite_amounts_links() {
     .await;
 
     let txn_b = seed_transaction(
-        &pool,
+        &db,
         credit.id,
         "BANK TRANSFER IN",
         dec!(500.00),
@@ -728,11 +726,11 @@ async fn correlate_llm_equal_opposite_amounts_links() {
     let job = CorrelateTransactionJob {
         transaction_id: txn_a.id.to_string(),
     };
-    handle_correlate_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
+    handle_correlate_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
         .expect("correlate transaction job should succeed");
 
-    let all_txns = db::list_transactions(&pool).await.expect("list txns");
+    let all_txns = db.list_transactions().await.expect("list txns");
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
 
@@ -752,15 +750,15 @@ async fn correlate_llm_equal_opposite_amounts_links() {
 
 #[tokio::test]
 async fn correlate_bidirectional_both_sides_linked() {
-    let pool = setup_pool().await;
-    let checking = seed_checking_account(&pool).await;
-    let credit = seed_credit_card_account(&pool).await;
+    let db = setup_db().await;
+    let checking = seed_checking_account(&db).await;
+    let credit = seed_credit_card_account(&db).await;
     let llm = make_llm_client();
 
-    let cat = seed_category(&pool, "Payments").await;
+    let cat = seed_category(&db, "Payments").await;
 
     let txn_a = seed_transaction(
-        &pool,
+        &db,
         checking.id,
         "WIRE TRANSFER",
         dec!(-200.00),
@@ -770,7 +768,7 @@ async fn correlate_bidirectional_both_sides_linked() {
     .await;
 
     let txn_b = seed_transaction(
-        &pool,
+        &db,
         credit.id,
         "DEPOSIT",
         dec!(200.00),
@@ -783,11 +781,11 @@ async fn correlate_bidirectional_both_sides_linked() {
     let job = CorrelateTransactionJob {
         transaction_id: txn_a.id.to_string(),
     };
-    handle_correlate_transaction_job(job, Data::new(pool.clone()), Data::new(llm))
+    handle_correlate_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
         .expect("correlate transaction job should succeed");
 
-    let all_txns = db::list_transactions(&pool).await.expect("list txns");
+    let all_txns = db.list_transactions().await.expect("list txns");
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
 
@@ -799,27 +797,27 @@ async fn correlate_bidirectional_both_sides_linked() {
 
 #[tokio::test]
 async fn correlate_no_uncorrelated_transactions_is_noop() {
-    let pool = setup_pool().await;
+    let db = setup_db().await;
 
     // No transactions at all -- fan-out should return Ok immediately
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
         .await
         .expect("correlate job should succeed with no transactions");
 
-    let txns = db::list_transactions(&pool).await.expect("list txns");
+    let txns = db.list_transactions().await.expect("list txns");
     assert!(txns.is_empty());
 }
 
 #[tokio::test]
 async fn correlate_already_paired_not_correlated_again() {
-    let pool = setup_pool().await;
-    let checking = seed_checking_account(&pool).await;
-    let credit = seed_credit_card_account(&pool).await;
+    let db = setup_db().await;
+    let checking = seed_checking_account(&db).await;
+    let credit = seed_credit_card_account(&db).await;
 
-    let cat = seed_category(&pool, "Transfers").await;
+    let cat = seed_category(&db, "Transfers").await;
 
     let txn_a = seed_transaction(
-        &pool,
+        &db,
         checking.id,
         "TRANSFER OUT",
         dec!(-300.00),
@@ -829,7 +827,7 @@ async fn correlate_already_paired_not_correlated_again() {
     .await;
 
     let txn_b = seed_transaction(
-        &pool,
+        &db,
         credit.id,
         "TRANSFER IN",
         dec!(300.00),
@@ -839,16 +837,16 @@ async fn correlate_already_paired_not_correlated_again() {
     .await;
 
     // Manually pre-link them (simulate a prior correlation run)
-    db::update_transaction_correlation(&pool, txn_a.id, txn_b.id, CorrelationType::Transfer)
+    db.update_transaction_correlation(txn_a.id, txn_b.id, CorrelationType::Transfer)
         .await
         .expect("pre-link a->b");
-    db::update_transaction_correlation(&pool, txn_b.id, txn_a.id, CorrelationType::Transfer)
+    db.update_transaction_correlation(txn_b.id, txn_a.id, CorrelationType::Transfer)
         .await
         .expect("pre-link b->a");
 
     // Add a third uncorrelated transaction with no counterpart
     let txn_c = seed_transaction(
-        &pool,
+        &db,
         checking.id,
         "RANDOM MERCHANT",
         dec!(-50.00),
@@ -858,11 +856,11 @@ async fn correlate_already_paired_not_correlated_again() {
     .await;
 
     // Fan-out handler: txn_a/txn_b already correlated, txn_c enqueued for LLM
-    handle_correlate_job(CorrelateJob, Data::new(pool.clone()))
+    handle_correlate_job(CorrelateJob, Data::new(db.clone()))
         .await
         .expect("correlate job should succeed");
 
-    let all_txns = db::list_transactions(&pool).await.expect("list txns");
+    let all_txns = db.list_transactions().await.expect("list txns");
 
     // txn_a and txn_b should still have their original correlations
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");

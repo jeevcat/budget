@@ -7,7 +7,6 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{
     Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus,
 };
@@ -153,7 +152,9 @@ async fn authorize(
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
 
-    db::insert_state_token(&state.pool, &token, &token_data.to_string(), &expires_at)
+    state
+        .db
+        .insert_state_token(&token, &token_data.to_string(), &expires_at)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -206,7 +207,9 @@ async fn callback(
 
     let auth = require_enable_banking(&state)?;
 
-    let user_data = db::consume_state_token(&state.pool, &query.state)
+    let user_data = state
+        .db
+        .consume_state_token(&query.state)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| {
@@ -239,13 +242,17 @@ async fn callback(
         status: ConnectionStatus::Active,
     };
 
-    db::insert_connection(&state.pool, &connection)
+    state
+        .db
+        .insert_connection(&connection)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Create accounts for each session account, preserving existing UUIDs
     for session_account in &session.accounts {
-        let existing = db::get_account_by_provider_id(&state.pool, &session_account.uid)
+        let existing = state
+            .db
+            .get_account_by_provider_id(&session_account.uid)
             .await
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -270,7 +277,9 @@ async fn callback(
             connection_id: Some(connection_id),
         };
 
-        db::upsert_account(&state.pool, &account)
+        state
+            .db
+            .upsert_account(&account)
             .await
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -291,7 +300,7 @@ fn parse_cash_account_type(cash_type: Option<&str>) -> AccountType {
 
 /// GET /api/connections
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Connection>>, AppError> {
-    let connections = db::list_connections(&state.pool).await?;
+    let connections = state.db.list_connections().await?;
     Ok(Json(connections))
 }
 
@@ -304,7 +313,9 @@ async fn revoke(
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let connection_id = ConnectionId::from_uuid(uuid);
 
-    let connection = db::get_connection(&state.pool, connection_id)
+    let connection = state
+        .db
+        .get_connection(connection_id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("connection {id} not found")))?;
 
@@ -319,7 +330,10 @@ async fn revoke(
         );
     }
 
-    db::update_connection_status(&state.pool, connection_id, ConnectionStatus::Revoked).await?;
+    state
+        .db
+        .update_connection_status(connection_id, ConnectionStatus::Revoked)
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

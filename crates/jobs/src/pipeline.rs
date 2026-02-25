@@ -5,7 +5,8 @@
 //! triggered for a specific account.
 
 use apalis::prelude::*;
-use sqlx::SqlitePool;
+
+use budget_core::db::Db;
 
 use super::BankProviderFactory;
 
@@ -16,10 +17,10 @@ use super::BankProviderFactory;
 /// Returns an error if the sync fails.
 pub async fn step_sync(
     account_id: String,
-    pool: Data<SqlitePool>,
+    db: Data<Db>,
     factory: Data<BankProviderFactory>,
 ) -> Result<String, BoxDynError> {
-    super::sync::sync_account(&account_id, &pool, &factory).await?;
+    super::sync::sync_account(&account_id, &db, &factory).await?;
     Ok(account_id)
 }
 
@@ -28,11 +29,8 @@ pub async fn step_sync(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn step_categorize(
-    account_id: String,
-    pool: Data<SqlitePool>,
-) -> Result<String, BoxDynError> {
-    super::categorize::categorize_fan_out(&pool).await?;
+pub async fn step_categorize(account_id: String, db: Data<Db>) -> Result<String, BoxDynError> {
+    super::categorize::categorize_fan_out(&db).await?;
     Ok(account_id)
 }
 
@@ -41,11 +39,8 @@ pub async fn step_categorize(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn step_correlate(
-    account_id: String,
-    pool: Data<SqlitePool>,
-) -> Result<String, BoxDynError> {
-    super::correlate::correlate_fan_out(&pool).await?;
+pub async fn step_correlate(account_id: String, db: Data<Db>) -> Result<String, BoxDynError> {
+    super::correlate::correlate_fan_out(&db).await?;
     Ok(account_id)
 }
 
@@ -54,9 +49,6 @@ pub async fn step_correlate(
 /// # Errors
 ///
 /// Returns an error if budget recomputation fails.
-pub async fn step_recompute(
-    _account_id: String,
-    pool: Data<SqlitePool>,
-) -> Result<(), BoxDynError> {
-    super::recompute::recompute_budgets(&pool).await
+pub async fn step_recompute(_account_id: String, db: Data<Db>) -> Result<(), BoxDynError> {
+    super::recompute::recompute_budgets(&db).await
 }

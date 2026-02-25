@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use budget_core::db;
 use budget_core::models::{CategoryId, CorrelationType, MatchField, Rule, RuleId, RuleType};
 
 use crate::routes::AppError;
@@ -96,7 +95,7 @@ fn parse_rule_body(body: &CreateRule, id: RuleId) -> Result<Rule, AppError> {
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Rule>>, AppError> {
-    let rules = db::list_rules(&state.pool).await?;
+    let rules = state.db.list_rules().await?;
     Ok(Json(rules))
 }
 
@@ -111,7 +110,7 @@ async fn create(
     Json(body): Json<CreateRule>,
 ) -> Result<(StatusCode, Json<Rule>), AppError> {
     let rule = parse_rule_body(&body, RuleId::new())?;
-    db::insert_rule(&state.pool, &rule).await?;
+    state.db.insert_rule(&rule).await?;
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
@@ -129,7 +128,7 @@ async fn update(
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let rule = parse_rule_body(&body, RuleId::from_uuid(uuid))?;
-    db::update_rule(&state.pool, &rule).await?;
+    state.db.update_rule(&rule).await?;
     Ok(Json(rule))
 }
 
@@ -145,6 +144,6 @@ async fn remove(
 ) -> Result<StatusCode, AppError> {
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    db::delete_rule(&state.pool, RuleId::from_uuid(uuid)).await?;
+    state.db.delete_rule(RuleId::from_uuid(uuid)).await?;
     Ok(StatusCode::NO_CONTENT)
 }

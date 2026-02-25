@@ -6,9 +6,8 @@
 
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
-use sqlx::SqlitePool;
 
-use budget_core::db;
+use budget_core::db::Db;
 use budget_core::models::{RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_categorization_rules};
 
@@ -23,9 +22,9 @@ const LLM_CONFIDENCE_THRESHOLD: f64 = 0.8;
 /// # Errors
 ///
 /// Returns an error if any database query or enqueue operation fails.
-pub(crate) async fn categorize_fan_out(pool: &SqlitePool) -> Result<(), BoxDynError> {
+pub(crate) async fn categorize_fan_out(db: &Db) -> Result<(), BoxDynError> {
     // -- Compile categorization rules ----------------------------------------
-    let raw_rules = db::list_rules_by_type(pool, RuleType::Categorization).await?;
+    let raw_rules = db.list_rules_by_type(RuleType::Categorization).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
         .iter()
         .filter_map(|rule| match compile_rule_pattern(rule) {
@@ -38,7 +37,7 @@ pub(crate) async fn categorize_fan_out(pool: &SqlitePool) -> Result<(), BoxDynEr
         .collect();
 
     // -- Load uncategorized transactions -------------------------------------
-    let uncategorized = db::get_uncategorized_transactions(pool).await?;
+    let uncategorized = db.get_uncategorized_transactions().await?;
     if uncategorized.is_empty() {
         tracing::info!("no uncategorized transactions, nothing to do");
         return Ok(());
@@ -46,11 +45,11 @@ pub(crate) async fn categorize_fan_out(pool: &SqlitePool) -> Result<(), BoxDynEr
 
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
-    let mut storage = SqliteStorage::<CategorizeTransactionJob, _, _>::new(pool);
+    let mut storage = SqliteStorage::<CategorizeTransactionJob, _, _>::new(db.pool());
 
     for txn in &uncategorized {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
-            db::update_transaction_category(pool, txn.id, category_id).await?;
+            db.update_transaction_category(txn.id, category_id).await?;
             by_rule += 1;
             continue;
         }
@@ -83,7 +82,7 @@ pub(crate) async fn categorize_fan_out(pool: &SqlitePool) -> Result<(), BoxDynEr
 /// Returns an error if the database query or LLM call fails.
 pub async fn handle_categorize_transaction_job(
     job: CategorizeTransactionJob,
-    pool: Data<SqlitePool>,
+    db: Data<Db>,
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
     let txn_id: TransactionId = job
@@ -92,7 +91,8 @@ pub async fn handle_categorize_transaction_job(
         .map(TransactionId::from_uuid)
         .map_err(|e| format!("invalid transaction id: {e}"))?;
 
-    let txn = db::get_transaction_by_id(&pool, txn_id)
+    let txn = db
+        .get_transaction_by_id(txn_id)
         .await?
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
 
@@ -102,7 +102,7 @@ pub async fn handle_categorize_transaction_job(
         return Ok(());
     }
 
-    let existing_categories = db::list_category_names(&pool).await?;
+    let existing_categories = db.list_category_names().await?;
 
     let description = if txn.description.is_empty() {
         None
@@ -127,12 +127,13 @@ pub async fn handle_categorize_transaction_job(
             suggested = %result.category_name,
             "LLM confidence below threshold, saving suggestion"
         );
-        db::update_transaction_suggested_category(&pool, txn_id, &result.category_name).await?;
+        db.update_transaction_suggested_category(txn_id, &result.category_name)
+            .await?;
         return Ok(());
     }
 
-    if let Some(category) = db::get_category_by_name(&pool, &result.category_name).await? {
-        db::update_transaction_category(&pool, txn_id, category.id).await?;
+    if let Some(category) = db.get_category_by_name(&result.category_name).await? {
+        db.update_transaction_category(txn_id, category.id).await?;
         tracing::debug!(txn_id = %txn_id, category = %result.category_name, "categorized by LLM");
     } else {
         tracing::debug!(
@@ -140,7 +141,8 @@ pub async fn handle_categorize_transaction_job(
             category_name = %result.category_name,
             "LLM proposed unknown category, saving suggestion"
         );
-        db::update_transaction_suggested_category(&pool, txn_id, &result.category_name).await?;
+        db.update_transaction_suggested_category(txn_id, &result.category_name)
+            .await?;
     }
 
     Ok(())
@@ -151,9 +153,6 @@ pub async fn handle_categorize_transaction_job(
 /// # Errors
 ///
 /// Returns an error if the fan-out fails.
-pub async fn handle_categorize_job(
-    _job: CategorizeJob,
-    pool: Data<SqlitePool>,
-) -> Result<(), BoxDynError> {
-    categorize_fan_out(&pool).await
+pub async fn handle_categorize_job(_job: CategorizeJob, db: Data<Db>) -> Result<(), BoxDynError> {
+    categorize_fan_out(&db).await
 }

@@ -38,7 +38,9 @@ impl BankProvider for EnableBankingProvider {
         account_id: &AccountId,
         since: Option<NaiveDate>,
     ) -> Result<Vec<Transaction>, ProviderError> {
-        let date_to = since.map(|_| Utc::now().date_naive());
+        let today = Utc::now().date_naive();
+        let date_from = since.or_else(|| Some(today - chrono::Duration::days(90)));
+        let date_to = Some(today);
         let mut all_transactions = Vec::new();
         let mut continuation_key: Option<String> = None;
         let mut pages: u32 = 0;
@@ -49,7 +51,7 @@ impl BankProvider for EnableBankingProvider {
                 .client
                 .get_transactions(
                     account_id.as_str(),
-                    since,
+                    date_from,
                     date_to,
                     continuation_key.as_deref(),
                 )
