@@ -1,4 +1,4 @@
-# Personal Budgeting Tool — Product Spec (Draft)
+# Personal Budgeting Tool — Product Spec
 
 ## Problem Statement
 
@@ -18,7 +18,7 @@ Existing budgeting tools fail because they impose rigid categorization, use cale
 ## Feature Breakdown
 
 ### 1. Account Connectivity
-- Connect to real bank and credit card accounts via a **provider-abstracted interface**. The abstraction exposes a minimal contract: list accounts, fetch transactions since date, get balances. The underlying provider (Plaid, Teller, MX, etc.) is a config choice and can be swapped without affecting the rest of the system.
+- Connect to real bank and credit card accounts via a **provider-abstracted interface**. The abstraction exposes a minimal contract: list accounts, fetch transactions since date, get balances. The underlying provider (e.g., Enable Banking) is a config choice and can be swapped without affecting the rest of the system.
 - Pull transactions automatically on a regular cadence via a **job queue system**.
 - **Jobs are atomic steps in a chain**, each independently retriable and observable:
   1. **Sync** — fetch new transactions from provider
@@ -31,7 +31,7 @@ Existing budgeting tools fail because they impose rigid categorization, use cale
 - **Unified view**: The main UI shows all transactions merged across all accounts. Account is metadata on each transaction, not an organizing principle. There are no per-account views or tabs in the primary interface.
 
 #### Provider Authorization Flow
-Bank aggregators (Enable Banking, Plaid, etc.) require an OAuth-like redirect to establish a connection. The system handles this as a multi-step flow:
+Bank aggregators (e.g., Enable Banking) require an OAuth-like redirect to establish a connection. The system handles this as a multi-step flow:
 
 1. **User picks a bank**: The frontend shows a searchable list of supported banks (ASPSPs). The API exposes a search/list endpoint that queries the provider.
 2. **Start authorization**: The API creates an authorization request with the provider and returns a redirect URL. The frontend opens this URL (new tab or full redirect). The API generates a random `state` token and stores it server-side to validate the callback.
@@ -153,7 +153,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 **LLM client**: reqwest + serde_json — direct REST API calls to configurable LLM provider (e.g., Gemini). No SDK dependency. Model name is a config parameter.
 
-**Bank aggregation client**: reqwest + serde_json behind a provider trait. Provider is a config choice (Plaid, Teller, MX, etc.), swappable without affecting the rest of the system.
+**Bank aggregation client**: reqwest + serde_json behind a provider trait. Current provider: Enable Banking. Swappable without affecting the rest of the system.
 
 **Logging/observability**: tracing (structured, async-native)
 
@@ -192,135 +192,25 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 ---
 
-## Open Questions
+## Remaining Work
 
-_All product-level and tech stack questions resolved. UX design is deferred._
-
-None — ready for implementation.
-
-## Implementation Phases
-
-### Phase 0 — Scaffold & Foundation
-_Everything else depends on this. Do first._
-
-- Cargo workspace setup (`core`, `api`, `jobs`, `providers`)
-- SQLite database + sqlx migrations infrastructure
-- Axum server skeleton with health check endpoint
-- Apalis job queue wired to SQLite
-- tracing setup
-- Config loading (DB path, LLM model name, provider choice)
-
-**Deliverable**: Server boots, runs migrations, job queue processes a no-op test job.
-
----
-
-### Phase 1 — Data Model & Core Domain
-_Two workstreams that can run in parallel._
-
-**1A: Schema + Domain Types** (crate: `core`)
-- Transaction, Account, Category (nested), Rule, BudgetPeriod, Project domain types
-- SQLite schema: accounts, transactions, categories, rules, budgets, projects, correlations
-- Multi-currency fields (budget_amount, original_amount, original_currency as metadata)
-- Budget math engine: given a set of transactions + budget configs, compute spent/remaining/days-left per category
-- Salary-anchored budget month boundary detection
-- Rollover calculation (monthly) and annual accumulation
-- Project budget isolation logic (exclude project-linked transactions from regular budgets)
-
-**1B: Provider Trait + Mock Implementation** (crate: `providers`)
-- `BankProvider` trait: `list_accounts()`, `fetch_transactions(since)`, `get_balances()`
-- `LlmProvider` trait: `categorize(transaction) -> (category, confidence)`, `propose_rule(transaction, user_category) -> Rule`
-- Mock implementations for both (hardcoded/random data) so all downstream work can proceed without real API keys
-- reqwest-based real implementations can be built later without changing any consumers
-
-**▶ Parallel**: 1A and 1B have no dependency on each other. 1A works on domain logic with test data. 1B works on the provider interface contract.
-
----
-
-### Phase 2 — Job Pipeline
-_Depends on Phase 1. Two workstreams that can run in parallel._
-
-**2A: Sync + Categorize Jobs** (crate: `jobs`)
-- **Sync job**: calls `BankProvider.fetch_transactions()`, upserts into SQLite, handles multi-currency conversion to budget currency
-- **Categorize job**: runs Layer 1 (deterministic rules) then Layer 2 (LLM via `LlmProvider`) on uncategorized transactions. High-confidence → auto-assign. Low-confidence → leave in uncategorized queue.
-- Job chaining: sync triggers categorize on success
-
-**2B: Correlate + Budget Recompute Jobs** (crate: `jobs`)
-- **Correlate job**: runs deterministic rules + LLM on uncorrelated transactions. Detects transfers, reimbursements. Links transaction pairs.
-- **Budget recompute job**: purely functional — reads all transactions + budget configs + project links, recomputes all budget views from scratch. This is the "always live" implementation.
-- Job chaining: correlate triggers recompute on success
-
-**▶ Parallel**: 2A and 2B can be built simultaneously. 2A produces categorized transactions. 2B consumes them. They connect via the job chain (categorize → correlate), but can be developed and tested independently with fixture data.
-
----
-
-### Phase 3 — Rules Engine & Feedback Loop
-_Depends on Phase 1A (domain types) and Phase 2A (categorize job). Can start as soon as those are stable._
-
-- Deterministic rule evaluation engine (exact match, regex, merchant + amount range)
-- Rule CRUD (create, read, update, delete) in SQLite
-- LLM-assisted rule proposal: when user categorizes from uncategorized queue, call `LlmProvider.propose_rule()`, return proposed rule for confirmation
-- Rule applies retroactively (always-live: re-running categorize job with new rules recategorizes matching transactions)
-- Shared rule engine for both categorization and correlation rules
-
-**▶ Parallel with 2B**: Rules engine development can overlap with correlate/recompute job work.
-
----
-
-### Phase 4 — API Layer
-_Depends on Phases 1–3 for domain logic. Can start API skeleton early, flesh out as features land._
-
-- **Accounts**: connect account, list accounts
-- **Transactions**: list (unified, all accounts), filter by category/date/account
-- **Uncategorized queue**: list uncategorized, categorize with rule proposal, confirm/edit rule
-- **Categories**: CRUD, nested hierarchy, link/unlink to projects
-- **Rules**: CRUD, list all rules (categorization + correlation)
-- **Budgets**: set per-category budgets (monthly/annual), get budget status (spent/remaining/days-left/pace)
-- **Projects**: CRUD, link category, get project budget status
-- **Jobs**: list job status per step, manual kick-off for any step
-- **Config**: budget currency, expected salary count, LLM model name
-
-**▶ Partial parallel**: API skeleton and endpoint stubs can be wired up during Phase 2/3. Full implementation fills in as domain logic stabilizes.
-
----
-
-### Phase 5 — Real Provider Implementations
-_Can start anytime after Phase 1B trait is defined. Independent of all other phases._
-
-- Real bank aggregator implementation (Plaid, Teller, or MX — pick one to start)
-- Real LLM implementation (Gemini API via reqwest)
-- Integration testing with real accounts and real LLM responses
-
-**▶ Fully parallel**: This is independent work gated only on the trait definitions from Phase 1B. Can be developed and tested in isolation.
-
----
-
-### Phase 6 — Backfill & Edge Cases
-_Depends on Phases 2–4 being functional._
+### Backfill & Edge Cases
 
 - First-time backfill flow: import historical transactions, retroactively build budget months
 - Retroactive project creation (past start date pulls historical transactions)
 - Late/missing salary handling (budget month extension)
 - Inter-month gap transaction assignment
 - Edge case testing: overlapping projects, category re-linking, rule conflicts
+- Provider error retry logic (rate limits, transient failures)
+- Partial failure recovery in sync job (individual transaction errors shouldn't fail the batch)
+
+### Frontend
+
+- All backend features are implemented. Frontend is the next major milestone.
 
 ---
 
-### Parallelism Summary
-
-```
-Phase 0  ████████
-Phase 1A ·········████████
-Phase 1B ·········████████          ← parallel with 1A
-Phase 2A ··················████████
-Phase 2B ··················████████ ← parallel with 2A
-Phase 3  ·······················████████
-Phase 4  ··············░░░░░░░░████████  ← skeleton early, fills in over time
-Phase 5  ·········░░░░░░░░░░░░░░░░████  ← independent, anytime after 1B
-Phase 6  ···································████████
-```
-
----
-
+## Out of Scope
 
 - Savings goals / goal tracking
 - Investment portfolio tracking
