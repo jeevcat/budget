@@ -77,5 +77,5 @@ async fn categorize(
         .db
         .update_transaction_category(txn_id, category_id, CategoryMethod::Manual)
         .await?;
-    Ok(StatusCode::OK)
+    Ok(StatusCode::NO_CONTENT)
 }

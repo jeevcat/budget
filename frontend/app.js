@@ -203,6 +203,13 @@ function TxnDetail({
 }) {
   const [saving, setSaving] = useState(false);
   if (!txn) return null;
+
+  // Pre-select LLM suggestion when no manual category is set
+  const suggestedCategoryId =
+    !txn.category_id && txn.suggested_category
+      ? (categories ?? []).find((c) => c.name === txn.suggested_category)?.id ?? null
+      : null;
+
   const ref = (el) => {
     if (el && !el.open) {
       el.addEventListener("close", onClose, { once: true });
@@ -244,7 +251,7 @@ function TxnDetail({
             <dt>Category</dt>
             <dd>
               <select
-                value=${txn.category_id ?? ""}
+                value=${txn.category_id ?? suggestedCategoryId ?? ""}
                 disabled=${saving}
                 onChange=${(e) => handleCategorize(e.target.value)}
               >
