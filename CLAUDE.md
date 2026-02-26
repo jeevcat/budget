@@ -22,7 +22,8 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 ## Logging
 
 - Logs go to stderr and optionally to a file (when `log_path` is set in config)
-- Read logs: `tail -f ~/.config/budget/budget.log` (via Bash tool)
+- Production log file: `/tmp/budget.log`
+- Read logs: `tail -f /tmp/budget.log` (via Bash tool)
 - Change verbosity: set `RUST_LOG` env var (default: `budget=debug,tower_http=debug,info`)
 - `cargo run -- config` prints both the config path and log path
 

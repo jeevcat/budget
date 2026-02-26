@@ -256,89 +256,7 @@ JSON response:"#,
         &self,
         context: &RuleContext,
     ) -> Result<Vec<ProposedRule>, ProviderError> {
-        let siblings_block = if context.sibling_merchants.is_empty() {
-            "No other merchants in this category.".to_owned()
-        } else {
-            context
-                .sibling_merchants
-                .iter()
-                .map(|m| format!("- {m}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        let existing_rules_block = if context.existing_rule_patterns.is_empty() {
-            "No existing rules for this category.".to_owned()
-        } else {
-            context
-                .existing_rule_patterns
-                .iter()
-                .map(|p| format!("- {p}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        let cp_name_line = context
-            .counterparty_name
-            .as_deref()
-            .map(|n| format!("Counterparty: {n}\n"))
-            .unwrap_or_default();
-        let cp_iban_line = context
-            .counterparty_iban
-            .as_deref()
-            .map(|i| format!("Counterparty IBAN: {i}\n"))
-            .unwrap_or_default();
-        let cp_bic_line = context
-            .counterparty_bic
-            .as_deref()
-            .map(|b| format!("Counterparty BIC: {b}\n"))
-            .unwrap_or_default();
-        let btc_line = context
-            .bank_transaction_code
-            .as_deref()
-            .map(|b| format!("Bank classification: {b}\n"))
-            .unwrap_or_default();
-
-        let prompt = format!(
-            r#"You propose deterministic categorization rules for a personal budgeting tool.
-
-Given a specific transaction and its category, propose exactly 3 categorization rules that would automatically categorize similar transactions in the future. Each rule should use the MOST RELIABLE field available for that transaction — prefer structured fields (IBAN, BIC, bank transaction code) over free-text fields (merchant, description) when they are present, as structured fields are more stable and precise.
-
-Rules can match on:
-- "Merchant" — regex against the merchant/payee name
-- "Description" — regex against the transaction description
-- "CounterpartyName" — regex against the counterparty name
-- "CounterpartyIban" — regex against the counterparty IBAN (very reliable for recurring payees)
-- "CounterpartyBic" — regex against the counterparty BIC (identifies the bank)
-- "BankTransactionCode" — regex against the bank transaction code (identifies transaction type)
-
-The 3 proposals should offer meaningfully different strategies, not just the same field at different specificity levels. For example, one might match on IBAN (exact payee), another on merchant name, and a third on bank transaction code. Use whichever fields are most appropriate given the available data.
-
-Respond with a JSON array of exactly 3 objects, each containing:
-- "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode"
-- "match_pattern": string — a regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
-- "explanation": string — brief explanation of what the rule matches and why this field was chosen
-
-Transaction:
-Merchant: {merchant}
-Description: {description}
-Amount: {amount}
-Date: {date}
-{cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}Category: {category}
-
-Other merchants in this category:
-{siblings_block}
-
-Existing rules for this category (avoid duplicating these):
-{existing_rules_block}
-
-JSON response:"#,
-            merchant = context.merchant_name,
-            description = context.description,
-            amount = context.amount,
-            date = context.posted_date,
-            category = context.category_name,
-        );
+        let prompt = build_rule_prompt(context);
 
         let text = self.generate(&prompt).await?;
         let results: Vec<RuleProposalResponse> = serde_json::from_str(&text).map_err(|e| {
@@ -366,6 +284,98 @@ JSON response:"#,
             })
             .collect())
     }
+}
+
+/// Build the LLM prompt for rule proposals from a transaction context.
+fn build_rule_prompt(context: &RuleContext) -> String {
+    let siblings_block = if context.sibling_merchants.is_empty() {
+        "No other merchants in this category.".to_owned()
+    } else {
+        context
+            .sibling_merchants
+            .iter()
+            .map(|m| format!("- {m}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let existing_rules_block = if context.existing_rule_patterns.is_empty() {
+        "No existing rules for this category.".to_owned()
+    } else {
+        context
+            .existing_rule_patterns
+            .iter()
+            .map(|p| format!("- {p}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let cp_name_line = context
+        .counterparty_name
+        .as_deref()
+        .map(|n| format!("Counterparty: {n}\n"))
+        .unwrap_or_default();
+    let cp_iban_line = context
+        .counterparty_iban
+        .as_deref()
+        .map(|i| format!("Counterparty IBAN: {i}\n"))
+        .unwrap_or_default();
+    let cp_bic_line = context
+        .counterparty_bic
+        .as_deref()
+        .map(|b| format!("Counterparty BIC: {b}\n"))
+        .unwrap_or_default();
+    let btc_line = context
+        .bank_transaction_code
+        .as_deref()
+        .map(|b| format!("Bank classification: {b}\n"))
+        .unwrap_or_default();
+
+    format!(
+        r#"You propose categorization rules for a personal budgeting tool. A rule has a field to match on and a regex pattern. When a transaction matches the pattern, it is automatically assigned the category.
+
+Given this transaction and its category, propose up to 3 rules that would correctly categorize this and similar future transactions. Each rule must be PRECISE — the pattern should match only transactions that genuinely belong to this category, not unrelated ones. A rule that is too broad (matching transactions from other merchants/payees) is worse than no rule at all.
+
+Available fields:
+- "Merchant" — regex against the merchant/payee name
+- "Description" — regex against the transaction description
+- "CounterpartyName" — regex against the counterparty name
+- "CounterpartyIban" — regex against the counterparty IBAN
+- "CounterpartyBic" — regex against the counterparty BIC
+- "BankTransactionCode" — regex against the bank transaction code
+
+Guidelines:
+- Only propose a rule if the pattern meaningfully identifies this payee or transaction type. Never use broad patterns like ".*", ".+", or patterns that match most transactions.
+- Only use a field if the transaction has useful data for it. If a field is absent or its value is too generic to be discriminating, skip it.
+- Prefer the field that most precisely identifies the payee. An exact IBAN is better than a merchant name substring, but a broad IBAN pattern like "^DE.*" is useless.
+- Consider the sibling merchants — if a pattern would also match them, that's good. If it would match unrelated merchants, it's too broad.
+- It is fine to propose fewer than 3 rules if you cannot find 3 precise ones.
+
+Respond with a JSON array of objects, each containing:
+- "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode"
+- "match_pattern": string — regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
+- "explanation": string — brief explanation of what the rule matches
+
+Transaction:
+Merchant: {merchant}
+Description: {description}
+Amount: {amount}
+Date: {date}
+{cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}Category: {category}
+
+Other merchants in this category:
+{siblings_block}
+
+Existing rules for this category (avoid duplicating these):
+{existing_rules_block}
+
+JSON response:"#,
+        merchant = context.merchant_name,
+        description = context.description,
+        amount = context.amount,
+        date = context.posted_date,
+        category = context.category_name,
+    )
 }
 
 // ---------------------------------------------------------------------------
