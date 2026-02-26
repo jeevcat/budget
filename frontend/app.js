@@ -532,11 +532,31 @@ function Dashboard() {
     return ids;
   };
 
-  // Project category IDs (excluded from regular budget math)
+  // Effective budget mode per category (own mode or inherited from parent)
+  const effectiveBudgetMode = (cat) => {
+    if (cat.budget_mode) return cat.budget_mode;
+    const parent = cat.parent_id ? catMap[cat.parent_id] : null;
+    return parent?.budget_mode ?? null;
+  };
+
+  // Category ID sets by budget mode
+  const monthlyCatIds = new Set(
+    categories
+      .filter((c) => {
+        const mode = effectiveBudgetMode(c);
+        return mode === "monthly" || !mode;
+      })
+      .map((c) => c.id),
+  );
+  const annualCatIds = new Set(
+    categories
+      .filter((c) => effectiveBudgetMode(c) === "annual")
+      .map((c) => c.id),
+  );
   const projectCatIds = new Set(
     categories
-      .filter((c) => c.budget_mode === "project")
-      .flatMap((c) => [...collectSubtree(c.id)]),
+      .filter((c) => effectiveBudgetMode(c) === "project")
+      .map((c) => c.id),
   );
 
   // IDs of transactions that are reimbursed (have a correlation partner)
@@ -555,10 +575,11 @@ function Dashboard() {
     return true;
   };
 
-  // Budget-contributing transactions for the current month (non-project)
+  // Budget-contributing transactions for the current month (monthly/unbudgeted categories only)
   const monthBudgetTxns = monthTxns.filter((t) => {
-    if (t.category_id && projectCatIds.has(t.category_id)) return false;
-    return filterForBudget(t);
+    if (!filterForBudget(t)) return false;
+    if (t.category_id && !monthlyCatIds.has(t.category_id)) return false;
+    return true;
   });
 
   // Budget year months: walk backwards from active month to find January anchor
@@ -574,10 +595,10 @@ function Dashboard() {
   const lastYearMonth = sortedMonths[yearEndIdx - 1];
   const yearEnd = lastYearMonth?.end_date;
 
-  // Annual-scoped transactions: spans the entire budget year
+  // Annual-scoped transactions: spans the entire budget year, annual categories only
   const annualBudgetTxns = transactions.filter((t) => {
-    if (t.category_id && projectCatIds.has(t.category_id)) return false;
     if (!filterForBudget(t)) return false;
+    if (!t.category_id || !annualCatIds.has(t.category_id)) return false;
     if (yearStart && t.posted_date < yearStart) return false;
     if (yearEnd && t.posted_date > yearEnd) return false;
     return true;
