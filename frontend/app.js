@@ -193,6 +193,14 @@ function CategoryBadge({ catMap, id, suggested }) {
   return html`<span class="chip outline warning">uncategorized</span>`;
 }
 
+function MethodBadge({ method }) {
+  if (!method) return null;
+  const labels = { manual: "Manual", rule: "Rule", llm: "LLM" };
+  return html`<span class="badge small" title="Categorized by ${labels[method] ?? method}">
+    <span class="method-dot method-${method}"></span>${labels[method] ?? method}
+  </span>`;
+}
+
 function TxnDetail({
   txn,
   catMap,
@@ -322,7 +330,7 @@ function TxnDetail({
               </select>
               ${
                 txn.category_id && txn.category_method
-                  ? html`<span class="chip outline small" style="margin-left:0.5rem">${txn.category_method}</span>`
+                  ? html`<span style="margin-left:0.5rem"><${MethodBadge} method=${txn.category_method} /></span>`
                   : null
               }
               ${
@@ -435,7 +443,10 @@ function Transactions() {
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
   const [filterAcct, setFilterAcct] = useState("");
+  const [filterMethod, setFilterMethod] = useState("");
   const [selected, setSelected] = useState(null);
+  const [sortCol, setSortCol] = useState("date");
+  const [sortAsc, setSortAsc] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -478,18 +489,81 @@ function Transactions() {
     if (filterCat && filterCat !== "__none" && t.category_id !== filterCat)
       return false;
     if (filterAcct && t.account_id !== filterAcct) return false;
+    if (filterMethod === "__none" && t.category_method) return false;
+    if (
+      filterMethod &&
+      filterMethod !== "__none" &&
+      t.category_method !== filterMethod
+    )
+      return false;
     return true;
   });
+
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0;
+    switch (sortCol) {
+      case "date":
+        cmp = a.posted_date.localeCompare(b.posted_date);
+        break;
+      case "merchant":
+        cmp = (a.merchant_name || "").localeCompare(b.merchant_name || "");
+        break;
+      case "amount":
+        cmp = Number(a.amount) - Number(b.amount);
+        break;
+      case "category":
+        cmp = (categoryName(catMap, a.category_id) || "\uffff").localeCompare(
+          categoryName(catMap, b.category_id) || "\uffff",
+        );
+        break;
+      case "account":
+        cmp = (acctMap[a.account_id]?.name || "").localeCompare(
+          acctMap[b.account_id]?.name || "",
+        );
+        break;
+    }
+    return sortAsc ? cmp : -cmp;
+  });
+
+  function toggleSort(col) {
+    if (sortCol === col) {
+      setSortAsc((prev) => !prev);
+    } else {
+      setSortCol(col);
+      setSortAsc(col === "merchant" || col === "category" || col === "account");
+    }
+  }
+
+  function SortTh({ col, children }) {
+    const active = sortCol === col;
+    const arrow = active ? (sortAsc ? "\u25B2" : "\u25BC") : "\u25BC";
+    return html`<th
+      class="sortable ${active ? "sort-active" : ""}"
+      onClick=${() => toggleSort(col)}
+    >
+      ${children}<span class="sort-arrow">${arrow}</span>
+    </th>`;
+  }
 
   const usedCatIds = [
     ...new Set(txns.map((t) => t.category_id).filter(Boolean)),
   ];
   const usedAcctIds = [...new Set(txns.map((t) => t.account_id))];
+  const hasActiveFilter = filterCat || filterAcct || filterMethod;
 
   return html`
-    <h2>Transactions</h2>
+    <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
+      <h2 style="margin:0">Transactions</h2>
+      <span class="text-lighter small" style="margin-left:0.75rem">
+        ${
+          filtered.length === txns.length
+            ? `${txns.length}`
+            : `${filtered.length} / ${txns.length}`
+        }
+      </span>
+    </div>
 
-    <div class="hstack gap-2 mb-4">
+    <div class="txn-filters" style="margin-bottom:0.75rem">
       <input
         type="search"
         placeholder="Search merchants..."
@@ -511,24 +585,24 @@ function Transactions() {
           (id) => html`<option value=${id}>${acctMap[id]?.name ?? id}</option>`,
         )}
       </select>
-      <span class="text-lighter small" style="margin-left:auto">
-        ${
-          filtered.length === txns.length
-            ? `${txns.length} transaction${txns.length !== 1 ? "s" : ""}`
-            : `${filtered.length} of ${txns.length}`
-        }
-      </span>
+      <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
+        <option value="">All methods</option>
+        <option value="manual">Manual</option>
+        <option value="rule">Rule</option>
+        <option value="llm">LLM</option>
+        <option value="__none">Uncategorized</option>
+      </select>
     </div>
 
     ${
-      (filterCat || filterAcct) &&
+      hasActiveFilter &&
       html`
       <div class="hstack gap-2" style="margin-bottom:0.75rem">
         ${
           filterCat &&
           html`
           <button class="chip" onClick=${() => setFilterCat("")}>
-            <span>${filterCat === "__none" ? "Uncategorized" : `Category: ${categoryName(catMap, filterCat)}`}</span>
+            <span>${filterCat === "__none" ? "Uncategorized" : categoryName(catMap, filterCat)}</span>
             <span class="chip-close" aria-label="Remove filter">\u00d7</span>
           </button>
         `
@@ -537,7 +611,16 @@ function Transactions() {
           filterAcct &&
           html`
           <button class="chip" onClick=${() => setFilterAcct("")}>
-            <span>Account: ${acctMap[filterAcct]?.name ?? filterAcct}</span>
+            <span>${acctMap[filterAcct]?.name ?? filterAcct}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+        ${
+          filterMethod &&
+          html`
+          <button class="chip" onClick=${() => setFilterMethod("")}>
+            <span>${filterMethod === "__none" ? "Uncategorized" : filterMethod === "llm" ? "LLM" : filterMethod.charAt(0).toUpperCase() + filterMethod.slice(1)}</span>
             <span class="chip-close" aria-label="Remove filter">\u00d7</span>
           </button>
         `
@@ -550,15 +633,16 @@ function Transactions() {
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Merchant</th>
-            <th>Amount</th>
-            <th>Category</th>
-            <th>Account</th>
+            <${SortTh} col="date">Date<//>
+            <${SortTh} col="merchant">Merchant<//>
+            <${SortTh} col="amount">Amount<//>
+            <${SortTh} col="category">Category<//>
+            <th>Method</th>
+            <${SortTh} col="account">Account<//>
           </tr>
         </thead>
         <tbody>
-          ${filtered.map(
+          ${sorted.map(
             (t) => html`
               <tr
                 class=${t.correlation_type ? "row-correlated" : ""}
@@ -571,10 +655,11 @@ function Transactions() {
                   <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
                   ${
                     t.correlation_type
-                      ? html`<span class="chip outline">${t.correlation_type}</span>`
+                      ? html`<span class="chip outline small">${t.correlation_type}</span>`
                       : null
                   }
                 </td>
+                <td><${MethodBadge} method=${t.category_method} /></td>
                 <td class="text-light">${acctMap[t.account_id]?.name ?? ""}</td>
               </tr>
             `,
@@ -781,11 +866,17 @@ function Categories() {
     { key: "project", label: "Project", desc: null },
   ];
 
+  // Determine which budget group a category belongs to:
+  // - Own budget_mode if set, otherwise inherit from parent
+  function effectiveGroup(c) {
+    if (c.budget_mode) return c.budget_mode;
+    const parent = c.parent_id ? catMap[c.parent_id] : null;
+    return parent?.budget_mode ?? null;
+  }
+
   const grouped = {};
   for (const g of groups) {
-    const cats = categories.filter((c) =>
-      g.key === null ? !c.budget_mode : c.budget_mode === g.key,
-    );
+    const cats = categories.filter((c) => effectiveGroup(c) === g.key);
     grouped[g.key] = withDepth(cats);
   }
 
