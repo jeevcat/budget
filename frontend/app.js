@@ -64,9 +64,9 @@ function NavLink({ href, children }) {
 function formatAmount(amount) {
   const n = Number(amount);
   const abs = Math.abs(n).toFixed(2);
-  if (n > 0) return `+${abs}`;
-  if (n < 0) return `\u2212${abs}`;
-  return abs;
+  if (n > 0) return `+\u202F${abs}\u202F\u20AC`;
+  if (n < 0) return `\u2212\u202F${abs}\u202F\u20AC`;
+  return `${abs}\u202F\u20AC`;
 }
 
 function amountClass(amount) {
@@ -131,10 +131,10 @@ function paceBadge(pace) {
 
 function currencyFmt(amount) {
   const n = Number(amount);
-  return n.toLocaleString(undefined, {
+  return `${n.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  });
+  })}\u202F\u20AC`;
 }
 
 function paceLabel(pace) {
@@ -205,7 +205,7 @@ function SpendBar({ items, maxVal }) {
                 title="Budget: ${currencyFmt(item.budget)}"
               ></div>
             </div>
-            <span class="spend-bar-amount mono">${currencyFmt(item.spent)}</span>
+            <span class="spend-bar-amount">${currencyFmt(item.spent)}</span>
           </div>
         `,
       )}
@@ -324,15 +324,15 @@ function Dashboard() {
     <div class="dash-totals">
       <div class="dash-total-card">
         <span class="dash-total-label">Total Budget</span>
-        <span class="dash-total-value mono">${currencyFmt(totalBudget)}</span>
+        <span class="dash-total-value">${currencyFmt(totalBudget)}</span>
       </div>
       <div class="dash-total-card">
         <span class="dash-total-label">Spent</span>
-        <span class="dash-total-value mono">${currencyFmt(totalSpent)}</span>
+        <span class="dash-total-value">${currencyFmt(totalSpent)}</span>
       </div>
       <div class="dash-total-card ${totalRemaining < 0 ? "dash-total-danger" : ""}">
         <span class="dash-total-label">Remaining</span>
-        <span class="dash-total-value mono">${currencyFmt(totalRemaining)}</span>
+        <span class="dash-total-value">${currencyFmt(totalRemaining)}</span>
       </div>
       <div class="dash-total-card">
         <span class="dash-total-label">Categories</span>
@@ -381,7 +381,7 @@ function Dashboard() {
                     }${s.shortName}
                   </div>
                   <div class="dash-cat-sub">
-                    <span class="mono">${currencyFmt(s.spent)}</span>
+                    <span>${currencyFmt(s.spent)}</span>
                     <span class="text-light">
                       ${" "}/ ${currencyFmt(s.budget_amount)}</span
                     >
@@ -392,7 +392,7 @@ function Dashboard() {
                     >${paceLabel(s.pace)}</span
                   >
                   <span
-                    class="dash-cat-remaining mono ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
+                    class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
                   >
                     ${formatAmount(s.remaining)}
                   </span>
@@ -430,7 +430,7 @@ function Dashboard() {
                     ${cleanMerchant(t.merchant_name || t.description)}
                   </td>
                   <td
-                    class="mono ${amountClass(t.amount)}"
+                    class="${amountClass(t.amount)}"
                     style="text-align:right"
                   >
                     ${formatAmount(t.amount)}
@@ -467,17 +467,15 @@ function CategoryBadge({ catMap, id, suggested }) {
     return html`<span>${label.short}</span>`;
   }
   if (suggested) {
-    return html`<span class="chip" title="LLM suggestion">${suggested}</span>`;
+    return html`<span class="llm-suggestion" title="LLM suggestion: ${suggested}">✦ ${suggested}</span>`;
   }
   return html`<span class="chip outline warning">uncategorized</span>`;
 }
 
-function MethodBadge({ method }) {
+function MethodDot({ method }) {
   if (!method) return null;
   const labels = { manual: "Manual", rule: "Rule", llm: "LLM" };
-  return html`<span class="badge small" title="Categorized by ${labels[method] ?? method}">
-    <span class="method-dot method-${method}"></span>${labels[method] ?? method}
-  </span>`;
+  return html`<span class="method-dot method-${method}" title="Categorized by ${labels[method] ?? method}"></span>`;
 }
 
 function TxnDetail({
@@ -586,11 +584,11 @@ function TxnDetail({
         <div>
           <dl class="txn-dl">
             <dt>Date</dt><dd>${txn.posted_date}</dd>
-            <dt>Amount</dt><dd class="mono ${amountClass(txn.amount)}">${formatAmount(txn.amount)}</dd>
+            <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount)}</dd>
             ${
               txn.original_amount
                 ? html`
-              <dt>Original</dt><dd class="mono">${txn.original_amount} ${txn.original_currency}</dd>
+              <dt>Original</dt><dd>${txn.original_amount} ${txn.original_currency}</dd>
             `
                 : null
             }
@@ -609,12 +607,12 @@ function TxnDetail({
               </select>
               ${
                 txn.category_id && txn.category_method
-                  ? html`<span style="margin-left:0.5rem"><${MethodBadge} method=${txn.category_method} /></span>`
+                  ? html`<span style="margin-left:0.5rem"><${MethodDot} method=${txn.category_method} /></span>`
                   : null
               }
               ${
                 !txn.category_id && txn.suggested_category
-                  ? html`<span class="text-lighter small" style="margin-left:0.5rem" title="LLM suggestion">${txn.suggested_category}</span>`
+                  ? html`<span class="llm-suggestion" style="margin-left:0.5rem" title="LLM suggestion">✦ ${txn.suggested_category}</span>`
                   : null
               }
             </dd>
@@ -916,7 +914,6 @@ function Transactions() {
             <${SortTh} col="merchant">Merchant<//>
             <${SortTh} col="amount">Amount<//>
             <${SortTh} col="category">Category<//>
-            <th>Method</th>
             <${SortTh} col="account">Account<//>
           </tr>
         </thead>
@@ -929,8 +926,9 @@ function Transactions() {
               >
                 <td class="mono">${t.posted_date}</td>
                 <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
-                <td class="mono ${amountClass(t.amount)}">${formatAmount(t.amount)}</td>
+                <td class="${amountClass(t.amount)}">${formatAmount(t.amount)}</td>
                 <td>
+                  <${MethodDot} method=${t.category_method} />
                   <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
                   ${
                     t.correlation_type
@@ -938,7 +936,6 @@ function Transactions() {
                       : null
                   }
                 </td>
-                <td><${MethodBadge} method=${t.category_method} /></td>
                 <td class="text-light">${acctMap[t.account_id]?.name ?? ""}</td>
               </tr>
             `,
@@ -1132,10 +1129,29 @@ function Categories() {
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
 
   function withDepth(cats) {
-    return cats.map((c) => ({
-      ...c,
-      depth: c.parent_id && catMap[c.parent_id] ? 1 : 0,
-    }));
+    const parentIds = new Set(
+      cats.filter((c) => !c.parent_id).map((c) => c.id),
+    );
+    const childMap = {};
+    for (const c of cats) {
+      if (c.parent_id && parentIds.has(c.parent_id)) {
+        if (!childMap[c.parent_id]) childMap[c.parent_id] = [];
+        childMap[c.parent_id].push(c);
+      }
+    }
+    const result = [];
+    for (const r of cats.filter(
+      (c) => !c.parent_id || !parentIds.has(c.parent_id),
+    )) {
+      const isRoot = !r.parent_id;
+      result.push({ ...r, depth: isRoot ? 0 : 1 });
+      if (isRoot) {
+        for (const ch of childMap[r.id] ?? []) {
+          result.push({ ...ch, depth: 1 });
+        }
+      }
+    }
+    return result;
   }
 
   const groups = [
@@ -1174,8 +1190,10 @@ function Categories() {
         : null;
     }
     const amt =
-      cat.budget_amount != null ? Number(cat.budget_amount).toFixed(0) : "?";
-    return html`<span class="mono">${amt}</span>`;
+      cat.budget_amount != null
+        ? `${Number(cat.budget_amount).toFixed(0)}\u202F\u20AC`
+        : "?";
+    return html`<span>${amt}</span>`;
   }
 
   return html`

@@ -1,8 +1,6 @@
 /* Overrides on top of oat — check frontend/oat-reference.md before adding */
 
 .main {
-  --container-max: 1060px;
-  max-width: var(--container-max);
   padding: var(--space-6) var(--space-8);
 }
 
@@ -119,14 +117,15 @@
   margin-left: 0.2em;
 }
 
-/* Category method badges */
+/* Category method dots */
 .method-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin-right: 0.3em;
+  margin-right: 0.4em;
   vertical-align: middle;
+  cursor: help;
 }
 .method-manual {
   background: var(--primary);
@@ -136,6 +135,12 @@
 }
 .method-llm {
   background: #8b5cf6;
+}
+
+/* LLM suggestion indicator */
+.llm-suggestion {
+  color: #8b5cf6;
+  font-size: 0.85em;
 }
 
 .txn-dl {
