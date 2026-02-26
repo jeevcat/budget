@@ -1772,18 +1772,38 @@ const QUEUE_CARDS = [
   },
 ];
 
+function timeAgo(iso) {
+  if (!iso) return "\u2014";
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 0) {
+    const abs = -diff;
+    if (abs < 60) return `in ${Math.round(abs)}s`;
+    if (abs < 3600) return `in ${Math.round(abs / 60)}min`;
+    return `in ${Math.round(abs / 3600)}h`;
+  }
+  if (diff < 60) return `${Math.round(diff)}s ago`;
+  if (diff < 3600) return `${Math.round(diff / 60)}min ago`;
+  return `${Math.round(diff / 3600)}h ago`;
+}
+
 function Jobs() {
   const [counts, setCounts] = useState(null);
   const [accounts, setAccounts] = useState(null);
+  const [schedule, setSchedule] = useState(null);
   const [error, setError] = useState(null);
   const [syncAccountId, setSyncAccountId] = useState("");
   const [triggering, setTriggering] = useState(null);
 
   function load() {
-    Promise.all([api.get("/jobs/counts"), api.get("/accounts")])
-      .then(([c, a]) => {
+    Promise.all([
+      api.get("/jobs/counts"),
+      api.get("/accounts"),
+      api.get("/jobs/schedule"),
+    ])
+      .then(([c, a, s]) => {
         setCounts(c);
         setAccounts(a);
+        setSchedule(s);
       })
       .catch(setError);
   }
@@ -1791,9 +1811,11 @@ function Jobs() {
   useEffect(() => {
     load();
     const interval = setInterval(() => {
-      api
-        .get("/jobs/counts")
-        .then(setCounts)
+      Promise.all([api.get("/jobs/counts"), api.get("/jobs/schedule")])
+        .then(([c, s]) => {
+          setCounts(c);
+          setSchedule(s);
+        })
         .catch(() => {});
     }, 5000);
     return () => clearInterval(interval);
@@ -1890,10 +1912,53 @@ function Jobs() {
   if (error && !counts) return html`<p class="text-light">${error.message}</p>`;
   if (!counts) return html`<p class="text-light">Loading...</p>`;
 
+  function renderScheduleRow(s) {
+    const isOk = s.last_run_status === "succeeded";
+    const isFailed = s.last_run_status === "failed";
+    const isRunning = s.last_run_status === "running";
+    const nextReason = s.next_run_reason ? ` (${s.next_run_reason})` : "";
+    return html`
+      <tr>
+        <td>${s.account_name}</td>
+        <td>${timeAgo(s.last_run_at)}</td>
+        <td>
+          ${isOk && html`<span class="chip success">OK</span>`}
+          ${isFailed && html`<span class="chip danger">Failed</span>`}
+          ${isRunning && html`<span class="chip outline">Running</span>`}
+          ${!s.last_run_status && html`<span class="text-light">\u2014</span>`}
+        </td>
+        <td>
+          ${s.next_run_at ? html`${timeAgo(s.next_run_at)}${nextReason}` : html`<span class="text-light">\u2014</span>`}
+        </td>
+      </tr>
+    `;
+  }
+
   return html`
     <h2>Jobs</h2>
 
     ${error && html`<p role="alert" data-variant="error">${error.message}</p>`}
+
+    ${
+      schedule &&
+      schedule.length > 0 &&
+      html`
+      <h3>Schedule</h3>
+      <table style="margin-bottom:1.5rem">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Last Run</th>
+            <th>Status</th>
+            <th>Next Run</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${schedule.map(renderScheduleRow)}
+        </tbody>
+      </table>
+    `
+    }
 
     <div class="queue-cards">
       ${QUEUE_CARDS.map(renderQueueCard)}

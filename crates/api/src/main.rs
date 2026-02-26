@@ -77,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         // clone() justified: ApalisPool is Arc-based
         () = reclaim_stale_jobs_loop(apalis_pool.clone()) => {}
+        () = budget_jobs::scheduler::run_scheduler(&db, &apalis_pool) => {}
     }
 
     Ok(())

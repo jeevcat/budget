@@ -16,6 +16,8 @@ pub mod correlate;
 pub mod pipeline;
 pub mod queries;
 pub mod recompute;
+pub mod schedule_queries;
+pub mod scheduler;
 pub mod sync;
 
 // ---------------------------------------------------------------------------
@@ -38,6 +40,7 @@ pub use recompute::handle_recompute_job;
 pub use sync::handle_sync_job;
 
 mod storage;
+pub use pipeline::PipelineContext;
 pub use storage::{JobStorage, PipelineStorage};
 
 // ---------------------------------------------------------------------------

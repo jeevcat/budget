@@ -1,6 +1,7 @@
 use apalis::prelude::*;
 use apalis_workflow::WorkflowSink;
 
+use super::pipeline::PipelineContext;
 use super::{
     ApalisPool, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
     CorrelateTransactionJob, SyncJob,
@@ -80,16 +81,13 @@ impl PipelineStorage {
         Self { pool: pool.clone() }
     }
 
-    /// Start a full-sync pipeline for the given account.
+    /// Start a full-sync pipeline for the given context (account + optional schedule run).
     ///
     /// # Errors
     ///
     /// Returns a stringified error if the job cannot be enqueued.
-    pub async fn push_start(&self, account_id: String) -> Result<(), String> {
+    pub async fn push_start(&self, ctx: PipelineContext) -> Result<(), String> {
         let mut storage = apalis_postgres::PostgresStorage::<Vec<u8>>::new(&self.pool);
-        storage
-            .push_start(account_id)
-            .await
-            .map_err(|e| e.to_string())
+        storage.push_start(ctx).await.map_err(|e| e.to_string())
     }
 }
