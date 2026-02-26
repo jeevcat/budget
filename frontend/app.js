@@ -567,8 +567,9 @@ function Dashboard() {
       .filter(Boolean),
   );
 
-  // Shared filter: exclude transfers, reimbursements, reimbursed originals
+  // Shared filter: exclude transfers, reimbursements, reimbursed originals, income
   const filterForBudget = (t) => {
+    if (Number(t.amount) > 0) return false;
     if (t.correlation_type === "transfer") return false;
     if (t.correlation_type === "reimbursement") return false;
     if (reimbursedIds.has(t.id)) return false;
