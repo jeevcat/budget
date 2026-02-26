@@ -22,7 +22,8 @@ use super::{BankProviderFactory, SyncJob};
 /// - The account does not exist in the database.
 /// - The account's connection is missing, expired, or revoked.
 /// - The bank provider call fails.
-/// - Any database write fails.
+/// - One or more transaction upserts fail (partial failure — successful
+///   upserts are preserved).
 pub(crate) async fn sync_account(
     raw_account_id: &str,
     db: &Db,
@@ -87,6 +88,7 @@ pub(crate) async fn sync_account(
 
     let count = provider_txns.len();
 
+    let mut failed: Vec<String> = Vec::new();
     for ptxn in &provider_txns {
         let txn = Transaction {
             id: TransactionId::new(),
@@ -106,15 +108,35 @@ pub(crate) async fn sync_account(
             suggested_category: None,
         };
 
-        db.upsert_transaction(&txn, Some(&ptxn.provider_transaction_id))
-            .await?;
+        if let Err(e) = db
+            .upsert_transaction(&txn, Some(&ptxn.provider_transaction_id))
+            .await
+        {
+            tracing::warn!(
+                provider_transaction_id = %ptxn.provider_transaction_id,
+                error = %e,
+                "failed to upsert transaction, continuing"
+            );
+            failed.push(format!("{}: {e}", ptxn.provider_transaction_id));
+        }
     }
 
+    let succeeded = count - failed.len();
     tracing::info!(
         account_id = %account.id,
-        transactions_synced = count,
-        "sync job completed"
+        transactions_synced = succeeded,
+        transactions_failed = failed.len(),
+        "sync completed"
     );
+
+    if !failed.is_empty() {
+        return Err(format!(
+            "sync partially failed: {succeeded}/{count} succeeded, {} failed: {}",
+            failed.len(),
+            failed.join(", ")
+        )
+        .into());
+    }
 
     Ok(())
 }

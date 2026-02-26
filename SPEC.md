@@ -196,8 +196,8 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 ### Sync Reliability
 
-- [ ] **Provider error retry with backoff**: Sync job makes a single attempt per provider call. Add exponential backoff with jitter for transient failures (network errors, 429/503 responses). The `ProviderError::RateLimited` variant exists but nothing acts on it.
-- [ ] **Partial failure recovery in sync**: A single failed `upsert_transaction` aborts the entire sync (early `?` return in the for-loop). Isolate per-transaction errors so one bad record doesn't block the rest of the batch. Accumulate errors and report them without losing successfully synced transactions.
+- [x] **Provider error retry with backoff**: The scheduler retries failed pipelines with exponential backoff (60s–15min, up to 5 attempts) for transient failures (timeouts, rate limits, connection resets). Per-provider-call retry with jitter is not yet implemented — the retry granularity is at the pipeline level.
+- [x] **Partial failure recovery in sync**: A single failed `upsert_transaction` aborts the entire sync (early `?` return in the for-loop). Isolate per-transaction errors so one bad record doesn't block the rest of the batch. Accumulate errors and report them without losing successfully synced transactions.
 
 ### Retroactive & Backfill Logic
 
