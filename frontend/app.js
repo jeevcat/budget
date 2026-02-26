@@ -301,7 +301,7 @@ function Dashboard() {
     ${
       currentMonth &&
       html`
-        <div class="dash-month-header">
+        <div class="hstack" style="margin-bottom:1.25rem">
           <div>
             <h2 style="margin:0">Budget Month</h2>
             <span class="text-light">
@@ -312,7 +312,11 @@ function Dashboard() {
           ${
             uncategorizedCount > 0 &&
             html`
-              <a href="#/transactions" class="dash-alert-chip">
+              <a
+                href="#/transactions"
+                class="badge warning"
+                style="margin-left:auto;text-decoration:none"
+              >
                 ${uncategorizedCount} uncategorized
               </a>
             `
@@ -322,33 +326,37 @@ function Dashboard() {
     }
 
     <div class="dash-totals">
-      <div class="dash-total-card">
-        <span class="dash-total-label">Total Budget</span>
-        <span class="dash-total-value">${currencyFmt(totalBudget)}</span>
-      </div>
-      <div class="dash-total-card">
-        <span class="dash-total-label">Spent</span>
-        <span class="dash-total-value">${currencyFmt(totalSpent)}</span>
-      </div>
-      <div class="dash-total-card ${totalRemaining < 0 ? "dash-total-danger" : ""}">
-        <span class="dash-total-label">Remaining</span>
-        <span class="dash-total-value">${currencyFmt(totalRemaining)}</span>
-      </div>
-      <div class="dash-total-card">
-        <span class="dash-total-label">Categories</span>
-        <span class="dash-total-value">
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label">Total Budget</span>
+        <span class="dash-stat-value">${currencyFmt(totalBudget)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label">Spent</span>
+        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label">Remaining</span>
+        <span
+          class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
+        >
+          ${currencyFmt(totalRemaining)}
+        </span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label">Categories</span>
+        <span class="dash-stat-value">
           ${
             overBudget.length > 0
-              ? html`<span class="dash-over-count">${overBudget.length}</span>
+              ? html`<span class="badge danger">${overBudget.length}</span>
                   over`
               : html`All on track`
           }
         </span>
-      </div>
+      </article>
     </div>
 
     <div class="dash-grid">
-      <div class="dash-section">
+      <article class="card" style="padding:var(--space-4)">
         <h3 style="margin:0 0 0.75rem">Spending vs Budget</h3>
         <${SpendBar}
           items=${enriched.map((s) => ({
@@ -360,9 +368,9 @@ function Dashboard() {
           }))}
           maxVal=${barMax}
         />
-      </div>
+      </article>
 
-      <div class="dash-section">
+      <article class="card" style="padding:var(--space-4)">
         <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
         <div class="dash-cat-list">
           ${enriched.map(
@@ -388,7 +396,7 @@ function Dashboard() {
                   </div>
                 </div>
                 <div class="dash-cat-end">
-                  <span class="chip small ${paceBadge(s.pace)}"
+                  <span class="badge small ${paceBadge(s.pace)}"
                     >${paceLabel(s.pace)}</span
                   >
                   <span
@@ -401,10 +409,10 @@ function Dashboard() {
             `,
           )}
         </div>
-      </div>
+      </article>
     </div>
 
-    <div class="dash-section" style="margin-top:1rem">
+    <article class="card" style="padding:var(--space-4);margin-top:1rem">
       <div
         class="hstack"
         style="align-items:baseline;margin-bottom:0.75rem"
@@ -448,7 +456,7 @@ function Dashboard() {
           </tbody>
         </table>
       </div>
-    </div>
+    </article>
   `;
 }
 

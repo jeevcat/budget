@@ -160,31 +160,6 @@
 }
 
 /* Dashboard */
-.dash-month-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.25rem;
-  gap: 1rem;
-}
-
-.dash-alert-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.75rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.dash-alert-chip:hover {
-  background: color-mix(in srgb, var(--warning) 25%, transparent);
-}
-
 .dash-totals {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -197,40 +172,25 @@
   }
 }
 
-.dash-total-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.dash-stat-card {
   padding: 0.75rem 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
 }
-.dash-total-label {
+.dash-stat-label {
   font-size: 0.8rem;
   color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.dash-total-value {
+.dash-stat-value {
   font-size: 1.35rem;
   font-weight: 600;
   line-height: 1.2;
 }
-.dash-total-danger .dash-total-value {
+.dash-negative {
   color: var(--danger);
-}
-.dash-over-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--danger);
-  color: var(--danger-foreground);
-  font-size: 0.8rem;
-  font-weight: 700;
-  width: 1.3rem;
-  height: 1.3rem;
-  border-radius: 50%;
-  margin-right: 0.2rem;
 }
 
 .dash-grid {
@@ -242,12 +202,6 @@
   .dash-grid {
     grid-template-columns: 1fr;
   }
-}
-
-.dash-section {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem;
 }
 
 /* Spend bars */
@@ -344,9 +298,6 @@
 }
 .dash-cat-remaining {
   font-size: 0.82rem;
-}
-.dash-negative {
-  color: var(--danger);
 }
 
 .progress-ring {
