@@ -259,6 +259,109 @@ function SpendBar({ items, maxVal }) {
   `;
 }
 
+function BudgetSection({
+  items,
+  totalBudget,
+  totalSpent,
+  totalRemaining,
+  barMax,
+}) {
+  const overBudget = items.filter((s) => s.pace === "over_budget");
+
+  return html`
+    <div class="dash-totals">
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Total Budget</span>
+        <span class="dash-stat-value">${currencyFmt(totalBudget)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Spent</span>
+        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Remaining</span>
+        <span
+          class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
+        >
+          ${currencyFmt(totalRemaining)}
+        </span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Categories</span>
+        <span class="dash-stat-value">
+          ${
+            overBudget.length > 0
+              ? html`<span class="badge danger">${overBudget.length}</span>
+                  over`
+              : html`All on track`
+          }
+        </span>
+      </article>
+    </div>
+
+    <div class="dash-grid">
+      <article class="card" style="padding:var(--space-4)">
+        <h3 style="margin:0 0 0.75rem">Spending vs Budget</h3>
+        <${SpendBar}
+          items=${items.map((s) => ({
+            id: s.category_id,
+            name: s.shortName,
+            spent: s.spent,
+            budget: s.budget_amount,
+            pace: s.pace,
+          }))}
+          maxVal=${barMax}
+        />
+      </article>
+
+      <article class="card" style="padding:var(--space-4)">
+        <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
+        <div class="vstack" style="gap:0">
+          ${items.map(
+            (s) => html`
+              <div class="hstack dash-cat-row" key=${s.category_id}>
+                <${ProgressRing}
+                  spent=${s.spent}
+                  budget=${s.budget_amount}
+                  pace=${s.pace}
+                />
+                <div class="dash-cat-info">
+                  <div class="dash-cat-name">
+                    ${
+                      s.parentName &&
+                      html`<span class="cat-parent">${s.parentName}</span>`
+                    }${s.shortName}
+                  </div>
+                  <div class="dash-cat-sub">
+                    <span>${currencyFmt(s.spent)}</span>
+                    <span class="text-light">
+                      ${" "}/ ${Number(s.budget_amount) > 0 ? currencyFmt(s.budget_amount) : "no budget"}</span
+                    >
+                    ${
+                      Number(s.rollover) !== 0 &&
+                      html`<span class="text-light" style="margin-left:0.25rem">(${Number(s.rollover) > 0 ? "+" : ""}${currencyFmt(s.rollover)} rollover)</span>`
+                    }
+                  </div>
+                </div>
+                <div class="vstack dash-cat-end">
+                  <span class="badge small ${paceBadge(s.pace)}"
+                    >${paceLabel(s.pace)}</span
+                  >
+                  <span
+                    class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
+                  >
+                    ${formatAmount(s.remaining)}
+                  </span>
+                </div>
+              </div>
+            `,
+          )}
+        </div>
+      </article>
+    </div>
+  `;
+}
+
 function formatMonthRange(month) {
   const fmt = (d) => {
     const date = new Date(`${d}T00:00:00`);
@@ -339,31 +442,52 @@ function Dashboard() {
   }
 
   // Enrich status with display names and hierarchy info
+  const enrichStatus = (s) => {
+    const cat = catMap[s.category_id];
+    const label = categoryLabel(catMap, s.category_id);
+    return {
+      ...s,
+      name: label
+        ? label.parent
+          ? `${label.parent} > ${label.short}`
+          : label.short
+        : s.category_name,
+      shortName: label?.short ?? s.category_name,
+      parentName: label?.parent ?? null,
+      budgetMode: cat?.budget_mode ?? null,
+    };
+  };
+
   const enriched = status
-    .map((s) => {
-      const cat = catMap[s.category_id];
-      const label = categoryLabel(catMap, s.category_id);
-      return {
-        ...s,
-        name: label
-          ? label.parent
-            ? `${label.parent} > ${label.short}`
-            : label.short
-          : s.category_name,
-        shortName: label?.short ?? s.category_name,
-        parentName: label?.parent ?? null,
-        budgetMode: cat?.budget_mode ?? null,
-      };
-    })
+    .map(enrichStatus)
     .sort((a, b) => Number(b.spent) - Number(a.spent));
 
-  // Totals
-  const totalBudget = enriched.reduce(
-    (sum, s) => sum + Number(s.budget_amount),
-    0,
+  // Split by budget mode
+  const monthly = enriched.filter(
+    (s) => s.budgetMode === "monthly" || !s.budgetMode,
   );
-  const totalSpent = enriched.reduce((sum, s) => sum + Number(s.spent), 0);
-  const totalRemaining = totalBudget - totalSpent;
+  const annual = enriched.filter((s) => s.budgetMode === "annual");
+  const projects = (statusResp.projects || [])
+    .map(enrichStatus)
+    .sort((a, b) => Number(b.spent) - Number(a.spent));
+
+  // Per-group totals helper
+  const groupTotals = (items) => {
+    const budget = items.reduce((sum, s) => sum + Number(s.budget_amount), 0);
+    const spent = items.reduce((sum, s) => sum + Number(s.spent), 0);
+    const remaining = budget - spent;
+    const barMax = Math.max(
+      ...items.map((s) =>
+        Math.max(Math.abs(Number(s.spent)), Number(s.budget_amount)),
+      ),
+      1,
+    );
+    return { budget, spent, remaining, barMax };
+  };
+
+  const mTotals = groupTotals(monthly);
+  const aTotals = groupTotals(annual);
+  const pTotals = groupTotals(projects);
 
   // Uncategorized count (scoped to selected month)
   const monthTxns = transactions.filter((t) => {
@@ -382,25 +506,17 @@ function Dashboard() {
     .sort((a, b) => b.posted_date.localeCompare(a.posted_date))
     .slice(0, 8);
 
-  // Max value for the bar chart (to scale bars)
-  const barMax = Math.max(
-    ...enriched.map((s) =>
-      Math.max(Math.abs(Number(s.spent)), Number(s.budget_amount)),
-    ),
-    1,
-  );
+  // Time left label per mode
+  const timeLeft = (items, unit) => {
+    const entry = items[0];
+    if (!entry) return "";
+    const val = Number(entry.time_left);
+    if (val < 0) return "open-ended";
+    return `${val}${unit} left`;
+  };
+  const monthlyTimeLabel = timeLeft(monthly, "d");
 
-  // Time left for the primary display (first monthly category, or first category)
-  const firstMonthly = enriched.find((s) => s.budgetMode === "monthly");
-  const timeLeftEntry = firstMonthly || enriched[0];
-  const timeLeftVal = timeLeftEntry ? Number(timeLeftEntry.time_left) : 0;
-  const timeLeftLabel =
-    timeLeftEntry?.budgetMode === "annual"
-      ? `${timeLeftVal}mo left`
-      : `${timeLeftVal}d left`;
-
-  // Over-budget categories
-  const overBudget = enriched.filter((s) => s.pace === "over_budget");
+  const hasProjects = projects.length > 0;
 
   return html`
     <div class="hstack" style="margin-bottom:1.25rem">
@@ -415,7 +531,7 @@ function Dashboard() {
           <strong>${formatMonthRange(activeMonth)}</strong>
           ${
             isCurrentMonth
-              ? html`<div class="text-light mono" style="font-size:0.85rem">${timeLeftLabel}</div>`
+              ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
               : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
           }
         </div>
@@ -440,139 +556,53 @@ function Dashboard() {
       }
     </div>
 
-    <div class="dash-totals">
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Total Budget</span>
-        <span class="dash-stat-value">${currencyFmt(totalBudget)}</span>
-      </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
-      </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Remaining</span>
-        <span
-          class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
-        >
-          ${currencyFmt(totalRemaining)}
-        </span>
-      </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Categories</span>
-        <span class="dash-stat-value">
-          ${
-            overBudget.length > 0
-              ? html`<span class="badge danger">${overBudget.length}</span>
-                  over`
-              : html`All on track`
-          }
-        </span>
-      </article>
-    </div>
-
-    <div class="dash-grid">
-      <article class="card" style="padding:var(--space-4)">
-        <h3 style="margin:0 0 0.75rem">Spending vs Budget</h3>
-        <${SpendBar}
-          items=${enriched.map((s) => ({
-            id: s.category_id,
-            name: s.shortName,
-            spent: s.spent,
-            budget: s.budget_amount,
-            pace: s.pace,
-          }))}
-          maxVal=${barMax}
-        />
-      </article>
-
-      <article class="card" style="padding:var(--space-4)">
-        <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
-        <div class="vstack" style="gap:0">
-          ${enriched.map(
-            (s) => html`
-              <div class="hstack dash-cat-row" key=${s.category_id}>
-                <${ProgressRing}
-                  spent=${s.spent}
-                  budget=${s.budget_amount}
-                  pace=${s.pace}
-                />
-                <div class="dash-cat-info">
-                  <div class="dash-cat-name">
-                    ${
-                      s.parentName &&
-                      html`<span class="cat-parent">${s.parentName}</span>`
-                    }${s.shortName}
-                  </div>
-                  <div class="dash-cat-sub">
-                    <span>${currencyFmt(s.spent)}</span>
-                    <span class="text-light">
-                      ${" "}/ ${currencyFmt(s.budget_amount)}</span
-                    >
-                    ${
-                      Number(s.rollover) !== 0 &&
-                      html`<span class="text-light" style="margin-left:0.25rem">(${Number(s.rollover) > 0 ? "+" : ""}${currencyFmt(s.rollover)} rollover)</span>`
-                    }
-                  </div>
-                </div>
-                <div class="vstack dash-cat-end">
-                  <span class="badge small ${paceBadge(s.pace)}"
-                    >${paceLabel(s.pace)}</span
-                  >
-                  <span
-                    class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
-                  >
-                    ${formatAmount(s.remaining)}
-                  </span>
-                </div>
-              </div>
-            `,
-          )}
+    <ot-tabs>
+      <div role="tablist">
+        <button role="tab">Monthly</button>
+        <button role="tab">Annual</button>
+        ${hasProjects && html`<button role="tab">Projects</button>`}
+      </div>
+      <div role="tabpanel">
+        ${
+          monthly.length > 0
+            ? html`<${BudgetSection}
+              items=${monthly}
+              totalBudget=${mTotals.budget}
+              totalSpent=${mTotals.spent}
+              totalRemaining=${mTotals.remaining}
+              barMax=${mTotals.barMax}
+            />`
+            : html`<p class="text-light">No monthly budgets.</p>`
+        }
+      </div>
+      <div role="tabpanel">
+        ${
+          annual.length > 0
+            ? html`<${BudgetSection}
+              items=${annual}
+              totalBudget=${aTotals.budget}
+              totalSpent=${aTotals.spent}
+              totalRemaining=${aTotals.remaining}
+              barMax=${aTotals.barMax}
+            />`
+            : html`<p class="text-light">No annual budgets.</p>`
+        }
+      </div>
+      ${
+        hasProjects &&
+        html`
+        <div role="tabpanel">
+          <${BudgetSection}
+            items=${projects}
+            totalBudget=${pTotals.budget}
+            totalSpent=${pTotals.spent}
+            totalRemaining=${pTotals.remaining}
+            barMax=${pTotals.barMax}
+          />
         </div>
-      </article>
-    </div>
-
-    ${
-      statusResp.projects &&
-      statusResp.projects.length > 0 &&
-      html`
-        <article class="card" style="padding:var(--space-4);margin-top:1rem">
-          <h3 style="margin:0 0 0.75rem">Projects</h3>
-          <div class="vstack" style="gap:0">
-            ${statusResp.projects.map((s) => {
-              const label = categoryLabel(catMap, s.category_id);
-              const shortName = label?.short ?? s.category_name;
-              const parentName = label?.parent ?? null;
-              const tl = Number(s.time_left);
-              const tlLabel = tl < 0 ? "open-ended" : `${tl}d left`;
-              return html`
-                <div class="hstack dash-cat-row" key=${s.category_id}>
-                  <${ProgressRing}
-                    spent=${s.spent}
-                    budget=${s.budget_amount}
-                    pace=${s.pace}
-                  />
-                  <div class="dash-cat-info">
-                    <div class="dash-cat-name">
-                      ${parentName && html`<span class="cat-parent">${parentName}</span>`}${shortName}
-                    </div>
-                    <div class="dash-cat-sub">
-                      <span>${currencyFmt(s.spent)}</span>
-                      <span class="text-light">
-                        ${" "}/ ${Number(s.budget_amount) > 0 ? currencyFmt(s.budget_amount) : "no budget"}</span
-                      >
-                    </div>
-                  </div>
-                  <div class="vstack dash-cat-end">
-                    <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace)}</span>
-                    <span class="text-light" style="font-size:0.8rem">${tlLabel}</span>
-                  </div>
-                </div>
-              `;
-            })}
-          </div>
-        </article>
       `
-    }
+      }
+    </ot-tabs>
 
     <article class="card" style="padding:var(--space-4);margin-top:1rem">
       <div
