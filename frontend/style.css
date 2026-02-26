@@ -55,9 +55,6 @@
 }
 
 .txn-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 0.4rem;
 }
 .txn-filters select {
@@ -137,12 +134,6 @@
   background: #8b5cf6;
 }
 
-/* LLM suggestion indicator */
-.llm-suggestion {
-  color: #8b5cf6;
-  font-size: 0.85em;
-}
-
 .txn-dl {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -205,11 +196,6 @@
 }
 
 /* Spend bars */
-.spend-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
 .spend-bar-row {
   display: grid;
   grid-template-columns: 7rem 1fr auto;
@@ -261,11 +247,6 @@
 }
 
 /* Category breakdown */
-.dash-cat-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
 .dash-cat-row {
   display: flex;
   align-items: center;

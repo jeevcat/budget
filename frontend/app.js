@@ -189,7 +189,7 @@ function ProgressRing({ spent, budget, pace, size = 48 }) {
 
 function SpendBar({ items, maxVal }) {
   return html`
-    <div class="spend-bars">
+    <div class="vstack gap-2">
       ${items.map(
         (item) => html`
           <div class="spend-bar-row" key=${item.id}>
@@ -372,7 +372,7 @@ function Dashboard() {
 
       <article class="card" style="padding:var(--space-4)">
         <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
-        <div class="dash-cat-list">
+        <div class="vstack" style="gap:0">
           ${enriched.map(
             (s) => html`
               <div class="dash-cat-row" key=${s.category_id}>
@@ -475,7 +475,7 @@ function CategoryBadge({ catMap, id, suggested }) {
     return html`<span>${label.short}</span>`;
   }
   if (suggested) {
-    return html`<span class="llm-suggestion" title="LLM suggestion: ${suggested}">✦ ${suggested}</span>`;
+    return html`<span style="color:#8b5cf6;font-size:0.85em" title="LLM suggestion: ${suggested}">✦ ${suggested}</span>`;
   }
   return html`<span class="chip outline warning">uncategorized</span>`;
 }
@@ -620,7 +620,7 @@ function TxnDetail({
               }
               ${
                 !txn.category_id && txn.suggested_category
-                  ? html`<span class="llm-suggestion" style="margin-left:0.5rem" title="LLM suggestion">✦ ${txn.suggested_category}</span>`
+                  ? html`<span style="color:#8b5cf6;font-size:0.85em;margin-left:0.5rem" title="LLM suggestion">✦ ${txn.suggested_category}</span>`
                   : null
               }
             </dd>
@@ -848,7 +848,7 @@ function Transactions() {
       </span>
     </div>
 
-    <div class="txn-filters" style="margin-bottom:0.75rem">
+    <div class="hstack txn-filters" style="margin-bottom:0.75rem">
       <input
         type="search"
         placeholder="Search merchants..."
