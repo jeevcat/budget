@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 confy = "2"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "query"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rust_decimal = { version = "1", features = ["serde-str"] }
 regex = "1"
@@ -33,7 +33,7 @@ httpdate = "1"
 rust_decimal_macros = "1"
 thiserror = "2"
 trait-variant = "0.1"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 
 # Internal crates
 budget-core = { path = "crates/core" }
