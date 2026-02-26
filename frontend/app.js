@@ -1709,8 +1709,10 @@ function Rules() {
       setApplying(false);
       load();
       if (result.categorized_count > 0) {
-        alert(
+        ot.toast(
           `Categorized ${result.categorized_count} transaction${result.categorized_count !== 1 ? "s" : ""}`,
+          "Rules applied",
+          { variant: "success" },
         );
       }
     } catch (err) {
@@ -1725,8 +1727,16 @@ function Rules() {
   const correlationRules = rules.filter((r) => r.rule_type === "correlation");
 
   function fieldLabel(field) {
-    if (field === "amount_range") return "amount range";
-    return field;
+    const labels = {
+      merchant: "merchant",
+      description: "description",
+      amount_range: "amount range",
+      counterparty_name: "counterparty name",
+      counterparty_iban: "counterparty IBAN",
+      counterparty_bic: "counterparty BIC",
+      bank_transaction_code: "bank txn code",
+    };
+    return labels[field] ?? field;
   }
 
   function ruleTarget(rule) {
@@ -1752,10 +1762,14 @@ function Rules() {
         <option value="merchant">Merchant</option>
         <option value="description">Description</option>
         <option value="amount_range">Amount Range</option>
+        <option value="counterparty_name">Counterparty Name</option>
+        <option value="counterparty_iban">Counterparty IBAN</option>
+        <option value="counterparty_bic">Counterparty BIC</option>
+        <option value="bank_transaction_code">Bank Transaction Code</option>
       </select>
       <input
         type="text"
-        placeholder="Pattern"
+        placeholder=${form.match_field === "amount_range" ? "e.g. 50..200, >100, <=50" : "Pattern"}
         value=${form.match_pattern}
         onInput=${(e) => setField("match_pattern", e.target.value)}
         required

@@ -1,9 +1,7 @@
-use rust_decimal::Decimal;
-
 use crate::error::ProviderError;
 use crate::llm::{
-    CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
-    RuleContext, TransactionSummary,
+    CategorizeInput, CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField,
+    ProposedRule, RuleContext, TransactionSummary,
 };
 
 /// A mock LLM provider that uses simple keyword matching for categorization
@@ -117,13 +115,9 @@ fn match_category(merchant_upper: &str) -> Option<(&'static str, f64)> {
 impl LlmProvider for MockLlmProvider {
     async fn categorize(
         &self,
-        merchant_name: &str,
-        _amount: Decimal,
-        _description: Option<&str>,
-        _existing_categories: &[String],
-        _bank_transaction_code: Option<&str>,
+        input: &CategorizeInput<'_>,
     ) -> Result<CategorizeResult, ProviderError> {
-        let merchant_upper = merchant_name.to_uppercase();
+        let merchant_upper = input.merchant_name.to_uppercase();
 
         let (category, confidence) =
             match_category(&merchant_upper).unwrap_or(("Uncategorized", 0.15));
@@ -209,19 +203,26 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use super::*;
-    use crate::llm::RuleContext;
+    use crate::llm::{CategorizeInput, RuleContext};
+
+    fn cat_input(merchant_name: &str) -> CategorizeInput<'_> {
+        CategorizeInput {
+            merchant_name,
+            amount: dec!(0),
+            description: None,
+            existing_categories: &[],
+            bank_transaction_code: None,
+            counterparty_name: None,
+            counterparty_iban: None,
+            counterparty_bic: None,
+        }
+    }
 
     #[tokio::test]
     async fn categorize_grocery_merchant() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize(
-                "WHOLE FOODS MARKET",
-                dec!(72.34),
-                Some("Weekly groceries"),
-                &[],
-                None,
-            )
+            .categorize(&cat_input("WHOLE FOODS MARKET"))
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Groceries");
@@ -232,7 +233,7 @@ mod tests {
     async fn categorize_restaurant() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("CHIPOTLE MEXICAN GRILL", dec!(42.50), None, &[], None)
+            .categorize(&cat_input("CHIPOTLE MEXICAN GRILL"))
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Restaurants");
@@ -243,13 +244,7 @@ mod tests {
     async fn categorize_subscription() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize(
-                "NETFLIX.COM",
-                dec!(15.99),
-                Some("Monthly subscription"),
-                &[],
-                None,
-            )
+            .categorize(&cat_input("NETFLIX.COM"))
             .await
             .unwrap();
         assert_eq!(result.category_name, "Entertainment:Subscriptions");
@@ -260,7 +255,7 @@ mod tests {
     async fn categorize_unknown_merchant_returns_low_confidence() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("OBSCURE SHOP XYZ", dec!(25.00), None, &[], None)
+            .categorize(&cat_input("OBSCURE SHOP XYZ"))
             .await
             .unwrap();
         assert_eq!(result.category_name, "Uncategorized");
@@ -271,7 +266,7 @@ mod tests {
     async fn categorize_is_case_insensitive() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("trader joes", dec!(58.12), None, &[], None)
+            .categorize(&cat_input("trader joes"))
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Groceries");
@@ -351,6 +346,10 @@ mod tests {
             category_name: "Food:Groceries".to_owned(),
             sibling_merchants: vec![],
             existing_rule_patterns: vec![],
+            counterparty_name: None,
+            counterparty_iban: None,
+            counterparty_bic: None,
+            bank_transaction_code: None,
         };
         let rules = provider.propose_rules(&context).await.unwrap();
         assert_eq!(rules.len(), 3);

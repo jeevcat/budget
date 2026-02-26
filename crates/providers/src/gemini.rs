@@ -1,13 +1,12 @@
 //! Gemini LLM provider — calls Google's Generative Language API for
 //! transaction categorization, correlation, and rule proposal.
 
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ProviderError;
 use crate::llm::{
-    CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
-    RuleContext, TransactionSummary,
+    CategorizeInput, CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField,
+    ProposedRule, RuleContext, TransactionSummary,
 };
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
@@ -108,21 +107,37 @@ impl GeminiProvider {
 impl LlmProvider for GeminiProvider {
     async fn categorize(
         &self,
-        merchant_name: &str,
-        amount: Decimal,
-        description: Option<&str>,
-        existing_categories: &[String],
-        bank_transaction_code: Option<&str>,
+        input: &CategorizeInput<'_>,
     ) -> Result<CategorizeResult, ProviderError> {
-        let desc_line = description
+        let merchant_name = input.merchant_name;
+        let amount = input.amount;
+
+        let desc_line = input
+            .description
             .map(|d| format!("Description: {d}\n"))
             .unwrap_or_default();
 
-        let btc_line = bank_transaction_code
+        let btc_line = input
+            .bank_transaction_code
             .map(|b| format!("Bank classification: {b}\n"))
             .unwrap_or_default();
 
-        let categories_block = if existing_categories.is_empty() {
+        let cp_name_line = input
+            .counterparty_name
+            .map(|n| format!("Counterparty: {n}\n"))
+            .unwrap_or_default();
+
+        let cp_iban_line = input
+            .counterparty_iban
+            .map(|i| format!("Counterparty IBAN: {i}\n"))
+            .unwrap_or_default();
+
+        let cp_bic_line = input
+            .counterparty_bic
+            .map(|b| format!("Counterparty BIC: {b}\n"))
+            .unwrap_or_default();
+
+        let categories_block = if input.existing_categories.is_empty() {
             "Use hierarchical categories with \":\" as separator. Common examples:\n\
              - Food:Groceries, Food:Restaurants, Food:Coffee\n\
              - Housing:Rent, Housing:Utilities, Housing:Insurance\n\
@@ -135,7 +150,7 @@ impl LlmProvider for GeminiProvider {
              - Cash"
                 .to_owned()
         } else {
-            let list = existing_categories.join(", ");
+            let list = input.existing_categories.join(", ");
             format!(
                 "You MUST use one of these existing categories: {list}\n\
                  If none of these fit, you may propose a new hierarchical category using \":\" as separator, but prefer existing ones."
@@ -157,7 +172,7 @@ If you are unsure, use a low confidence score. Do not guess wildly.
 Transaction:
 Merchant: {merchant_name}
 Amount: {amount}
-{desc_line}{btc_line}
+{desc_line}{btc_line}{cp_name_line}{cp_iban_line}{cp_bic_line}
 JSON response:"#
         );
 
@@ -263,6 +278,27 @@ JSON response:"#,
                 .join("\n")
         };
 
+        let cp_name_line = context
+            .counterparty_name
+            .as_deref()
+            .map(|n| format!("Counterparty: {n}\n"))
+            .unwrap_or_default();
+        let cp_iban_line = context
+            .counterparty_iban
+            .as_deref()
+            .map(|i| format!("Counterparty IBAN: {i}\n"))
+            .unwrap_or_default();
+        let cp_bic_line = context
+            .counterparty_bic
+            .as_deref()
+            .map(|b| format!("Counterparty BIC: {b}\n"))
+            .unwrap_or_default();
+        let btc_line = context
+            .bank_transaction_code
+            .as_deref()
+            .map(|b| format!("Bank classification: {b}\n"))
+            .unwrap_or_default();
+
         let prompt = format!(
             r#"You propose deterministic categorization rules for a personal budgeting tool.
 
@@ -271,9 +307,13 @@ Given a specific transaction and its category, propose exactly 3 regex rules at 
 Rules can match on:
 - "Merchant" — match against the merchant/payee name
 - "Description" — match against the transaction description
+- "CounterpartyName" — match against the counterparty name
+- "CounterpartyIban" — match against the counterparty IBAN
+- "CounterpartyBic" — match against the counterparty BIC
+- "BankTransactionCode" — match against the bank transaction code
 
 Respond with a JSON array of exactly 3 objects, each containing:
-- "match_field": "Merchant" or "Description"
+- "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode"
 - "match_pattern": string — a regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
 - "explanation": string — brief explanation of what the rule matches
 
@@ -282,7 +322,7 @@ Merchant: {merchant}
 Description: {description}
 Amount: {amount}
 Date: {date}
-Category: {category}
+{cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}Category: {category}
 
 Other merchants in this category:
 {siblings_block}
@@ -310,6 +350,10 @@ JSON response:"#,
             .map(|r| {
                 let match_field = match r.match_field.as_str() {
                     "Description" => MatchField::Description,
+                    "CounterpartyName" => MatchField::CounterpartyName,
+                    "CounterpartyIban" => MatchField::CounterpartyIban,
+                    "CounterpartyBic" => MatchField::CounterpartyBic,
+                    "BankTransactionCode" => MatchField::BankTransactionCode,
                     _ => MatchField::Merchant,
                 };
                 ProposedRule {
@@ -428,13 +472,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize(
-                "WHOLE FOODS MARKET",
-                dec!(72.34),
-                Some("Weekly groceries"),
-                &[],
-                None,
-            )
+            .categorize(&CategorizeInput {
+                merchant_name: "WHOLE FOODS MARKET",
+                amount: dec!(72.34),
+                description: Some("Weekly groceries"),
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Groceries");
@@ -456,7 +503,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("AMAZON", dec!(25.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "AMAZON",
+                amount: dec!(25.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await
             .unwrap();
         assert!((result.confidence - 1.0).abs() < f64::EPSILON);
@@ -545,6 +601,10 @@ mod tests {
             category_name: "Food:Groceries".to_owned(),
             sibling_merchants: vec!["TRADER JOE'S".to_owned()],
             existing_rule_patterns: vec![],
+            counterparty_name: None,
+            counterparty_iban: None,
+            counterparty_bic: None,
+            bank_transaction_code: None,
         };
 
         let results = provider.propose_rules(&context).await.unwrap();
@@ -565,7 +625,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("TEST", dec!(10.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "TEST",
+                amount: dec!(10.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await;
         assert!(matches!(
             result,
@@ -584,7 +653,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("TEST", dec!(10.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "TEST",
+                amount: dec!(10.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await;
         assert!(matches!(result, Err(ProviderError::RateLimited)));
     }
@@ -600,7 +678,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("TEST", dec!(10.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "TEST",
+                amount: dec!(10.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await;
         assert!(matches!(result, Err(ProviderError::ApiError { .. })));
     }
@@ -618,7 +705,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("TEST", dec!(10.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "TEST",
+                amount: dec!(10.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
@@ -637,7 +733,16 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("TEST", dec!(10.00), None, &[], None)
+            .categorize(&CategorizeInput {
+                merchant_name: "TEST",
+                amount: dec!(10.00),
+                description: None,
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
@@ -668,13 +773,16 @@ mod live_tests {
     async fn live_categorize_grocery() {
         let provider = require_provider();
         let result = provider
-            .categorize(
-                "WHOLE FOODS MARKET #10234",
-                dec!(87.43),
-                Some("Groceries"),
-                &[],
-                None,
-            )
+            .categorize(&CategorizeInput {
+                merchant_name: "WHOLE FOODS MARKET #10234",
+                amount: dec!(87.43),
+                description: Some("Groceries"),
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await
             .unwrap();
 
@@ -696,13 +804,16 @@ mod live_tests {
     async fn live_categorize_subscription() {
         let provider = require_provider();
         let result = provider
-            .categorize(
-                "NETFLIX.COM",
-                dec!(15.99),
-                Some("Monthly subscription"),
-                &[],
-                None,
-            )
+            .categorize(&CategorizeInput {
+                merchant_name: "NETFLIX.COM",
+                amount: dec!(15.99),
+                description: Some("Monthly subscription"),
+                existing_categories: &[],
+                bank_transaction_code: None,
+                counterparty_name: None,
+                counterparty_iban: None,
+                counterparty_bic: None,
+            })
             .await
             .unwrap();
 
@@ -752,6 +863,10 @@ mod live_tests {
             category_name: "Food:Groceries".to_owned(),
             sibling_merchants: vec!["WHOLE FOODS MARKET".to_owned()],
             existing_rule_patterns: vec![],
+            counterparty_name: None,
+            counterparty_iban: None,
+            counterparty_bic: None,
+            bank_transaction_code: None,
         };
         let results = provider.propose_rules(&context).await.unwrap();
 

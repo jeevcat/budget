@@ -78,6 +78,10 @@ pub enum MatchField {
     Merchant,
     Description,
     AmountRange,
+    CounterpartyName,
+    CounterpartyIban,
+    CounterpartyBic,
+    BankTransactionCode,
 }
 
 impl fmt::Display for MatchField {
@@ -86,6 +90,10 @@ impl fmt::Display for MatchField {
             Self::Merchant => write!(f, "merchant"),
             Self::Description => write!(f, "description"),
             Self::AmountRange => write!(f, "amount_range"),
+            Self::CounterpartyName => write!(f, "counterparty_name"),
+            Self::CounterpartyIban => write!(f, "counterparty_iban"),
+            Self::CounterpartyBic => write!(f, "counterparty_bic"),
+            Self::BankTransactionCode => write!(f, "bank_transaction_code"),
         }
     }
 }
@@ -98,6 +106,10 @@ impl std::str::FromStr for MatchField {
             "merchant" => Ok(Self::Merchant),
             "description" => Ok(Self::Description),
             "amount_range" => Ok(Self::AmountRange),
+            "counterparty_name" => Ok(Self::CounterpartyName),
+            "counterparty_iban" => Ok(Self::CounterpartyIban),
+            "counterparty_bic" => Ok(Self::CounterpartyBic),
+            "bank_transaction_code" => Ok(Self::BankTransactionCode),
             _ => Err(Error::InvalidMatchField(s.to_owned())),
         }
     }

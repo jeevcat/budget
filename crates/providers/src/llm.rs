@@ -32,6 +32,10 @@ pub enum CorrelationType {
 pub enum MatchField {
     Merchant,
     Description,
+    CounterpartyName,
+    CounterpartyIban,
+    CounterpartyBic,
+    BankTransactionCode,
 }
 
 /// Result of LLM-based correlation analysis between two transactions.
@@ -51,6 +55,18 @@ pub struct ProposedRule {
     pub explanation: String,
 }
 
+/// Input for LLM-based transaction categorization.
+pub struct CategorizeInput<'a> {
+    pub merchant_name: &'a str,
+    pub amount: Decimal,
+    pub description: Option<&'a str>,
+    pub existing_categories: &'a [String],
+    pub bank_transaction_code: Option<&'a str>,
+    pub counterparty_name: Option<&'a str>,
+    pub counterparty_iban: Option<&'a str>,
+    pub counterparty_bic: Option<&'a str>,
+}
+
 /// Full transaction context for per-transaction rule generation.
 pub struct RuleContext {
     pub merchant_name: String,
@@ -60,17 +76,17 @@ pub struct RuleContext {
     pub category_name: String,
     pub sibling_merchants: Vec<String>,
     pub existing_rule_patterns: Vec<String>,
+    pub counterparty_name: Option<String>,
+    pub counterparty_iban: Option<String>,
+    pub counterparty_bic: Option<String>,
+    pub bank_transaction_code: Option<String>,
 }
 
 #[trait_variant::make(Send)]
 pub trait LlmProvider {
     async fn categorize(
         &self,
-        merchant_name: &str,
-        amount: Decimal,
-        description: Option<&str>,
-        existing_categories: &[String],
-        bank_transaction_code: Option<&str>,
+        input: &CategorizeInput<'_>,
     ) -> Result<CategorizeResult, ProviderError>;
 
     async fn propose_correlation(

@@ -10,12 +10,12 @@ use std::sync::Arc;
 
 use apalis::prelude::*;
 use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use budget_providers::{
-    CategorizeResult, CorrelationResult, EnableBankingConfig, EnableBankingProvider,
-    GeminiProvider, MockLlmProvider, ProposedRule, ProviderError, RuleContext, TransactionSummary,
+    CategorizeInput, CategorizeResult, CorrelationResult, EnableBankingConfig,
+    EnableBankingProvider, GeminiProvider, MockLlmProvider, ProposedRule, ProviderError,
+    RuleContext, TransactionSummary,
 };
 
 pub mod categorize;
@@ -289,31 +289,16 @@ impl LlmClient {
         }
     }
 
-    /// Classify a transaction by merchant name, amount, and description.
-    ///
-    /// When `existing_categories` is non-empty, the LLM is instructed to
-    /// prefer these known names rather than inventing new ones.
+    /// Classify a transaction using all available fields.
     ///
     /// # Errors
     ///
     /// Propagates any [`ProviderError`] from the underlying provider.
     pub async fn categorize(
         &self,
-        merchant_name: &str,
-        amount: Decimal,
-        description: Option<&str>,
-        existing_categories: &[String],
-        bank_transaction_code: Option<&str>,
+        input: &CategorizeInput<'_>,
     ) -> Result<CategorizeResult, ProviderError> {
-        self.inner
-            .categorize_erased(
-                merchant_name,
-                amount,
-                description,
-                existing_categories,
-                bank_transaction_code,
-            )
-            .await
+        self.inner.categorize_erased(input).await
     }
 
     /// Propose whether two transactions are correlated (transfer /
@@ -348,11 +333,7 @@ impl LlmClient {
 trait ErasedLlmProvider {
     fn categorize_erased<'a>(
         &'a self,
-        merchant_name: &'a str,
-        amount: Decimal,
-        description: Option<&'a str>,
-        existing_categories: &'a [String],
-        bank_transaction_code: Option<&'a str>,
+        input: &'a CategorizeInput<'a>,
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>>;
 
     fn propose_correlation_erased<'a>(
@@ -370,19 +351,9 @@ trait ErasedLlmProvider {
 impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
     fn categorize_erased<'a>(
         &'a self,
-        merchant_name: &'a str,
-        amount: Decimal,
-        description: Option<&'a str>,
-        existing_categories: &'a [String],
-        bank_transaction_code: Option<&'a str>,
+        input: &'a CategorizeInput<'a>,
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>> {
-        Box::pin(self.categorize(
-            merchant_name,
-            amount,
-            description,
-            existing_categories,
-            bank_transaction_code,
-        ))
+        Box::pin(self.categorize(input))
     }
 
     fn propose_correlation_erased<'a>(

@@ -167,6 +167,10 @@ async fn generate_rule(
         category_name: category.name.clone(),
         sibling_merchants,
         existing_rule_patterns,
+        counterparty_name: txn.counterparty_name,
+        counterparty_iban: txn.counterparty_iban,
+        counterparty_bic: txn.counterparty_bic,
+        bank_transaction_code: txn.bank_transaction_code,
     };
 
     let proposed = state
@@ -182,6 +186,12 @@ async fn generate_rule(
             let match_field_domain = match p.match_field {
                 MatchField::Merchant => budget_core::models::MatchField::Merchant,
                 MatchField::Description => budget_core::models::MatchField::Description,
+                MatchField::CounterpartyName => budget_core::models::MatchField::CounterpartyName,
+                MatchField::CounterpartyIban => budget_core::models::MatchField::CounterpartyIban,
+                MatchField::CounterpartyBic => budget_core::models::MatchField::CounterpartyBic,
+                MatchField::BankTransactionCode => {
+                    budget_core::models::MatchField::BankTransactionCode
+                }
             };
             let test_rule = budget_core::models::Rule {
                 id: budget_core::models::RuleId::new(),
@@ -198,6 +208,10 @@ async fn generate_rule(
             match_field: match p.match_field {
                 MatchField::Merchant => "merchant".to_owned(),
                 MatchField::Description => "description".to_owned(),
+                MatchField::CounterpartyName => "counterparty_name".to_owned(),
+                MatchField::CounterpartyIban => "counterparty_iban".to_owned(),
+                MatchField::CounterpartyBic => "counterparty_bic".to_owned(),
+                MatchField::BankTransactionCode => "bank_transaction_code".to_owned(),
             },
             match_pattern: p.match_pattern,
             explanation: p.explanation,

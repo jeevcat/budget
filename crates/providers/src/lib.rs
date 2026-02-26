@@ -19,7 +19,7 @@ pub use enable_banking::{
 pub use error::ProviderError;
 pub use gemini::GeminiProvider;
 pub use llm::{
-    CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
-    RuleContext, TransactionSummary,
+    CategorizeInput, CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField,
+    ProposedRule, RuleContext, TransactionSummary,
 };
 pub use mock::{MockBankProvider, MockLlmProvider};

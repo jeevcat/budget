@@ -123,15 +123,18 @@ pub async fn handle_categorize_transaction_job(
         Some(txn.description.as_str())
     };
 
-    let result = llm
-        .categorize(
-            &txn.merchant_name,
-            txn.amount,
-            description,
-            &existing_categories,
-            txn.bank_transaction_code.as_deref(),
-        )
-        .await?;
+    let input = budget_providers::CategorizeInput {
+        merchant_name: &txn.merchant_name,
+        amount: txn.amount,
+        description,
+        existing_categories: &existing_categories,
+        bank_transaction_code: txn.bank_transaction_code.as_deref(),
+        counterparty_name: txn.counterparty_name.as_deref(),
+        counterparty_iban: txn.counterparty_iban.as_deref(),
+        counterparty_bic: txn.counterparty_bic.as_deref(),
+    };
+
+    let result = llm.categorize(&input).await?;
 
     if result.confidence < LLM_CONFIDENCE_THRESHOLD {
         tracing::debug!(

@@ -19,14 +19,14 @@ pub struct CompiledRule {
 /// The compiled representation of a rule's match pattern.
 #[derive(Debug)]
 pub enum CompiledPattern {
-    /// A case-insensitive regular expression for merchant or description matching.
+    /// A case-insensitive regular expression for text field matching.
     Regex(regex::Regex),
-    /// An inclusive numeric range for amount matching.
+    /// A numeric range for amount matching, with optional open-ended bounds.
     AmountRange {
-        /// Lower bound (inclusive).
-        min: Decimal,
-        /// Upper bound (inclusive).
-        max: Decimal,
+        min: Option<Decimal>,
+        max: Option<Decimal>,
+        min_inclusive: bool,
+        max_inclusive: bool,
     },
 }
 
@@ -42,17 +42,19 @@ pub enum CompiledPattern {
 /// amount range format is invalid.
 pub fn compile_rule_pattern(rule: &Rule) -> Result<CompiledRule, Error> {
     let pattern = match rule.match_field {
-        MatchField::Merchant | MatchField::Description => {
+        MatchField::Merchant
+        | MatchField::Description
+        | MatchField::CounterpartyName
+        | MatchField::CounterpartyIban
+        | MatchField::CounterpartyBic
+        | MatchField::BankTransactionCode => {
             let regex = RegexBuilder::new(&rule.match_pattern)
                 .case_insensitive(true)
                 .build()
                 .map_err(|e| Error::InvalidRulePattern(e.to_string()))?;
             CompiledPattern::Regex(regex)
         }
-        MatchField::AmountRange => {
-            let (min, max) = parse_amount_range(&rule.match_pattern)?;
-            CompiledPattern::AmountRange { min, max }
-        }
+        MatchField::AmountRange => parse_amount_range(&rule.match_pattern)?,
     };
 
     Ok(CompiledRule {
@@ -121,20 +123,125 @@ fn matches_rule(transaction: &Transaction, compiled: &CompiledRule) -> bool {
         (CompiledPattern::Regex(regex), MatchField::Description) => {
             regex.is_match(&transaction.description)
         }
-        (CompiledPattern::AmountRange { min, max }, MatchField::AmountRange) => {
-            transaction.amount >= *min && transaction.amount <= *max
+        (CompiledPattern::Regex(regex), MatchField::CounterpartyName) => transaction
+            .counterparty_name
+            .as_ref()
+            .is_some_and(|v| regex.is_match(v)),
+        (CompiledPattern::Regex(regex), MatchField::CounterpartyIban) => transaction
+            .counterparty_iban
+            .as_ref()
+            .is_some_and(|v| regex.is_match(v)),
+        (CompiledPattern::Regex(regex), MatchField::CounterpartyBic) => transaction
+            .counterparty_bic
+            .as_ref()
+            .is_some_and(|v| regex.is_match(v)),
+        (CompiledPattern::Regex(regex), MatchField::BankTransactionCode) => transaction
+            .bank_transaction_code
+            .as_ref()
+            .is_some_and(|v| regex.is_match(v)),
+        (
+            CompiledPattern::AmountRange {
+                min,
+                max,
+                min_inclusive,
+                max_inclusive,
+            },
+            MatchField::AmountRange,
+        ) => {
+            let amount = transaction.amount;
+            let above_min = match min {
+                Some(m) => {
+                    if *min_inclusive {
+                        amount >= *m
+                    } else {
+                        amount > *m
+                    }
+                }
+                None => true,
+            };
+            let below_max = match max {
+                Some(m) => {
+                    if *max_inclusive {
+                        amount <= *m
+                    } else {
+                        amount < *m
+                    }
+                }
+                None => true,
+            };
+            above_min && below_max
         }
         // Mismatched pattern/field combinations never match
         _ => false,
     }
 }
 
-/// Parse an amount range pattern in `"min..max"` format into two `Decimal` bounds.
-fn parse_amount_range(pattern: &str) -> Result<(Decimal, Decimal), Error> {
-    let parts: Vec<&str> = pattern.splitn(3, "..").collect();
+/// Parse an amount pattern into a `CompiledPattern::AmountRange`.
+///
+/// Supported formats:
+/// - `"min..max"` — inclusive range (backward compatible)
+/// - `">100"` — strictly greater than
+/// - `">=100"` — greater than or equal
+/// - `"<100"` — strictly less than
+/// - `"<=100"` — less than or equal
+fn parse_amount_range(pattern: &str) -> Result<CompiledPattern, Error> {
+    let trimmed = pattern.trim();
+
+    // Try comparison operators first (>=, <=, >, <)
+    if let Some(val) = trimmed.strip_prefix(">=") {
+        let v: Decimal = val
+            .trim()
+            .parse()
+            .map_err(|e| Error::InvalidRulePattern(format!("invalid amount value: {e}")))?;
+        return Ok(CompiledPattern::AmountRange {
+            min: Some(v),
+            max: None,
+            min_inclusive: true,
+            max_inclusive: true,
+        });
+    }
+    if let Some(val) = trimmed.strip_prefix("<=") {
+        let v: Decimal = val
+            .trim()
+            .parse()
+            .map_err(|e| Error::InvalidRulePattern(format!("invalid amount value: {e}")))?;
+        return Ok(CompiledPattern::AmountRange {
+            min: None,
+            max: Some(v),
+            min_inclusive: true,
+            max_inclusive: true,
+        });
+    }
+    if let Some(val) = trimmed.strip_prefix('>') {
+        let v: Decimal = val
+            .trim()
+            .parse()
+            .map_err(|e| Error::InvalidRulePattern(format!("invalid amount value: {e}")))?;
+        return Ok(CompiledPattern::AmountRange {
+            min: Some(v),
+            max: None,
+            min_inclusive: false,
+            max_inclusive: true,
+        });
+    }
+    if let Some(val) = trimmed.strip_prefix('<') {
+        let v: Decimal = val
+            .trim()
+            .parse()
+            .map_err(|e| Error::InvalidRulePattern(format!("invalid amount value: {e}")))?;
+        return Ok(CompiledPattern::AmountRange {
+            min: None,
+            max: Some(v),
+            min_inclusive: true,
+            max_inclusive: false,
+        });
+    }
+
+    // Inclusive range: "min..max"
+    let parts: Vec<&str> = trimmed.splitn(3, "..").collect();
     if parts.len() != 2 {
         return Err(Error::InvalidRulePattern(format!(
-            "expected 'min..max' format, got: {pattern}"
+            "expected 'min..max', '>N', '>=N', '<N', or '<=N', got: {pattern}"
         )));
     }
 
@@ -148,7 +255,12 @@ fn parse_amount_range(pattern: &str) -> Result<(Decimal, Decimal), Error> {
         .parse()
         .map_err(|e| Error::InvalidRulePattern(format!("invalid max value: {e}")))?;
 
-    Ok((min, max))
+    Ok(CompiledPattern::AmountRange {
+        min: Some(min),
+        max: Some(max),
+        min_inclusive: true,
+        max_inclusive: true,
+    })
 }
 
 #[cfg(test)]
@@ -254,9 +366,16 @@ mod tests {
 
         let compiled = compiled.unwrap();
         match &compiled.pattern {
-            CompiledPattern::AmountRange { min, max } => {
-                assert_eq!(*min, dec!(100.00));
-                assert_eq!(*max, dec!(500.00));
+            CompiledPattern::AmountRange {
+                min,
+                max,
+                min_inclusive,
+                max_inclusive,
+            } => {
+                assert_eq!(*min, Some(dec!(100.00)));
+                assert_eq!(*max, Some(dec!(500.00)));
+                assert!(*min_inclusive);
+                assert!(*max_inclusive);
             }
             CompiledPattern::Regex(_) => panic!("expected AmountRange pattern"),
         }
@@ -489,5 +608,197 @@ mod tests {
         let txn = make_txn("anything", "desc", dec!(10.00));
         // Should return None because the rule is Correlation, not Categorization
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), None);
+    }
+
+    #[test]
+    fn counterparty_name_matching() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::CounterpartyName,
+            r"landlord",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let mut txn = make_txn("Any", "desc", dec!(1000.00));
+        txn.counterparty_name = Some("My Landlord Inc".to_owned());
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+    }
+
+    #[test]
+    fn counterparty_name_none_never_matches() {
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::CounterpartyName,
+            r"landlord",
+            Some(CategoryId::new()),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let txn = make_txn("Any", "desc", dec!(1000.00));
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), None);
+    }
+
+    #[test]
+    fn counterparty_iban_matching() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::CounterpartyIban,
+            r"^FI\d+",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let mut txn = make_txn("Any", "desc", dec!(50.00));
+        txn.counterparty_iban = Some("FI1234567890".to_owned());
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+
+        // None never matches
+        let txn_none = make_txn("Any", "desc", dec!(50.00));
+        assert_eq!(evaluate_categorization_rules(&txn_none, &compiled), None);
+    }
+
+    #[test]
+    fn counterparty_bic_matching() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::CounterpartyBic,
+            r"NDEAFIHH",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let mut txn = make_txn("Any", "desc", dec!(50.00));
+        txn.counterparty_bic = Some("NDEAFIHH".to_owned());
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+    }
+
+    #[test]
+    fn bank_transaction_code_matching() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::BankTransactionCode,
+            r"PMNT-ICDT-STDO",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let mut txn = make_txn("Any", "desc", dec!(50.00));
+        txn.bank_transaction_code = Some("PMNT-ICDT-STDO".to_owned());
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+
+        // None never matches
+        let txn_none = make_txn("Any", "desc", dec!(50.00));
+        assert_eq!(evaluate_categorization_rules(&txn_none, &compiled), None);
+    }
+
+    #[test]
+    fn amount_greater_than() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::AmountRange,
+            ">100",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        // Exactly 100 should NOT match (strict >)
+        let txn_eq = make_txn("Any", "desc", dec!(100));
+        assert_eq!(evaluate_categorization_rules(&txn_eq, &compiled), None);
+
+        // Above 100 should match
+        let txn_above = make_txn("Any", "desc", dec!(100.01));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_above, &compiled),
+            Some(cat_id)
+        );
+    }
+
+    #[test]
+    fn amount_greater_than_or_equal() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::AmountRange,
+            ">=100",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let txn_eq = make_txn("Any", "desc", dec!(100));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_eq, &compiled),
+            Some(cat_id)
+        );
+
+        let txn_below = make_txn("Any", "desc", dec!(99.99));
+        assert_eq!(evaluate_categorization_rules(&txn_below, &compiled), None);
+    }
+
+    #[test]
+    fn amount_less_than() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::AmountRange,
+            "<50",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        // Exactly 50 should NOT match (strict <)
+        let txn_eq = make_txn("Any", "desc", dec!(50));
+        assert_eq!(evaluate_categorization_rules(&txn_eq, &compiled), None);
+
+        // Below 50 should match
+        let txn_below = make_txn("Any", "desc", dec!(49.99));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_below, &compiled),
+            Some(cat_id)
+        );
+    }
+
+    #[test]
+    fn amount_less_than_or_equal() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            MatchField::AmountRange,
+            "<=50",
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+
+        let txn_eq = make_txn("Any", "desc", dec!(50));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_eq, &compiled),
+            Some(cat_id)
+        );
+
+        let txn_above = make_txn("Any", "desc", dec!(50.01));
+        assert_eq!(evaluate_categorization_rules(&txn_above, &compiled), None);
     }
 }
