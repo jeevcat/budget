@@ -579,7 +579,7 @@ function Dashboard() {
   // Budget-contributing transactions for the current month (monthly/unbudgeted categories only)
   const monthBudgetTxns = monthTxns.filter((t) => {
     if (!filterForBudget(t)) return false;
-    if (t.category_id && !monthlyCatIds.has(t.category_id)) return false;
+    if (!t.category_id || !monthlyCatIds.has(t.category_id)) return false;
     return true;
   });
 
