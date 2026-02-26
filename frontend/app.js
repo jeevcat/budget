@@ -542,10 +542,7 @@ function Dashboard() {
   // Category ID sets by budget mode
   const monthlyCatIds = new Set(
     categories
-      .filter((c) => {
-        const mode = effectiveBudgetMode(c);
-        return mode === "monthly" || !mode;
-      })
+      .filter((c) => effectiveBudgetMode(c) === "monthly")
       .map((c) => c.id),
   );
   const annualCatIds = new Set(
