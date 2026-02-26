@@ -37,6 +37,9 @@ pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
 pub use recompute::handle_recompute_job;
 pub use sync::handle_sync_job;
 
+mod storage;
+pub use storage::{JobStorage, PipelineStorage};
+
 // ---------------------------------------------------------------------------
 // Type-erased provider wrappers
 //
@@ -345,5 +348,111 @@ pub struct NoOpJob;
 #[allow(clippy::unused_async)] // apalis requires async handlers
 pub async fn handle_noop_job(_job: NoOpJob) -> Result<(), BoxDynError> {
     tracing::info!("no-op job executed");
+    Ok(())
+}
+
+/// Create and run all apalis workers (individual jobs + pipeline workflow).
+///
+/// Returns when any worker errors out.
+///
+/// # Errors
+///
+/// Returns an error if any worker fails.
+pub async fn run_workers(
+    db: &budget_core::db::Db,
+    apalis_pool: &ApalisPool,
+    bank_factory: BankProviderFactory,
+    llm: LlmClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    macro_rules! backend {
+        ($T:ty) => {{ apalis_postgres::PostgresStorage::<$T>::new(apalis_pool) }};
+    }
+
+    // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
+    let pipeline_backend = backend!(Vec<u8>);
+    let pipeline_workflow = pipeline::workflow_for(&pipeline_backend)
+        .and_then(pipeline::step_sync)
+        .and_then(pipeline::step_categorize)
+        .and_then(pipeline::step_correlate)
+        .and_then(pipeline::step_recompute);
+    let pipeline_worker = WorkerBuilder::new("budget-pipeline")
+        .backend(pipeline_backend)
+        .data(db.clone())
+        .data(bank_factory.clone())
+        // clone() justified: ApalisPool is Arc-based
+        .data(apalis_pool.clone())
+        .build(pipeline_workflow);
+
+    // clone() on db is justified: Db wraps an Arc-based pool
+    let sync_worker = WorkerBuilder::new("budget-sync")
+        .backend(backend!(SyncJob))
+        .data(db.clone())
+        .data(bank_factory)
+        .build(handle_sync_job);
+
+    // Fan-out handlers: apply rules, enqueue per-transaction LLM jobs
+    let categorize_worker = WorkerBuilder::new("budget-categorize")
+        .backend(backend!(CategorizeJob))
+        .data(db.clone())
+        .data(apalis_pool.clone())
+        .build(handle_categorize_job);
+
+    let correlate_worker = WorkerBuilder::new("budget-correlate")
+        .backend(backend!(CorrelateJob))
+        .data(db.clone())
+        .data(apalis_pool.clone())
+        .build(handle_correlate_job);
+
+    // Per-transaction handlers: call LLM for individual transactions
+    let categorize_txn_worker = WorkerBuilder::new("budget-categorize-txn")
+        .backend(backend!(CategorizeTransactionJob))
+        .data(db.clone())
+        .data(llm.clone())
+        .build(handle_categorize_transaction_job);
+
+    let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
+        .backend(backend!(CorrelateTransactionJob))
+        .data(db.clone())
+        .data(llm)
+        .build(handle_correlate_transaction_job);
+
+    let recompute_worker = WorkerBuilder::new("budget-recompute")
+        .backend(backend!(BudgetRecomputeJob))
+        .data(db.clone())
+        .build(handle_recompute_job);
+
+    let noop_worker = WorkerBuilder::new("budget-no-op")
+        .backend(backend!(NoOpJob))
+        .build(handle_noop_job);
+
+    tracing::info!("job queue initialized");
+
+    tokio::select! {
+        res = sync_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "sync worker error"); }
+        }
+        res = categorize_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
+        }
+        res = categorize_txn_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "categorize-txn worker error"); }
+        }
+        res = correlate_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
+        }
+        res = correlate_txn_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
+        }
+        res = recompute_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }
+        }
+        res = noop_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "noop worker error"); }
+        }
+        res = pipeline_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "pipeline worker error"); }
+        }
+    }
+
     Ok(())
 }

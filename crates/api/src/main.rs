@@ -1,15 +1,10 @@
 use std::sync::Arc;
 
-use apalis::prelude::*;
-use apalis_workflow::Workflow;
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_core::db::Db;
-use budget_jobs::{
-    ApalisPool, BankProviderFactory, BudgetRecomputeJob, CategorizeJob, CategorizeTransactionJob,
-    CorrelateJob, CorrelateTransactionJob, LlmClient, NoOpJob, SyncJob, pipeline,
-};
+use budget_jobs::{ApalisPool, BankProviderFactory, JobStorage, LlmClient, PipelineStorage};
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
     MockLlmProvider,
@@ -23,7 +18,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use api::auth;
 use api::routes;
-use api::state::{AppState, JobStorage, PipelineStorage};
+use api::state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::path::PathBuf::from,
     );
     let app = build_router(state, &frontend_dir);
-    let workers = build_workers(&db, &apalis_pool, bank_factory, llm);
+    let workers = budget_jobs::run_workers(&db, &apalis_pool, bank_factory, llm);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
 
@@ -289,115 +284,6 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .fallback_service(static_service)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
-}
-
-/// Create and run all apalis workers (individual jobs + pipeline workflow).
-///
-/// Returns a future that resolves when any worker errors out.
-async fn build_workers(
-    db: &Db,
-    apalis_pool: &ApalisPool,
-    bank_factory: BankProviderFactory,
-    llm: LlmClient,
-) -> Result<(), Box<dyn std::error::Error>> {
-    macro_rules! backend {
-        ($T:ty) => {{ apalis_postgres::PostgresStorage::<$T>::new(apalis_pool) }};
-    }
-
-    // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
-    let pipeline_backend = backend!(Vec<u8>);
-    let pipeline_workflow = workflow_for(&pipeline_backend)
-        .and_then(pipeline::step_sync)
-        .and_then(pipeline::step_categorize)
-        .and_then(pipeline::step_correlate)
-        .and_then(pipeline::step_recompute);
-    let pipeline_worker = WorkerBuilder::new("budget-pipeline")
-        .backend(pipeline_backend)
-        .data(db.clone())
-        .data(bank_factory.clone())
-        // clone() justified: ApalisPool is Arc-based
-        .data(apalis_pool.clone())
-        .build(pipeline_workflow);
-
-    // clone() on db is justified: Db wraps an Arc-based pool
-    let sync_worker = WorkerBuilder::new("budget-sync")
-        .backend(backend!(SyncJob))
-        .data(db.clone())
-        .data(bank_factory)
-        .build(budget_jobs::handle_sync_job);
-
-    // Fan-out handlers: apply rules, enqueue per-transaction LLM jobs
-    let categorize_worker = WorkerBuilder::new("budget-categorize")
-        .backend(backend!(CategorizeJob))
-        .data(db.clone())
-        .data(apalis_pool.clone())
-        .build(budget_jobs::handle_categorize_job);
-
-    let correlate_worker = WorkerBuilder::new("budget-correlate")
-        .backend(backend!(CorrelateJob))
-        .data(db.clone())
-        .data(apalis_pool.clone())
-        .build(budget_jobs::handle_correlate_job);
-
-    // Per-transaction handlers: call LLM for individual transactions
-    let categorize_txn_worker = WorkerBuilder::new("budget-categorize-txn")
-        .backend(backend!(CategorizeTransactionJob))
-        .data(db.clone())
-        .data(llm.clone())
-        .build(budget_jobs::handle_categorize_transaction_job);
-
-    let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
-        .backend(backend!(CorrelateTransactionJob))
-        .data(db.clone())
-        .data(llm)
-        .build(budget_jobs::handle_correlate_transaction_job);
-
-    let recompute_worker = WorkerBuilder::new("budget-recompute")
-        .backend(backend!(BudgetRecomputeJob))
-        .data(db.clone())
-        .build(budget_jobs::handle_recompute_job);
-
-    let noop_worker = WorkerBuilder::new("budget-no-op")
-        .backend(backend!(NoOpJob))
-        .build(budget_jobs::handle_noop_job);
-
-    tracing::info!("job queue initialized");
-
-    tokio::select! {
-        res = sync_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "sync worker error"); }
-        }
-        res = categorize_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
-        }
-        res = categorize_txn_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "categorize-txn worker error"); }
-        }
-        res = correlate_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
-        }
-        res = correlate_txn_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
-        }
-        res = recompute_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }
-        }
-        res = noop_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "noop worker error"); }
-        }
-        res = pipeline_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "pipeline worker error"); }
-        }
-    }
-
-    Ok(())
-}
-
-/// Create a [`Workflow`] whose Backend type parameter is inferred from a
-/// reference to the concrete backend. This avoids naming the full
-/// backend-specific storage type.
-fn workflow_for<T, B>(_backend: &B) -> Workflow<T, T, B> {
-    Workflow::new("full-sync-pipeline")
 }
 
 /// Build the Enable Banking auth provider and config from settings.

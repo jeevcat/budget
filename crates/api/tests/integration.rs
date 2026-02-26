@@ -8,7 +8,8 @@ use tower::ServiceExt;
 
 use api::auth;
 use api::routes;
-use api::state::{AppState, JobStorage, PipelineStorage};
+use api::state::AppState;
+use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::db::Db;
 use budget_core::models::{

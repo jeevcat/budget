@@ -5,10 +5,18 @@
 //! triggered for a specific account.
 
 use apalis::prelude::*;
+use apalis_workflow::Workflow;
 
 use budget_core::db::Db;
 
 use super::{ApalisPool, BankProviderFactory};
+
+/// Create a [`Workflow`] whose Backend type parameter is inferred from a
+/// reference to the concrete backend. This avoids naming the full
+/// backend-specific storage type.
+pub(crate) fn workflow_for<T, B>(_backend: &B) -> Workflow<T, T, B> {
+    Workflow::new("full-sync-pipeline")
+}
 
 /// Step 1: Sync transactions for the given account.
 ///

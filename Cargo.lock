@@ -139,9 +139,7 @@ dependencies = [
 name = "api"
 version = "0.1.0"
 dependencies = [
- "apalis",
  "apalis-postgres",
- "apalis-workflow",
  "axum",
  "budget-core",
  "budget-jobs",
