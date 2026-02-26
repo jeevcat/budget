@@ -218,13 +218,29 @@ function SpendBar({ items, maxVal }) {
   `;
 }
 
+function formatMonthRange(month) {
+  const fmt = (d) => {
+    const date = new Date(d + "T00:00:00");
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  const start = fmt(month.start_date);
+  const end = month.end_date ? fmt(month.end_date) : "now";
+  return `${start} \u2013 ${end}`;
+}
+
 function Dashboard() {
-  const [status, setStatus] = useState(null);
+  const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
   const [transactions, setTransactions] = useState(null);
   const [error, setError] = useState(null);
+  const [selectedMonthId, setSelectedMonthId] = useState(null);
 
+  // Initial load: categories, months, transactions + status for current month
   useEffect(() => {
     Promise.all([
       api.get("/budgets/status"),
@@ -233,7 +249,7 @@ function Dashboard() {
       api.get("/transactions"),
     ])
       .then(([s, c, m, t]) => {
-        setStatus(s);
+        setStatusResp(s);
         setCategories(c);
         setMonths(m);
         setTransactions(t);
@@ -241,15 +257,45 @@ function Dashboard() {
       .catch(setError);
   }, []);
 
+  // Re-fetch status when selectedMonthId changes (skip the initial null)
+  useEffect(() => {
+    if (selectedMonthId === null) return;
+    api
+      .get(`/budgets/status?month_id=${selectedMonthId}`)
+      .then(setStatusResp)
+      .catch(setError);
+  }, [selectedMonthId]);
+
   if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!status || !categories || !months || !transactions)
+  if (!statusResp || !categories || !months || !transactions)
     return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
 
-  // Current budget month (open-ended)
-  const currentMonth = months.find((m) => !m.end_date);
-  const monthStart = currentMonth?.start_date;
+  // The month we're viewing comes from the status response
+  const activeMonth = statusResp.month;
+  const isCurrentMonth = !activeMonth.end_date;
+  const status = statusResp.statuses;
+
+  // Sort months chronologically for navigation
+  const sortedMonths = [...months].sort((a, b) =>
+    a.start_date.localeCompare(b.start_date),
+  );
+  const activeIdx = sortedMonths.findIndex((m) => m.id === activeMonth.id);
+  const hasPrev = activeIdx > 0;
+  const hasNext = activeIdx < sortedMonths.length - 1;
+
+  function goPrev() {
+    if (!hasPrev) return;
+    const prev = sortedMonths[activeIdx - 1];
+    setSelectedMonthId(prev.id);
+  }
+
+  function goNext() {
+    if (!hasNext) return;
+    const next = sortedMonths[activeIdx + 1];
+    setSelectedMonthId(next.id);
+  }
 
   // Enrich status with display names and hierarchy info
   const enriched = status
@@ -278,13 +324,20 @@ function Dashboard() {
   const totalSpent = enriched.reduce((sum, s) => sum + Number(s.spent), 0);
   const totalRemaining = totalBudget - totalSpent;
 
-  // Uncategorized count
-  const uncategorizedCount = transactions.filter(
+  // Uncategorized count (scoped to selected month)
+  const monthTxns = transactions.filter((t) => {
+    if (t.budget_month_id) return t.budget_month_id === activeMonth.id;
+    return (
+      t.posted_date >= activeMonth.start_date &&
+      (!activeMonth.end_date || t.posted_date < activeMonth.end_date)
+    );
+  });
+  const uncategorizedCount = monthTxns.filter(
     (t) => !t.category_id && !t.correlation_type,
   ).length;
 
-  // Recent transactions (last 8)
-  const recentTxns = [...transactions]
+  // Recent transactions scoped to the selected month
+  const recentTxns = [...monthTxns]
     .sort((a, b) => b.posted_date.localeCompare(a.posted_date))
     .slice(0, 8);
 
@@ -303,32 +356,42 @@ function Dashboard() {
   const overBudget = enriched.filter((s) => s.pace === "over_budget");
 
   return html`
-    ${
-      currentMonth &&
-      html`
-        <div class="hstack" style="margin-bottom:1.25rem">
-          <div>
-            <h2 style="margin:0">Budget Month</h2>
-            <span class="text-light">
-              Started ${monthStart}${" "}
-              <span class="mono">${daysLeft}d left</span>
-            </span>
-          </div>
+    <div class="hstack" style="margin-bottom:1.25rem">
+      <div class="hstack" style="gap:0.5rem;align-items:center">
+        <button
+          onClick=${goPrev}
+          disabled=${!hasPrev}
+          style="padding:0.25rem 0.5rem;font-size:1rem"
+          aria-label="Previous month"
+        >\u2039</button>
+        <div style="text-align:center">
+          <strong>${formatMonthRange(activeMonth)}</strong>
           ${
-            uncategorizedCount > 0 &&
-            html`
-              <a
-                href="#/transactions"
-                class="badge warning"
-                style="margin-left:auto;text-decoration:none"
-              >
-                ${uncategorizedCount} uncategorized
-              </a>
-            `
+            isCurrentMonth
+              ? html`<div class="text-light mono" style="font-size:0.85rem">${daysLeft}d left</div>`
+              : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
           }
         </div>
-      `
-    }
+        <button
+          onClick=${goNext}
+          disabled=${!hasNext}
+          style="padding:0.25rem 0.5rem;font-size:1rem"
+          aria-label="Next month"
+        >\u203A</button>
+      </div>
+      ${
+        uncategorizedCount > 0 &&
+        html`
+          <a
+            href="#/transactions"
+            class="badge warning"
+            style="margin-left:auto;text-decoration:none"
+          >
+            ${uncategorizedCount} uncategorized
+          </a>
+        `
+      }
+    </div>
 
     <div class="dash-totals">
       <article class="card dash-stat-card">
