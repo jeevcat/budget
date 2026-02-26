@@ -90,6 +90,9 @@ pub struct BudgetStatus {
     pub budget_amount: Decimal,
     pub spent: Decimal,
     pub remaining: Decimal,
-    pub days_left: i64,
+    /// Monthly = days left, Annual = months left, Project = days left (-1 if open-ended)
+    pub time_left: i64,
     pub pace: PaceIndicator,
+    pub budget_mode: BudgetMode,
+    pub rollover: Decimal,
 }

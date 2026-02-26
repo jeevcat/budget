@@ -21,6 +21,7 @@ struct StatusQuery {
 struct StatusResponse {
     month: BudgetMonth,
     statuses: Vec<BudgetStatus>,
+    projects: Vec<BudgetStatus>,
 }
 
 /// Build the budgets sub-router.
@@ -54,7 +55,10 @@ async fn status(
 ) -> Result<Json<StatusResponse>, AppError> {
     let transactions = state.db.list_transactions().await?;
     let categories = state.db.list_categories().await?;
-    let budget_months = state.db.list_budget_months().await?;
+    let mut budget_months = state.db.list_budget_months().await?;
+
+    // Sort months by start_date for budget_year_months lookups
+    budget_months.sort_by_key(|bm| bm.start_date);
 
     let month = if let Some(id) = query.month_id {
         budget_months
@@ -79,12 +83,37 @@ async fn status(
                 Some(BudgetMode::Monthly | BudgetMode::Annual)
             )
         })
-        .map(|cat| compute_budget_status(cat, &transactions, month, &categories, reference_date))
+        .map(|cat| {
+            compute_budget_status(
+                cat,
+                &transactions,
+                month,
+                &budget_months,
+                &categories,
+                reference_date,
+            )
+        })
+        .collect();
+
+    let projects: Vec<BudgetStatus> = categories
+        .iter()
+        .filter(|c| c.budget_mode == Some(BudgetMode::Project))
+        .map(|cat| {
+            compute_budget_status(
+                cat,
+                &transactions,
+                month,
+                &budget_months,
+                &categories,
+                reference_date,
+            )
+        })
         .collect();
 
     Ok(Json(StatusResponse {
         month: month.clone(),
         statuses,
+        projects,
     }))
 }
 

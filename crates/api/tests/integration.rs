@@ -1077,10 +1077,13 @@ async fn budgets_status_with_current_month(pool: PgPool) {
     let (status, body) = send(app, get("/api/budgets/status")).await;
     assert_eq!(status, StatusCode::OK);
 
-    let statuses: Vec<budget_core::models::BudgetStatus> =
-        serde_json::from_slice(&body).expect("parse");
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    let statuses = resp["statuses"].as_array().expect("statuses array");
     assert_eq!(statuses.len(), 1);
-    assert_eq!(statuses[0].category_id, category.id);
+    assert_eq!(
+        statuses[0]["category_id"].as_str().expect("category_id"),
+        category.id.as_uuid().to_string()
+    );
 }
 
 // ===========================================================================

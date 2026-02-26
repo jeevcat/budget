@@ -390,8 +390,14 @@ function Dashboard() {
     1,
   );
 
-  // Days into the month / days left
-  const daysLeft = enriched.length > 0 ? enriched[0].days_left : 0;
+  // Time left for the primary display (first monthly category, or first category)
+  const firstMonthly = enriched.find((s) => s.budgetMode === "monthly");
+  const timeLeftEntry = firstMonthly || enriched[0];
+  const timeLeftVal = timeLeftEntry ? Number(timeLeftEntry.time_left) : 0;
+  const timeLeftLabel =
+    timeLeftEntry?.budgetMode === "annual"
+      ? `${timeLeftVal}mo left`
+      : `${timeLeftVal}d left`;
 
   // Over-budget categories
   const overBudget = enriched.filter((s) => s.pace === "over_budget");
@@ -409,7 +415,7 @@ function Dashboard() {
           <strong>${formatMonthRange(activeMonth)}</strong>
           ${
             isCurrentMonth
-              ? html`<div class="text-light mono" style="font-size:0.85rem">${daysLeft}d left</div>`
+              ? html`<div class="text-light mono" style="font-size:0.85rem">${timeLeftLabel}</div>`
               : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
           }
         </div>
@@ -502,6 +508,10 @@ function Dashboard() {
                     <span class="text-light">
                       ${" "}/ ${currencyFmt(s.budget_amount)}</span
                     >
+                    ${
+                      Number(s.rollover) !== 0 &&
+                      html`<span class="text-light" style="margin-left:0.25rem">(${Number(s.rollover) > 0 ? "+" : ""}${currencyFmt(s.rollover)} rollover)</span>`
+                    }
                   </div>
                 </div>
                 <div class="vstack dash-cat-end">
@@ -520,6 +530,49 @@ function Dashboard() {
         </div>
       </article>
     </div>
+
+    ${
+      statusResp.projects &&
+      statusResp.projects.length > 0 &&
+      html`
+        <article class="card" style="padding:var(--space-4);margin-top:1rem">
+          <h3 style="margin:0 0 0.75rem">Projects</h3>
+          <div class="vstack" style="gap:0">
+            ${statusResp.projects.map((s) => {
+              const label = categoryLabel(catMap, s.category_id);
+              const shortName = label?.short ?? s.category_name;
+              const parentName = label?.parent ?? null;
+              const tl = Number(s.time_left);
+              const tlLabel = tl < 0 ? "open-ended" : `${tl}d left`;
+              return html`
+                <div class="hstack dash-cat-row" key=${s.category_id}>
+                  <${ProgressRing}
+                    spent=${s.spent}
+                    budget=${s.budget_amount}
+                    pace=${s.pace}
+                  />
+                  <div class="dash-cat-info">
+                    <div class="dash-cat-name">
+                      ${parentName && html`<span class="cat-parent">${parentName}</span>`}${shortName}
+                    </div>
+                    <div class="dash-cat-sub">
+                      <span>${currencyFmt(s.spent)}</span>
+                      <span class="text-light">
+                        ${" "}/ ${Number(s.budget_amount) > 0 ? currencyFmt(s.budget_amount) : "no budget"}</span
+                      >
+                    </div>
+                  </div>
+                  <div class="vstack dash-cat-end">
+                    <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace)}</span>
+                    <span class="text-light" style="font-size:0.8rem">${tlLabel}</span>
+                  </div>
+                </div>
+              `;
+            })}
+          </div>
+        </article>
+      `
+    }
 
     <article class="card" style="padding:var(--space-4);margin-top:1rem">
       <div

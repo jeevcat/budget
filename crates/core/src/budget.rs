@@ -206,46 +206,224 @@ fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
     }
 }
 
-/// Compute the full budget status for a category in a budget month.
-#[must_use]
-pub fn compute_budget_status(
-    category: &Category,
-    transactions: &[Transaction],
-    budget_month: &BudgetMonth,
-    categories: &[Category],
-    today: NaiveDate,
-) -> BudgetStatus {
-    let spent = compute_category_spending(transactions, category.id, budget_month, categories);
-
-    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
-    let remaining = budget_amount - spent;
-
-    let end_date = budget_month
-        .end_date
-        .unwrap_or(budget_month.start_date + chrono::Days::new(30));
-
-    let days_left = (end_date - today).num_days().max(0);
-
-    // Pace indicator: compare actual spend rate to pro-rata linear budget
-    let total_days = (end_date - budget_month.start_date).num_days();
-    let elapsed_days = (today - budget_month.start_date).num_days().max(0);
-
-    let pace = if total_days <= 0 || budget_amount == Decimal::ZERO {
-        if spent > budget_amount {
+/// Compare actual spending to a pro-rata linear budget over elapsed/total periods.
+fn compute_pace(spent: Decimal, budget: Decimal, elapsed: i64, total: i64) -> PaceIndicator {
+    if total <= 0 || budget == Decimal::ZERO {
+        if spent > budget {
             PaceIndicator::OverBudget
         } else {
             PaceIndicator::OnTrack
         }
     } else {
-        // Pro-rata expected spend at this point in the month
-        let fraction = Decimal::from(elapsed_days) / Decimal::from(total_days);
-        let expected_spend = budget_amount * fraction;
-
+        let fraction = Decimal::from(elapsed) / Decimal::from(total);
+        let expected_spend = budget * fraction;
         if spent > expected_spend {
             PaceIndicator::OverBudget
         } else {
             PaceIndicator::UnderBudget
         }
+    }
+}
+
+/// Return the budget months belonging to the current budget year.
+///
+/// The budget year starts at the first month whose `start_date` falls in January,
+/// walking backwards from `reference_month`. Takes up to 12 months forward from
+/// that anchor.
+#[must_use]
+pub fn budget_year_months<'a>(
+    all_months: &'a [BudgetMonth],
+    reference_month: &BudgetMonth,
+) -> Vec<&'a BudgetMonth> {
+    // Find the reference month's index
+    let ref_idx = all_months
+        .iter()
+        .position(|bm| bm.id == reference_month.id)
+        .unwrap_or(0);
+
+    // Walk backwards to find the January-anchored start
+    let mut year_start_idx = ref_idx;
+    for i in (0..=ref_idx).rev() {
+        year_start_idx = i;
+        if all_months[i].start_date.month() == 1 {
+            break;
+        }
+    }
+
+    // Take up to 12 months forward from the anchor
+    let year_end_idx = (year_start_idx + 12).min(all_months.len());
+    all_months[year_start_idx..year_end_idx].iter().collect()
+}
+
+/// Compute budget status for a monthly category.
+fn compute_monthly_status(
+    category: &Category,
+    transactions: &[Transaction],
+    current_month: &BudgetMonth,
+    all_months: &[BudgetMonth],
+    categories: &[Category],
+    today: NaiveDate,
+) -> BudgetStatus {
+    let spent = compute_category_spending(transactions, category.id, current_month, categories);
+    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+
+    // Rollover from prior months only (exclude the month we're computing status for)
+    let prior_months: Vec<BudgetMonth> = all_months
+        .iter()
+        .filter(|bm| bm.id != current_month.id)
+        .cloned()
+        .collect();
+    let rollover = compute_rollover(category, &prior_months, transactions, categories);
+    let effective_budget = budget_amount + rollover;
+    let remaining = effective_budget - spent;
+
+    let end_date = current_month
+        .end_date
+        .unwrap_or(current_month.start_date + chrono::Days::new(30));
+
+    let time_left = (end_date - today).num_days().max(0);
+
+    let total_days = (end_date - current_month.start_date).num_days();
+    let elapsed_days = (today - current_month.start_date).num_days().max(0);
+    let pace = compute_pace(spent, effective_budget, elapsed_days, total_days);
+
+    BudgetStatus {
+        category_id: category.id,
+        category_name: category.name.clone(),
+        budget_amount,
+        spent,
+        remaining,
+        time_left,
+        pace,
+        budget_mode: BudgetMode::Monthly,
+        rollover,
+    }
+}
+
+/// Compute budget status for an annual category.
+fn compute_annual_status(
+    category: &Category,
+    transactions: &[Transaction],
+    current_month: &BudgetMonth,
+    all_months: &[BudgetMonth],
+    categories: &[Category],
+    _today: NaiveDate,
+) -> BudgetStatus {
+    let year_months = budget_year_months(all_months, current_month);
+
+    // Sum spending across all months in the budget year
+    let spent = year_months
+        .iter()
+        .map(|bm| compute_category_spending(transactions, category.id, bm, categories))
+        .sum::<Decimal>();
+
+    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+    let remaining = budget_amount - spent;
+
+    let total_year_months = i64::try_from(year_months.len()).unwrap_or(i64::MAX);
+    // Elapsed months = months up to and including the reference month
+    let elapsed_months = year_months
+        .iter()
+        .position(|bm| bm.id == current_month.id)
+        .map_or(total_year_months, |idx| {
+            i64::try_from(idx).unwrap_or(i64::MAX) + 1
+        });
+    let time_left = (total_year_months - elapsed_months).max(0);
+
+    let pace = compute_pace(spent, budget_amount, elapsed_months, total_year_months);
+
+    BudgetStatus {
+        category_id: category.id,
+        category_name: category.name.clone(),
+        budget_amount,
+        spent,
+        remaining,
+        time_left,
+        pace,
+        budget_mode: BudgetMode::Annual,
+        rollover: Decimal::ZERO,
+    }
+}
+
+/// Compute budget status for a project category.
+fn compute_project_status(
+    category: &Category,
+    transactions: &[Transaction],
+    categories: &[Category],
+    today: NaiveDate,
+) -> BudgetStatus {
+    let subtree = collect_category_subtree(category.id, categories);
+
+    // Collect reimbursed transaction IDs (same logic as filter_for_budget)
+    let reimbursed_ids: std::collections::HashSet<_> = transactions
+        .iter()
+        .filter(|t| {
+            t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
+        })
+        .filter_map(|t| t.correlation_id)
+        .collect();
+
+    let start = category.project_start_date;
+    let end = category.project_end_date;
+
+    // Filter transactions within the project date range, excluding transfers/reimbursements
+    let spent: Decimal = transactions
+        .iter()
+        .filter(|t| {
+            let in_subtree = t.category_id.is_some_and(|cid| subtree.contains(&cid));
+            if !in_subtree {
+                return false;
+            }
+            // Exclude transfers
+            if t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Transfer)
+            {
+                return false;
+            }
+            // Exclude reimbursements
+            if t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
+            {
+                return false;
+            }
+            // Exclude reimbursed originals
+            if reimbursed_ids.contains(&t.id) {
+                return false;
+            }
+            // Date range filter
+            if let Some(s) = start
+                && t.posted_date < s
+            {
+                return false;
+            }
+            if let Some(e) = end
+                && t.posted_date > e
+            {
+                return false;
+            }
+            true
+        })
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+
+    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+    let remaining = budget_amount - spent;
+
+    let (time_left, pace) = match (start, end) {
+        (Some(s), Some(e)) if budget_amount > Decimal::ZERO => {
+            let total_days = (e - s).num_days();
+            let elapsed_days = (today - s).num_days().max(0);
+            let tl = (e - today).num_days().max(0);
+            (
+                tl,
+                compute_pace(spent, budget_amount, elapsed_days, total_days),
+            )
+        }
+        // Open-ended or no budget: can't compute pace
+        _ => (-1, PaceIndicator::OnTrack),
     };
 
     BudgetStatus {
@@ -254,8 +432,46 @@ pub fn compute_budget_status(
         budget_amount,
         spent,
         remaining,
-        days_left,
+        time_left,
         pace,
+        budget_mode: BudgetMode::Project,
+        rollover: Decimal::ZERO,
+    }
+}
+
+/// Compute the full budget status for a category.
+///
+/// Dispatches to mode-specific logic based on the category's `budget_mode`.
+#[must_use]
+pub fn compute_budget_status(
+    category: &Category,
+    transactions: &[Transaction],
+    current_month: &BudgetMonth,
+    all_months: &[BudgetMonth],
+    categories: &[Category],
+    today: NaiveDate,
+) -> BudgetStatus {
+    match category.budget_mode {
+        Some(BudgetMode::Annual) => compute_annual_status(
+            category,
+            transactions,
+            current_month,
+            all_months,
+            categories,
+            today,
+        ),
+        Some(BudgetMode::Project) => {
+            compute_project_status(category, transactions, categories, today)
+        }
+        // Monthly (default)
+        _ => compute_monthly_status(
+            category,
+            transactions,
+            current_month,
+            all_months,
+            categories,
+            today,
+        ),
     }
 }
 
@@ -584,17 +800,21 @@ mod tests {
             end_date: Some(date(2025, 2, 13)),
             salary_transactions_detected: 1,
         };
+        let all_months = [bm.clone()];
 
         let transactions = vec![make_txn(Some(food.id), dec!(100), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
-        let status = compute_budget_status(&food, &transactions, &bm, &categories, today);
+        let status =
+            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
 
         assert_eq!(status.spent, dec!(100));
         assert_eq!(status.remaining, dec!(400));
         assert_eq!(status.budget_amount, dec!(500));
         assert_eq!(status.pace, PaceIndicator::UnderBudget);
-        assert!(status.days_left > 0);
+        assert!(status.time_left > 0);
+        assert_eq!(status.budget_mode, BudgetMode::Monthly);
+        assert_eq!(status.rollover, Decimal::ZERO);
     }
 
     #[test]
@@ -608,15 +828,18 @@ mod tests {
             end_date: Some(date(2025, 2, 13)),
             salary_transactions_detected: 1,
         };
+        let all_months = [bm.clone()];
 
         let transactions = vec![make_txn(Some(food.id), dec!(250), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
-        let status = compute_budget_status(&food, &transactions, &bm, &categories, today);
+        let status =
+            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
 
         assert_eq!(status.spent, dec!(250));
         assert_eq!(status.remaining, dec!(-50));
         assert_eq!(status.pace, PaceIndicator::OverBudget);
+        assert_eq!(status.budget_mode, BudgetMode::Monthly);
     }
 
     #[test]
@@ -721,5 +944,220 @@ mod tests {
 
         // Only closed month counts: 500 - 300 = 200
         assert_eq!(rollover, dec!(200));
+    }
+
+    #[test]
+    fn budget_year_months_finds_january_anchor() {
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: Some(date(2025, 3, 14)),
+            salary_transactions_detected: 1,
+        };
+        let bm_mar = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all = [bm_jan.clone(), bm_feb.clone(), bm_mar.clone()];
+
+        let year = budget_year_months(&all, &bm_mar);
+        assert_eq!(year.len(), 3);
+        assert_eq!(year[0].id, bm_jan.id);
+    }
+
+    #[test]
+    fn budget_year_months_caps_at_twelve() {
+        // 14 months starting from November (no January anchor found before it)
+        let months: Vec<BudgetMonth> = (0..14)
+            .map(|i| {
+                let y = 2024 + (10 + i) / 12;
+                let m = ((10 + i) % 12) + 1;
+                BudgetMonth {
+                    id: BudgetMonthId::new(),
+                    start_date: date(y as i32, m, 15),
+                    end_date: Some(date(y as i32, m, 28)),
+                    salary_transactions_detected: 1,
+                }
+            })
+            .collect();
+
+        // Reference = month index 5 (March 2025 — first January is at index 2)
+        let year = budget_year_months(&months, &months[5]);
+        // Should start at index 2 (Jan 2025) and take up to 12 months
+        assert_eq!(year[0].start_date.month(), 1);
+        assert!(year.len() <= 12);
+    }
+
+    #[test]
+    fn annual_status_aggregates_across_year() {
+        let food = food_with_budget(BudgetMode::Annual, dec!(6000));
+        let categories = vec![food.clone()];
+
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: Some(date(2025, 3, 14)),
+            salary_transactions_detected: 1,
+        };
+        let bm_mar = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm_jan.clone(), bm_feb.clone(), bm_mar.clone()];
+
+        let transactions = vec![
+            make_txn(Some(food.id), dec!(400), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(600), date(2025, 2, 20)),
+            make_txn(Some(food.id), dec!(200), date(2025, 3, 20)),
+        ];
+
+        let today = date(2025, 3, 25);
+        let status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm_mar,
+            &all_months,
+            &categories,
+            today,
+        );
+
+        assert_eq!(status.budget_mode, BudgetMode::Annual);
+        // 400 + 600 + 200 = 1200 across three months
+        assert_eq!(status.spent, dec!(1200));
+        assert_eq!(status.remaining, dec!(4800));
+        assert_eq!(status.rollover, Decimal::ZERO);
+        // 3 months total, reference is month 3 → 0 months left
+        assert_eq!(status.time_left, 0);
+    }
+
+    #[test]
+    fn project_status_filters_by_date_range() {
+        let mut project = make_category(300, "Renovation", None);
+        project.budget_mode = Some(BudgetMode::Project);
+        project.budget_amount = Some(dec!(10000));
+        project.project_start_date = Some(date(2025, 1, 1));
+        project.project_end_date = Some(date(2025, 6, 30));
+        let categories = vec![project.clone()];
+
+        // A dummy budget month (needed for signature but project ignores it)
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        let transactions = vec![
+            make_txn(Some(project.id), dec!(2000), date(2025, 2, 15)),
+            make_txn(Some(project.id), dec!(3000), date(2025, 4, 10)),
+            // Outside project range — excluded
+            make_txn(Some(project.id), dec!(500), date(2024, 12, 20)),
+            make_txn(Some(project.id), dec!(500), date(2025, 7, 1)),
+        ];
+
+        let today = date(2025, 4, 15);
+        let status = compute_budget_status(
+            &project,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+        );
+
+        assert_eq!(status.budget_mode, BudgetMode::Project);
+        assert_eq!(status.spent, dec!(5000));
+        assert_eq!(status.remaining, dec!(5000));
+        // Days left: June 30 - April 15 = 76 days
+        assert_eq!(status.time_left, 76);
+    }
+
+    #[test]
+    fn project_status_open_ended() {
+        let mut project = make_category(301, "Ongoing", None);
+        project.budget_mode = Some(BudgetMode::Project);
+        project.budget_amount = Some(dec!(5000));
+        project.project_start_date = Some(date(2025, 1, 1));
+        // No end date
+        let categories = vec![project.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        let transactions = vec![make_txn(Some(project.id), dec!(1000), date(2025, 2, 1))];
+
+        let today = date(2025, 4, 1);
+        let status = compute_budget_status(
+            &project,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+        );
+
+        assert_eq!(status.budget_mode, BudgetMode::Project);
+        assert_eq!(status.spent, dec!(1000));
+        assert_eq!(status.time_left, -1);
+        assert_eq!(status.pace, PaceIndicator::OnTrack);
+    }
+
+    #[test]
+    fn monthly_status_includes_rollover() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let categories = vec![food.clone()];
+
+        let bm1 = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let bm2 = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm1.clone(), bm2.clone()];
+
+        let transactions = vec![
+            // Month 1: spent 300, surplus 200
+            make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
+            // Month 2 (current): spent 100
+            make_txn(Some(food.id), dec!(100), date(2025, 2, 20)),
+        ];
+
+        let today = date(2025, 2, 25);
+        let status =
+            compute_budget_status(&food, &transactions, &bm2, &all_months, &categories, today);
+
+        assert_eq!(status.budget_mode, BudgetMode::Monthly);
+        assert_eq!(status.rollover, dec!(200));
+        assert_eq!(status.spent, dec!(100));
+        // remaining = budget(500) + rollover(200) - spent(100) = 600
+        assert_eq!(status.remaining, dec!(600));
     }
 }
