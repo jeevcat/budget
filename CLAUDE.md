@@ -28,8 +28,9 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 
 ## Frontend
 
-- **Use [Oat CSS](https://oat.ink/) classes and components** — do not write custom CSS unless Oat has no suitable option
-- Full reference: `frontend/oat-reference.md` — check this before adding anything to `style.css`
+- **Strongly prefer [Oat CSS](https://oat.ink/) classes and components over custom CSS** — always check `frontend/oat-reference.md` and Oat utility classes (`hstack`, `vstack`, `text-light`, `gap-*`, `badge`, `card`, `chip`, etc.) before writing anything in `style.css`
+- Custom CSS in `style.css` is a last resort — only for things Oat genuinely cannot do (custom visualizations, pseudo-elements, responsive grid breakpoints, sticky table headers)
+- When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
 
 ## Coding Standards
 
