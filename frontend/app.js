@@ -1168,10 +1168,6 @@ function TransactionTable({
   onTransactionUpdate,
   compact,
 }) {
-  const [search, setSearch] = useState("");
-  const [filterCat, setFilterCat] = useState("");
-  const [filterAcct, setFilterAcct] = useState("");
-  const [filterMethod, setFilterMethod] = useState("");
   const [selected, setSelected] = useState(null);
   const [sortCol, setSortCol] = useState("date");
   const [sortAsc, setSortAsc] = useState(false);
@@ -1181,29 +1177,7 @@ function TransactionTable({
     : {};
   const showAccounts = !!accounts;
 
-  const q = search.toLowerCase();
-  const filtered = transactions.filter((t) => {
-    if (
-      q &&
-      !(t.merchant_name || "").toLowerCase().includes(q) &&
-      !(t.description || "").toLowerCase().includes(q)
-    )
-      return false;
-    if (filterCat === "__none" && t.category_id) return false;
-    if (filterCat && filterCat !== "__none" && t.category_id !== filterCat)
-      return false;
-    if (filterAcct && t.account_id !== filterAcct) return false;
-    if (filterMethod === "__none" && t.category_method) return false;
-    if (
-      filterMethod &&
-      filterMethod !== "__none" &&
-      t.category_method !== filterMethod
-    )
-      return false;
-    return true;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...transactions].sort((a, b) => {
     let cmp = 0;
     switch (sortCol) {
       case "date":
@@ -1249,14 +1223,6 @@ function TransactionTable({
     </th>`;
   }
 
-  const usedCatIds = [
-    ...new Set(transactions.map((t) => t.category_id).filter(Boolean)),
-  ];
-  const usedAcctIds = showAccounts
-    ? [...new Set(transactions.map((t) => t.account_id))]
-    : [];
-  const hasActiveFilter = filterCat || filterAcct || filterMethod;
-
   function handleCategorize(txnId, categoryId) {
     const patch = categoryId
       ? {
@@ -1272,78 +1238,6 @@ function TransactionTable({
   }
 
   return html`
-    <div class="hstack txn-filters" style="margin-bottom:0.75rem">
-      <input
-        type="search"
-        placeholder="Search merchants..."
-        class="txn-search"
-        value=${search}
-        onInput=${(e) => setSearch(e.target.value)}
-      />
-      <select value=${filterCat} onChange=${(e) => setFilterCat(e.target.value)}>
-        <option value="">All categories</option>
-        <option value="__none">Uncategorized</option>
-        ${usedCatIds.map(
-          (id) =>
-            html`<option value=${id}>${categoryName(catMap, id)}</option>`,
-        )}
-      </select>
-      ${
-        showAccounts &&
-        html`
-        <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
-          <option value="">All accounts</option>
-          ${usedAcctIds.map(
-            (id) =>
-              html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
-          )}
-        </select>
-      `
-      }
-      <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
-        <option value="">All methods</option>
-        <option value="manual">Manual</option>
-        <option value="rule">Rule</option>
-        <option value="llm">LLM</option>
-        <option value="__none">Uncategorized</option>
-      </select>
-    </div>
-
-    ${
-      hasActiveFilter &&
-      html`
-      <div class="hstack gap-2" style="margin-bottom:0.75rem">
-        ${
-          filterCat &&
-          html`
-          <button class="chip" onClick=${() => setFilterCat("")}>
-            <span>${filterCat === "__none" ? "Uncategorized" : categoryName(catMap, filterCat)}</span>
-            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
-          </button>
-        `
-        }
-        ${
-          filterAcct &&
-          html`
-          <button class="chip" onClick=${() => setFilterAcct("")}>
-            <span>${accountDisplayName(acctMap[filterAcct]) || filterAcct}</span>
-            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
-          </button>
-        `
-        }
-        ${
-          filterMethod &&
-          html`
-          <button class="chip" onClick=${() => setFilterMethod("")}>
-            <span>${filterMethod === "__none" ? "Uncategorized" : filterMethod === "llm" ? "LLM" : filterMethod.charAt(0).toUpperCase() + filterMethod.slice(1)}</span>
-            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
-          </button>
-        `
-        }
-      </div>
-    `
-    }
-
     <div class="${compact ? "table dash-txn-table" : "table txn-table"}" style="${compact ? "max-height:24rem;overflow-y:auto" : ""}">
       <table>
         <thead>
@@ -1400,6 +1294,10 @@ function Transactions() {
   const [categories, setCategories] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterCat, setFilterCat] = useState("");
+  const [filterAcct, setFilterAcct] = useState("");
+  const [filterMethod, setFilterMethod] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -1419,6 +1317,7 @@ function Transactions() {
   if (!txns) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
+  const acctMap = Object.fromEntries((accounts ?? []).map((a) => [a.id, a]));
 
   if (txns.length === 0)
     return html`
@@ -1429,16 +1328,115 @@ function Transactions() {
       </p>
     `;
 
+  const q = search.toLowerCase();
+  const filtered = txns.filter((t) => {
+    if (
+      q &&
+      !(t.merchant_name || "").toLowerCase().includes(q) &&
+      !(t.description || "").toLowerCase().includes(q)
+    )
+      return false;
+    if (filterCat === "__none" && t.category_id) return false;
+    if (filterCat && filterCat !== "__none" && t.category_id !== filterCat)
+      return false;
+    if (filterAcct && t.account_id !== filterAcct) return false;
+    if (filterMethod === "__none" && t.category_method) return false;
+    if (
+      filterMethod &&
+      filterMethod !== "__none" &&
+      t.category_method !== filterMethod
+    )
+      return false;
+    return true;
+  });
+
+  const usedCatIds = [
+    ...new Set(txns.map((t) => t.category_id).filter(Boolean)),
+  ];
+  const usedAcctIds = [...new Set(txns.map((t) => t.account_id))];
+  const hasActiveFilter = filterCat || filterAcct || filterMethod;
+
   return html`
     <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
       <h2 style="margin:0">Transactions</h2>
       <span class="text-lighter small" style="margin-left:0.75rem">
-        ${txns.length}
+        ${
+          filtered.length === txns.length
+            ? `${txns.length}`
+            : `${filtered.length} / ${txns.length}`
+        }
       </span>
     </div>
 
+    <div class="hstack txn-filters" style="margin-bottom:0.75rem">
+      <input
+        type="search"
+        placeholder="Search merchants..."
+        class="txn-search"
+        value=${search}
+        onInput=${(e) => setSearch(e.target.value)}
+      />
+      <select value=${filterCat} onChange=${(e) => setFilterCat(e.target.value)}>
+        <option value="">All categories</option>
+        <option value="__none">Uncategorized</option>
+        ${usedCatIds.map(
+          (id) =>
+            html`<option value=${id}>${categoryName(catMap, id)}</option>`,
+        )}
+      </select>
+      <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
+        <option value="">All accounts</option>
+        ${usedAcctIds.map(
+          (id) =>
+            html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
+        )}
+      </select>
+      <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
+        <option value="">All methods</option>
+        <option value="manual">Manual</option>
+        <option value="rule">Rule</option>
+        <option value="llm">LLM</option>
+        <option value="__none">Uncategorized</option>
+      </select>
+    </div>
+
+    ${
+      hasActiveFilter &&
+      html`
+      <div class="hstack gap-2" style="margin-bottom:0.75rem">
+        ${
+          filterCat &&
+          html`
+          <button class="chip" onClick=${() => setFilterCat("")}>
+            <span>${filterCat === "__none" ? "Uncategorized" : categoryName(catMap, filterCat)}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+        ${
+          filterAcct &&
+          html`
+          <button class="chip" onClick=${() => setFilterAcct("")}>
+            <span>${accountDisplayName(acctMap[filterAcct]) || filterAcct}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+        ${
+          filterMethod &&
+          html`
+          <button class="chip" onClick=${() => setFilterMethod("")}>
+            <span>${filterMethod === "__none" ? "Uncategorized" : filterMethod === "llm" ? "LLM" : filterMethod.charAt(0).toUpperCase() + filterMethod.slice(1)}</span>
+            <span class="chip-close" aria-label="Remove filter">\u00d7</span>
+          </button>
+        `
+        }
+      </div>
+    `
+    }
+
     <${TransactionTable}
-      transactions=${txns}
+      transactions=${filtered}
       categories=${categories}
       catMap=${catMap}
       accounts=${accounts}
