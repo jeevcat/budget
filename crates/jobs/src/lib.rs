@@ -455,7 +455,10 @@ pub async fn run_workers(
     llm: LlmClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     macro_rules! backend {
-        ($T:ty) => {{ apalis_postgres::PostgresStorage::<$T>::new(apalis_pool) }};
+        ($T:ty) => {{
+            let config = apalis_postgres::Config::new(std::any::type_name::<$T>());
+            apalis_postgres::PostgresStorage::<$T>::new_with_notify(apalis_pool, &config)
+        }};
     }
 
     // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
