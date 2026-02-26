@@ -33,7 +33,7 @@ httpdate = "1"
 rust_decimal_macros = "1"
 thiserror = "2"
 trait-variant = "0.1"
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 
 # Internal crates
 budget-core = { path = "crates/core" }
