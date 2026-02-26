@@ -233,12 +233,17 @@ function ProgressRing({ spent, budget, pace, size = 48 }) {
   `;
 }
 
-function SpendBar({ items, maxVal }) {
+function SpendBar({ items, maxVal, selectedCategoryId, onCategoryClick }) {
   return html`
     <div class="vstack gap-2">
       ${items.map(
         (item) => html`
-          <div class="spend-bar-row" key=${item.id}>
+          <div
+            class="spend-bar-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
+            key=${item.id}
+            onClick=${() => onCategoryClick?.(item.id)}
+            style="cursor:pointer"
+          >
             <span class="spend-bar-label">${item.name}</span>
             <div class="spend-bar-track">
               <div
@@ -265,6 +270,8 @@ function BudgetSection({
   totalSpent,
   totalRemaining,
   barMax,
+  selectedCategoryId,
+  onCategoryClick,
 }) {
   const overBudget = items.filter((s) => s.pace === "over_budget");
 
@@ -311,6 +318,8 @@ function BudgetSection({
             pace: s.pace,
           }))}
           maxVal=${barMax}
+          selectedCategoryId=${selectedCategoryId}
+          onCategoryClick=${onCategoryClick}
         />
       </article>
 
@@ -319,7 +328,12 @@ function BudgetSection({
         <div class="vstack" style="gap:0">
           ${items.map(
             (s) => html`
-              <div class="hstack dash-cat-row" key=${s.category_id}>
+              <div
+                class="hstack dash-cat-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
+                key=${s.category_id}
+                onClick=${() => onCategoryClick?.(s.category_id)}
+                style="cursor:pointer"
+              >
                 <${ProgressRing}
                   spent=${s.spent}
                   budget=${s.budget_amount}
@@ -493,16 +507,84 @@ function Dashboard() {
   const monthTxns = transactions.filter(
     (t) =>
       t.posted_date >= activeMonth.start_date &&
-      (!activeMonth.end_date || t.posted_date < activeMonth.end_date),
+      (!activeMonth.end_date || t.posted_date <= activeMonth.end_date),
   );
   const uncategorizedCount = monthTxns.filter(
     (t) => !t.category_id && !t.correlation_type,
   ).length;
 
-  // Recent transactions scoped to the selected month
-  const recentTxns = [...monthTxns]
-    .sort((a, b) => b.posted_date.localeCompare(a.posted_date))
-    .slice(0, 8);
+  // Collect category subtree IDs for a given category (mirrors backend logic)
+  const collectSubtree = (rootId) => {
+    const ids = new Set([rootId]);
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      for (const c of categories) {
+        if (c.parent_id === current && !ids.has(c.id)) {
+          ids.add(c.id);
+          stack.push(c.id);
+        }
+      }
+    }
+    return ids;
+  };
+
+  // Project category IDs (excluded from regular budget math)
+  const projectCatIds = new Set(
+    categories
+      .filter((c) => c.budget_mode === "project")
+      .flatMap((c) => [...collectSubtree(c.id)]),
+  );
+
+  // IDs of transactions that are reimbursed (have a correlation partner)
+  const reimbursedIds = new Set(
+    transactions
+      .filter((t) => t.correlation_type === "reimbursement")
+      .map((t) => t.correlation_id)
+      .filter(Boolean),
+  );
+
+  // Shared filter: exclude transfers, reimbursements, reimbursed originals
+  const filterForBudget = (t) => {
+    if (t.correlation_type === "transfer") return false;
+    if (t.correlation_type === "reimbursement") return false;
+    if (reimbursedIds.has(t.id)) return false;
+    return true;
+  };
+
+  // Budget-contributing transactions for the current month (non-project)
+  const monthBudgetTxns = monthTxns.filter((t) => {
+    if (t.category_id && projectCatIds.has(t.category_id)) return false;
+    return filterForBudget(t);
+  });
+
+  // Budget year months: walk backwards from active month to find January anchor
+  const yearStartIdx = (() => {
+    for (let i = activeIdx; i >= 0; i--) {
+      const sd = new Date(`${sortedMonths[i].start_date}T00:00:00`);
+      if (sd.getMonth() === 0) return i;
+    }
+    return 0;
+  })();
+  const yearEndIdx = Math.min(yearStartIdx + 12, sortedMonths.length);
+  const yearStart = sortedMonths[yearStartIdx]?.start_date;
+  const lastYearMonth = sortedMonths[yearEndIdx - 1];
+  const yearEnd = lastYearMonth?.end_date;
+
+  // Annual-scoped transactions: spans the entire budget year
+  const annualBudgetTxns = transactions.filter((t) => {
+    if (t.category_id && projectCatIds.has(t.category_id)) return false;
+    if (!filterForBudget(t)) return false;
+    if (yearStart && t.posted_date < yearStart) return false;
+    if (yearEnd && t.posted_date > yearEnd) return false;
+    return true;
+  });
+
+  // Project transactions: in project categories, within project date ranges
+  const projectBudgetTxns = transactions.filter((t) => {
+    if (!t.category_id || !projectCatIds.has(t.category_id)) return false;
+    return filterForBudget(t);
+  });
 
   // Time left label per mode
   const timeLeft = (items, unit) => {
@@ -516,6 +598,12 @@ function Dashboard() {
 
   const hasProjects = projects.length > 0;
 
+  // Category filter for transaction list (click a category in charts to filter)
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const handleCategoryClick = useCallback((catId) => {
+    setSelectedCategoryId((prev) => (prev === catId ? null : catId));
+  }, []);
+
   // Track active tab (0 = Monthly, 1 = Annual, 2 = Projects)
   const [activeTab, setActiveTab] = useState(0);
   const tabsRef = useRef(null);
@@ -528,12 +616,33 @@ function Dashboard() {
       if (!tab) return;
       const tabs = [...el.querySelectorAll("[role=tab]")];
       const idx = tabs.indexOf(tab);
-      if (idx >= 0) setActiveTab(idx);
+      if (idx >= 0) {
+        setActiveTab(idx);
+        setSelectedCategoryId(null);
+      }
     });
   }, []);
 
   const isAnnualTab = activeTab === 1;
   const annualTimeLabel = timeLeft(annual, "mo");
+
+  // Pick the right base list depending on which tab is active
+  const baseTxns =
+    activeTab === 2
+      ? projectBudgetTxns
+      : activeTab === 1
+        ? annualBudgetTxns
+        : monthBudgetTxns;
+
+  // Apply optional category filter from chart clicks
+  const displayTxns = (() => {
+    let list = baseTxns;
+    if (selectedCategoryId) {
+      const subtree = collectSubtree(selectedCategoryId);
+      list = list.filter((t) => t.category_id && subtree.has(t.category_id));
+    }
+    return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
+  })();
 
   // Derive the budget year from the active month (mirrors backend logic:
   // walk backwards through sorted months to find the January anchor)
@@ -607,6 +716,8 @@ function Dashboard() {
               totalSpent=${mTotals.spent}
               totalRemaining=${mTotals.remaining}
               barMax=${mTotals.barMax}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${handleCategoryClick}
             />`
             : html`<p class="text-light">No monthly budgets.</p>`
         }
@@ -620,6 +731,8 @@ function Dashboard() {
               totalSpent=${aTotals.spent}
               totalRemaining=${aTotals.remaining}
               barMax=${aTotals.barMax}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${handleCategoryClick}
             />`
             : html`<p class="text-light">No annual budgets.</p>`
         }
@@ -634,6 +747,8 @@ function Dashboard() {
             totalSpent=${pTotals.spent}
             totalRemaining=${pTotals.remaining}
             barMax=${pTotals.barMax}
+            selectedCategoryId=${selectedCategoryId}
+            onCategoryClick=${handleCategoryClick}
           />
         </div>
       `
@@ -645,20 +760,29 @@ function Dashboard() {
         class="hstack"
         style="align-items:baseline;margin-bottom:0.75rem"
       >
-        <h3 style="margin:0">Recent Transactions</h3>
-        <a
-          href="#/transactions"
-          class="text-light"
-          style="margin-left:auto;font-size:0.85rem"
-          >View all</a
-        >
+        <h3 style="margin:0">Transactions</h3>
+        ${
+          selectedCategoryId &&
+          html`
+          <button
+            class="chip outline small"
+            style="margin-left:0.5rem"
+            onClick=${() => setSelectedCategoryId(null)}
+          >
+            ${categoryName(catMap, selectedCategoryId)} \u00d7
+          </button>
+        `
+        }
+        <span class="text-light" style="margin-left:auto;font-size:0.85rem">
+          ${displayTxns.length} transaction${displayTxns.length !== 1 ? "s" : ""}
+        </span>
       </div>
-      <div class="table">
+      <div class="table" style="max-height:24rem;overflow-y:auto">
         <table class="dash-txn-table">
           <tbody>
-            ${recentTxns.map(
+            ${displayTxns.map(
               (t) => html`
-                <tr class=${t.correlation_type ? "row-correlated" : ""}>
+                <tr key=${t.id}>
                   <td class="mono text-light" style="width:7rem">
                     ${formatDate(t.posted_date)}
                   </td>

@@ -281,6 +281,14 @@ dialog > form > div {
   grid-template-columns: 7rem 1fr auto;
   gap: 0.5rem;
   align-items: center;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}
+.spend-bar-row:hover {
+  background: var(--muted);
+}
+.spend-bar-selected {
+  background: var(--muted);
 }
 .spend-bar-label {
   font-size: 0.82rem;
@@ -329,7 +337,14 @@ dialog > form > div {
 /* Category breakdown */
 .dash-cat-row {
   gap: 0.65rem;
-  padding: 0.5rem 0;
+  padding: 0.5rem 0.35rem;
+  border-radius: 4px;
+}
+.dash-cat-row:hover {
+  background: var(--muted);
+}
+.dash-cat-selected {
+  background: var(--muted);
 }
 .dash-cat-row + .dash-cat-row {
   border-top: 1px solid var(--border);
