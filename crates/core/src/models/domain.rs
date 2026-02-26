@@ -81,6 +81,7 @@ pub struct BudgetMonth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
     pub category_id: CategoryId,
+    pub category_name: String,
     pub budget_amount: Decimal,
     pub spent: Decimal,
     pub remaining: Decimal,

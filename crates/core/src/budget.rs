@@ -250,6 +250,7 @@ pub fn compute_budget_status(
 
     BudgetStatus {
         category_id: category.id,
+        category_name: category.name.clone(),
         budget_amount,
         spent,
         remaining,

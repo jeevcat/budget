@@ -129,46 +129,325 @@ function paceBadge(pace) {
 // Dashboard
 // ---------------------------------------------------------------------------
 
+function currencyFmt(amount) {
+  const n = Number(amount);
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function paceLabel(pace) {
+  if (pace === "under_budget") return "Under";
+  if (pace === "on_track") return "On track";
+  return "Over";
+}
+
+function ProgressRing({ spent, budget, pace, size = 48 }) {
+  const r = (size - 6) / 2;
+  const circ = 2 * Math.PI * r;
+  const pct = budget > 0 ? Math.min(Number(spent) / Number(budget), 1) : 0;
+  const offset = circ * (1 - pct);
+  const color =
+    pace === "over_budget"
+      ? "var(--danger)"
+      : pace === "on_track"
+        ? "var(--warning)"
+        : "var(--success)";
+
+  return html`
+    <svg
+      width=${size}
+      height=${size}
+      viewBox="0 0 ${size} ${size}"
+      class="progress-ring"
+    >
+      <circle
+        cx=${size / 2}
+        cy=${size / 2}
+        r=${r}
+        fill="none"
+        stroke="var(--border)"
+        stroke-width="5"
+      />
+      <circle
+        cx=${size / 2}
+        cy=${size / 2}
+        r=${r}
+        fill="none"
+        stroke=${color}
+        stroke-width="5"
+        stroke-dasharray=${circ}
+        stroke-dashoffset=${offset}
+        stroke-linecap="round"
+        transform="rotate(-90 ${size / 2} ${size / 2})"
+        style="transition: stroke-dashoffset 0.6s ease"
+      />
+    </svg>
+  `;
+}
+
+function SpendBar({ items, maxVal }) {
+  return html`
+    <div class="spend-bars">
+      ${items.map(
+        (item) => html`
+          <div class="spend-bar-row" key=${item.id}>
+            <span class="spend-bar-label">${item.name}</span>
+            <div class="spend-bar-track">
+              <div
+                class="spend-bar-fill spend-bar-${item.pace}"
+                style="width:${maxVal > 0 ? (Math.abs(Number(item.spent)) / maxVal) * 100 : 0}%"
+              ></div>
+              <div
+                class="spend-bar-budget-mark"
+                style="left:${maxVal > 0 ? (Number(item.budget) / maxVal) * 100 : 0}%"
+                title="Budget: ${currencyFmt(item.budget)}"
+              ></div>
+            </div>
+            <span class="spend-bar-amount mono">${currencyFmt(item.spent)}</span>
+          </div>
+        `,
+      )}
+    </div>
+  `;
+}
+
 function Dashboard() {
   const [status, setStatus] = useState(null);
+  const [categories, setCategories] = useState(null);
+  const [months, setMonths] = useState(null);
+  const [transactions, setTransactions] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    api.get("/budgets/status").then(setStatus).catch(setError);
+    Promise.all([
+      api.get("/budgets/status"),
+      api.get("/categories"),
+      api.get("/budgets/months"),
+      api.get("/transactions"),
+    ])
+      .then(([s, c, m, t]) => {
+        setStatus(s);
+        setCategories(c);
+        setMonths(m);
+        setTransactions(t);
+      })
+      .catch(setError);
   }, []);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!status) return html`<p class="text-light">Loading...</p>`;
+  if (!status || !categories || !months || !transactions)
+    return html`<p class="text-light">Loading...</p>`;
+
+  const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
+
+  // Current budget month (open-ended)
+  const currentMonth = months.find((m) => !m.end_date);
+  const monthStart = currentMonth?.start_date;
+
+  // Enrich status with display names and hierarchy info
+  const enriched = status
+    .map((s) => {
+      const cat = catMap[s.category_id];
+      const label = categoryLabel(catMap, s.category_id);
+      return {
+        ...s,
+        name: label
+          ? label.parent
+            ? `${label.parent} > ${label.short}`
+            : label.short
+          : s.category_name,
+        shortName: label?.short ?? s.category_name,
+        parentName: label?.parent ?? null,
+        budgetMode: cat?.budget_mode ?? null,
+      };
+    })
+    .sort((a, b) => Number(b.spent) - Number(a.spent));
+
+  // Totals
+  const totalBudget = enriched.reduce(
+    (sum, s) => sum + Number(s.budget_amount),
+    0,
+  );
+  const totalSpent = enriched.reduce((sum, s) => sum + Number(s.spent), 0);
+  const totalRemaining = totalBudget - totalSpent;
+
+  // Uncategorized count
+  const uncategorizedCount = transactions.filter(
+    (t) => !t.category_id && !t.correlation_type,
+  ).length;
+
+  // Recent transactions (last 8)
+  const recentTxns = [...transactions]
+    .sort((a, b) => b.posted_date.localeCompare(a.posted_date))
+    .slice(0, 8);
+
+  // Max value for the bar chart (to scale bars)
+  const barMax = Math.max(
+    ...enriched.map((s) =>
+      Math.max(Math.abs(Number(s.spent)), Number(s.budget_amount)),
+    ),
+    1,
+  );
+
+  // Days into the month / days left
+  const daysLeft = enriched.length > 0 ? enriched[0].days_left : 0;
+
+  // Over-budget categories
+  const overBudget = enriched.filter((s) => s.pace === "over_budget");
 
   return html`
-    <h2>Budget Status</h2>
-    <div class="table">
-      <table>
-        <thead>
-          <tr>
-            <th>Category</th>
-            <th>Budget</th>
-            <th>Spent</th>
-            <th>Remaining</th>
-            <th>Pace</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${status.map(
+    ${
+      currentMonth &&
+      html`
+        <div class="dash-month-header">
+          <div>
+            <h2 style="margin:0">Budget Month</h2>
+            <span class="text-light">
+              Started ${monthStart}${" "}
+              <span class="mono">${daysLeft}d left</span>
+            </span>
+          </div>
+          ${
+            uncategorizedCount > 0 &&
+            html`
+              <a href="#/transactions" class="dash-alert-chip">
+                ${uncategorizedCount} uncategorized
+              </a>
+            `
+          }
+        </div>
+      `
+    }
+
+    <div class="dash-totals">
+      <div class="dash-total-card">
+        <span class="dash-total-label">Total Budget</span>
+        <span class="dash-total-value mono">${currencyFmt(totalBudget)}</span>
+      </div>
+      <div class="dash-total-card">
+        <span class="dash-total-label">Spent</span>
+        <span class="dash-total-value mono">${currencyFmt(totalSpent)}</span>
+      </div>
+      <div class="dash-total-card ${totalRemaining < 0 ? "dash-total-danger" : ""}">
+        <span class="dash-total-label">Remaining</span>
+        <span class="dash-total-value mono">${currencyFmt(totalRemaining)}</span>
+      </div>
+      <div class="dash-total-card">
+        <span class="dash-total-label">Categories</span>
+        <span class="dash-total-value">
+          ${
+            overBudget.length > 0
+              ? html`<span class="dash-over-count">${overBudget.length}</span>
+                  over`
+              : html`All on track`
+          }
+        </span>
+      </div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="dash-section">
+        <h3 style="margin:0 0 0.75rem">Spending vs Budget</h3>
+        <${SpendBar}
+          items=${enriched.map((s) => ({
+            id: s.category_id,
+            name: s.shortName,
+            spent: s.spent,
+            budget: s.budget_amount,
+            pace: s.pace,
+          }))}
+          maxVal=${barMax}
+        />
+      </div>
+
+      <div class="dash-section">
+        <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
+        <div class="dash-cat-list">
+          ${enriched.map(
             (s) => html`
-              <tr>
-                <td>${s.category_name ?? s.category_id}</td>
-                <td class="mono">${s.budget_amount}</td>
-                <td class="mono">${s.spent}</td>
-                <td class="mono">${s.remaining}</td>
-                <td>
-                  <span class="chip ${paceBadge(s.pace)}">${s.pace}</span>
-                </td>
-              </tr>
+              <div class="dash-cat-row" key=${s.category_id}>
+                <${ProgressRing}
+                  spent=${s.spent}
+                  budget=${s.budget_amount}
+                  pace=${s.pace}
+                />
+                <div class="dash-cat-info">
+                  <div class="dash-cat-name">
+                    ${
+                      s.parentName &&
+                      html`<span class="cat-parent">${s.parentName}</span>`
+                    }${s.shortName}
+                  </div>
+                  <div class="dash-cat-sub">
+                    <span class="mono">${currencyFmt(s.spent)}</span>
+                    <span class="text-light">
+                      ${" "}/ ${currencyFmt(s.budget_amount)}</span
+                    >
+                  </div>
+                </div>
+                <div class="dash-cat-end">
+                  <span class="chip small ${paceBadge(s.pace)}"
+                    >${paceLabel(s.pace)}</span
+                  >
+                  <span
+                    class="dash-cat-remaining mono ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
+                  >
+                    ${formatAmount(s.remaining)}
+                  </span>
+                </div>
+              </div>
             `,
           )}
-        </tbody>
-      </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-section" style="margin-top:1rem">
+      <div
+        class="hstack"
+        style="align-items:baseline;margin-bottom:0.75rem"
+      >
+        <h3 style="margin:0">Recent Transactions</h3>
+        <a
+          href="#/transactions"
+          class="text-light"
+          style="margin-left:auto;font-size:0.85rem"
+          >View all</a
+        >
+      </div>
+      <div class="table">
+        <table class="dash-txn-table">
+          <tbody>
+            ${recentTxns.map(
+              (t) => html`
+                <tr class=${t.correlation_type ? "row-correlated" : ""}>
+                  <td class="mono text-light" style="width:7rem">
+                    ${t.posted_date}
+                  </td>
+                  <td style="font-weight:500">
+                    ${cleanMerchant(t.merchant_name || t.description)}
+                  </td>
+                  <td
+                    class="mono ${amountClass(t.amount)}"
+                    style="text-align:right"
+                  >
+                    ${formatAmount(t.amount)}
+                  </td>
+                  <td>
+                    <${CategoryBadge}
+                      catMap=${catMap}
+                      id=${t.category_id}
+                      suggested=${t.suggested_category}
+                    />
+                  </td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
