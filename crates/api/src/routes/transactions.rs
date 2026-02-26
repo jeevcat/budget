@@ -34,7 +34,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
         .route("/uncategorized", get(uncategorized))
-        .route("/{id}/categorize", post(categorize))
+        .route("/{id}/categorize", post(categorize).delete(uncategorize))
         .route("/{id}/generate-rule", post(generate_rule))
 }
 
@@ -81,6 +81,24 @@ async fn categorize(
         .db
         .update_transaction_category(txn_id, category_id, CategoryMethod::Manual)
         .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Clear the category on a transaction so rules can re-evaluate it.
+///
+/// # Errors
+///
+/// Returns 400 if the transaction ID is not a valid UUID.
+/// Returns `AppError` if the database update fails.
+async fn uncategorize(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let txn_uuid =
+        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let txn_id = TransactionId::from_uuid(txn_uuid);
+
+    state.db.clear_transaction_category(txn_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

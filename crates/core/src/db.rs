@@ -531,6 +531,22 @@ impl Db {
         Ok(())
     }
 
+    /// Clear the category and method on a transaction so rules can re-evaluate it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn clear_transaction_category(&self, id: TransactionId) -> Result<(), sqlx::Error> {
+        let pool = &self.0;
+        sqlx::query(
+            "UPDATE transactions SET category_id = NULL, category_method = NULL WHERE id = $1",
+        )
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
     /// Set the correlation of a transaction (transfer or reimbursement link).
     ///
     /// # Errors

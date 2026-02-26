@@ -126,7 +126,8 @@ pub fn evaluate_correlation_rules(
 }
 
 /// Check whether a transaction matches all conditions of a compiled rule (AND semantics).
-fn matches_rule(transaction: &Transaction, compiled: &CompiledRule) -> bool {
+#[must_use]
+pub fn matches_rule(transaction: &Transaction, compiled: &CompiledRule) -> bool {
     compiled
         .conditions
         .iter()

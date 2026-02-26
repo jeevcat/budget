@@ -2,13 +2,15 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::NaiveDate;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
 };
-use budget_core::rules::{compile_rule, evaluate_categorization_rules};
+use budget_core::rules::{compile_rule, evaluate_categorization_rules, matches_rule};
 use budget_jobs::CategorizeJob;
 
 use crate::routes::AppError;
@@ -48,6 +50,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list).post(create))
         .route("/{id}", axum::routing::put(update).delete(remove))
         .route("/apply", axum::routing::post(apply))
+        .route("/preview", axum::routing::post(preview))
 }
 
 /// Parse a `CreateRule` body into domain types, reusing the shared parsing
@@ -237,4 +240,65 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
 
     tracing::info!(categorized_count, "rule application complete");
     Ok(Json(ApplyRulesResponse { categorized_count }))
+}
+
+// ---------------------------------------------------------------------------
+// Preview
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct PreviewMatch {
+    id: String,
+    merchant_name: String,
+    posted_date: NaiveDate,
+    amount: Decimal,
+}
+
+#[derive(Serialize)]
+struct PreviewResponse {
+    match_count: u32,
+    sample: Vec<PreviewMatch>,
+}
+
+/// Dry-run a rule against eligible transactions and return the match count
+/// plus a small sample of matching transactions.
+///
+/// # Errors
+///
+/// Returns 400 if the rule body is invalid or the pattern fails to compile.
+/// Returns `AppError` on database failures.
+async fn preview(
+    State(state): State<AppState>,
+    Json(body): Json<CreateRule>,
+) -> Result<Json<PreviewResponse>, AppError> {
+    let rule = parse_rule_body(&body, RuleId::new())?;
+    let compiled =
+        compile_rule(&rule).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let transactions = match rule.rule_type {
+        RuleType::Categorization => state.db.get_rule_eligible_transactions().await?,
+        RuleType::Correlation => state.db.get_uncorrelated_transactions().await?,
+    };
+
+    let mut match_count: u32 = 0;
+    let mut sample = Vec::with_capacity(5);
+
+    for txn in &transactions {
+        if matches_rule(txn, &compiled) {
+            match_count += 1;
+            if sample.len() < 5 {
+                sample.push(PreviewMatch {
+                    id: txn.id.to_string(),
+                    merchant_name: txn.merchant_name.clone(),
+                    posted_date: txn.posted_date,
+                    amount: txn.amount,
+                });
+            }
+        }
+    }
+
+    Ok(Json(PreviewResponse {
+        match_count,
+        sample,
+    }))
 }

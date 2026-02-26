@@ -1300,6 +1300,93 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_totals_with_monthly_and_annual() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let mut transport = make_category(150, "Transport", None);
+        transport.budget_mode = Some(BudgetMode::Monthly);
+        transport.budget_amount = Some(dec!(200));
+        let mut insurance = make_category(200, "Insurance", None);
+        insurance.budget_mode = Some(BudgetMode::Annual);
+        insurance.budget_amount = Some(dec!(2400));
+        let categories = vec![food.clone(), transport.clone(), insurance.clone()];
+
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm_jan.clone(), bm_feb.clone()];
+
+        let transactions = vec![
+            // Jan food
+            make_txn(Some(food.id), dec!(-350), date(2025, 1, 20)),
+            // Jan transport
+            make_txn(Some(transport.id), dec!(-180), date(2025, 1, 22)),
+            // Jan insurance (annual)
+            make_txn(Some(insurance.id), dec!(-200), date(2025, 1, 25)),
+            // Feb food
+            make_txn(Some(food.id), dec!(-420), date(2025, 2, 18)),
+            // Feb transport
+            make_txn(Some(transport.id), dec!(-90), date(2025, 2, 20)),
+            // Feb insurance (annual)
+            make_txn(Some(insurance.id), dec!(-200), date(2025, 2, 16)),
+        ];
+
+        let today = date(2025, 2, 25);
+        let budgeted_categories = [&food, &transport, &insurance];
+
+        let statuses: Vec<BudgetStatus> = budgeted_categories
+            .iter()
+            .map(|cat| {
+                compute_budget_status(cat, &transactions, &bm_feb, &all_months, &categories, today)
+            })
+            .collect();
+
+        // Verify individual statuses
+        let food_s = &statuses[0];
+        assert_eq!(food_s.budget_mode, BudgetMode::Monthly);
+        assert_eq!(food_s.budget_amount, dec!(500));
+        assert_eq!(food_s.spent, dec!(420));
+        // Rollover from Jan: 500 - 350 = 150
+        assert_eq!(food_s.rollover, dec!(150));
+        assert_eq!(food_s.remaining, dec!(230)); // 500 + 150 - 420
+
+        let transport_s = &statuses[1];
+        assert_eq!(transport_s.budget_mode, BudgetMode::Monthly);
+        assert_eq!(transport_s.budget_amount, dec!(200));
+        assert_eq!(transport_s.spent, dec!(90));
+        // Rollover from Jan: 200 - 180 = 20
+        assert_eq!(transport_s.rollover, dec!(20));
+        assert_eq!(transport_s.remaining, dec!(130)); // 200 + 20 - 90
+
+        let ins_s = &statuses[2];
+        assert_eq!(ins_s.budget_mode, BudgetMode::Annual);
+        assert_eq!(ins_s.budget_amount, dec!(2400));
+        // Annual sums across all months: 200 + 200 = 400
+        assert_eq!(ins_s.spent, dec!(400));
+        assert_eq!(ins_s.remaining, dec!(2000));
+        assert_eq!(ins_s.rollover, Decimal::ZERO);
+
+        // Dashboard totals (mirrors frontend logic: sum budget_amount, sum spent)
+        let total_budget: Decimal = statuses.iter().map(|s| s.budget_amount).sum();
+        let total_spent: Decimal = statuses.iter().map(|s| s.spent).sum();
+        let total_remaining = total_budget - total_spent;
+
+        // 500 (monthly) + 200 (monthly) + 2400 (annual) = 3100
+        assert_eq!(total_budget, dec!(3100));
+        // 420 + 90 + 400 = 910
+        assert_eq!(total_spent, dec!(910));
+        assert_eq!(total_remaining, dec!(2190));
+    }
+
+    #[test]
     fn zero_spending_yields_full_remaining() {
         let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let categories = vec![food.clone()];

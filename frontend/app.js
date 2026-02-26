@@ -693,6 +693,8 @@ function TxnDetail({
   const [selectedProposal, setSelectedProposal] = useState(null);
   const [editPattern, setEditPattern] = useState("");
   const [creatingRule, setCreatingRule] = useState(false);
+  const [proposalPreview, setProposalPreview] = useState(null);
+  const [proposalPreviewing, setProposalPreviewing] = useState(false);
   if (!txn) return null;
 
   // Pre-select LLM suggestion when no manual category is set
@@ -709,6 +711,7 @@ function TxnDetail({
         () => {
           setRuleProposals(null);
           setSelectedProposal(null);
+          setProposalPreview(null);
           onClose();
         },
         { once: true },
@@ -733,10 +736,21 @@ function TxnDetail({
     }
   }
 
+  async function handleUncategorize() {
+    setSaving(true);
+    try {
+      await api.del(`/transactions/${txn.id}/categorize`);
+      onCategorize(txn.id, null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleGenerateRule() {
     setGenerating(true);
     setRuleProposals(null);
     setSelectedProposal(null);
+    setProposalPreview(null);
     try {
       const result = await api.post(`/transactions/${txn.id}/generate-rule`);
       setRuleProposals(result);
@@ -748,9 +762,31 @@ function TxnDetail({
   function handleSelectProposal(idx) {
     if (selectedProposal === idx) {
       setSelectedProposal(null);
+      setProposalPreview(null);
     } else {
       setSelectedProposal(idx);
-      setEditPattern(ruleProposals.proposals[idx].match_pattern ?? "");
+      const pattern = ruleProposals.proposals[idx].match_pattern ?? "";
+      setEditPattern(pattern);
+      fetchProposalPreview(ruleProposals.proposals[idx].match_field, pattern);
+    }
+  }
+
+  async function fetchProposalPreview(field, pattern) {
+    setProposalPreviewing(true);
+    setProposalPreview(null);
+    try {
+      const result = await api.post("/rules/preview", {
+        rule_type: "categorization",
+        conditions: [{ field, pattern }],
+        target_category_id: ruleProposals.target_category_id,
+        target_correlation_type: null,
+        priority: 0,
+      });
+      setProposalPreview(result);
+    } catch {
+      setProposalPreview(null);
+    } finally {
+      setProposalPreviewing(false);
     }
   }
 
@@ -798,7 +834,7 @@ function TxnDetail({
                 disabled=${saving}
                 onChange=${(e) => handleCategorize(e.target.value)}
               >
-                <option value="">uncategorized</option>
+                ${!txn.category_id && html`<option value="" disabled>uncategorized</option>`}
                 ${(categories ?? []).map(
                   (c) =>
                     html`<option value=${c.id}>${categoryName(catMap, c.id)}</option>`,
@@ -806,7 +842,12 @@ function TxnDetail({
               </select>
               ${
                 txn.category_id && txn.category_method
-                  ? html`<span style="margin-left:0.5rem"><${MethodDot} method=${txn.category_method} /></span>`
+                  ? html`<span class="chip outline small" style="margin-left:0.5rem">${{ manual: "Manual", rule: "Rule", llm: "LLM" }[txn.category_method] ?? txn.category_method}</span>`
+                  : null
+              }
+              ${
+                txn.category_id
+                  ? html`<button type="button" class="small" style="margin-left:0.5rem" onClick=${handleUncategorize} disabled=${saving}>Clear & recategorize</button>`
                   : null
               }
               ${
@@ -894,18 +935,32 @@ function TxnDetail({
                             <input
                               type="text"
                               value=${editPattern}
-                              onInput=${(e) => setEditPattern(e.target.value)}
+                              onInput=${(e) => {
+                                setEditPattern(e.target.value);
+                                setProposalPreview(null);
+                              }}
                               style="width:100%;margin-bottom:0.5rem;font-family:monospace"
                             />
-                            <button
-                              type="button"
-                              data-variant="primary"
-                              class="small"
-                              onClick=${handleAcceptRule}
-                              disabled=${creatingRule}
-                            >
-                              ${creatingRule ? "Creating..." : "Create Rule"}
-                            </button>
+                            <div class="hstack gap-sm" style="align-items:center">
+                              <button
+                                type="button"
+                                data-variant="primary"
+                                class="small"
+                                onClick=${handleAcceptRule}
+                                disabled=${creatingRule}
+                              >
+                                ${creatingRule ? "Creating..." : "Create Rule"}
+                              </button>
+                              ${proposalPreviewing && html`<span class="text-light" style="font-size:0.85rem">Checking...</span>`}
+                              ${
+                                proposalPreview &&
+                                html`
+                                <span class="text-light" style="font-size:0.85rem">
+                                  Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}
+                                </span>
+                              `
+                              }
+                            </div>
                           </div>
                         `
                       }
@@ -1179,17 +1234,18 @@ function Transactions() {
       categories=${categories}
       acctMap=${acctMap}
       onCategorize=${(txnId, categoryId) => {
+        const patch = categoryId
+          ? {
+              category_id: categoryId,
+              category_method: "manual",
+              suggested_category: null,
+            }
+          : { category_id: null, category_method: null };
         setTxns((prev) =>
-          prev.map((t) =>
-            t.id === txnId
-              ? { ...t, category_id: categoryId, suggested_category: null }
-              : t,
-          ),
+          prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
         );
         setSelected((prev) =>
-          prev && prev.id === txnId
-            ? { ...prev, category_id: categoryId, suggested_category: null }
-            : prev,
+          prev && prev.id === txnId ? { ...prev, ...patch } : prev,
         );
       }}
       onClose=${() => setSelected(null)}
@@ -1644,6 +1700,8 @@ function Rules() {
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
 
   const emptyForm = {
     rule_type: "categorization",
@@ -1672,6 +1730,7 @@ function Rules() {
 
   function setField(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setPreview(null);
   }
 
   function startEdit(rule) {
@@ -1687,11 +1746,13 @@ function Rules() {
       priority: rule.priority,
     });
     setShowForm(false);
+    setPreview(null);
   }
 
   function cancelEdit() {
     setEditingId(null);
     setForm(emptyForm);
+    setPreview(null);
   }
 
   async function handleSubmit(e) {
@@ -1789,6 +1850,7 @@ function Rules() {
       );
       return { ...prev, conditions };
     });
+    setPreview(null);
   }
 
   function addCondition() {
@@ -1796,6 +1858,7 @@ function Rules() {
       ...prev,
       conditions: [...prev.conditions, { field: "merchant", pattern: "" }],
     }));
+    setPreview(null);
   }
 
   function removeCondition(idx) {
@@ -1803,6 +1866,26 @@ function Rules() {
       ...prev,
       conditions: prev.conditions.filter((_, i) => i !== idx),
     }));
+    setPreview(null);
+  }
+
+  async function handlePreview() {
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      const result = await api.post("/rules/preview", {
+        rule_type: form.rule_type,
+        conditions: form.conditions,
+        target_category_id: form.target_category_id || null,
+        target_correlation_type: form.target_correlation_type || null,
+        priority: Number(form.priority),
+      });
+      setPreview(result);
+    } catch (err) {
+      setPreview({ error: err.message });
+    } finally {
+      setPreviewing(false);
+    }
   }
 
   function renderFormFields() {
@@ -1885,10 +1968,25 @@ function Rules() {
     if (editingId === rule.id) {
       return html`
         <tr key=${rule.id} class="">
-          <td>${renderFormFields()}</td>
+          <td>
+            ${renderFormFields()}
+            ${
+              preview &&
+              !preview.error &&
+              html`
+              <div class="text-light" style="margin-top:0.5rem;font-size:0.85rem">
+                Matches <strong>${preview.match_count}</strong> transaction${preview.match_count !== 1 ? "s" : ""}${preview.sample.length > 0 ? ` \u2014 ${preview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
+              </div>
+            `
+            }
+            ${preview?.error && html`<div style="color:var(--danger);margin-top:0.5rem;font-size:0.85rem">${preview.error}</div>`}
+          </td>
           <td style="white-space:nowrap">
             <button data-variant="primary" class="small" onClick=${handleSubmit} disabled=${saving}>
               Save
+            </button>
+            <button class="small" onClick=${handlePreview} disabled=${previewing || form.conditions.every((c) => !c.pattern)}>
+              ${previewing ? "..." : "Preview"}
             </button>
             <button class="small" onClick=${cancelEdit}>Cancel</button>
           </td>
@@ -1959,9 +2057,24 @@ function Rules() {
       html`
       <form style="border:1px solid var(--border);border-radius:4px;padding:1rem;margin-bottom:1rem;display:flex;flex-direction:column;gap:0.75rem" onSubmit=${handleSubmit}>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">${renderFormFields()}</div>
-        <button data-variant="primary" type="submit" disabled=${saving}>
-          Create Rule
-        </button>
+        <div class="hstack gap-sm">
+          <button data-variant="primary" type="submit" disabled=${saving}>
+            Create Rule
+          </button>
+          <button type="button" disabled=${previewing || form.conditions.every((c) => !c.pattern)} onClick=${handlePreview}>
+            ${previewing ? "Checking..." : "Preview"}
+          </button>
+          ${
+            preview &&
+            !preview.error &&
+            html`
+            <span class="text-light">
+              Matches <strong>${preview.match_count}</strong> transaction${preview.match_count !== 1 ? "s" : ""}${preview.sample.length > 0 ? ` \u2014 ${preview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
+            </span>
+          `
+          }
+          ${preview?.error && html`<span style="color:var(--danger)">${preview.error}</span>`}
+        </div>
       </form>
     `
     }
