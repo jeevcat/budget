@@ -1744,6 +1744,12 @@ function Rules() {
           "Rules applied",
           { variant: "success" },
         );
+      } else {
+        ot.toast(
+          "No uncategorized transactions matched any rule",
+          "Rules applied",
+          { variant: "warning" },
+        );
       }
     } catch (err) {
       setError(err);

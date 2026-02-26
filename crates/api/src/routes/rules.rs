@@ -211,10 +211,22 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
         .collect();
 
     let eligible = state.db.get_rule_eligible_transactions().await?;
+    tracing::info!(
+        rules = compiled_rules.len(),
+        eligible = eligible.len(),
+        "applying categorization rules"
+    );
+
     let mut categorized_count: u32 = 0;
 
     for txn in &eligible {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
+            tracing::debug!(
+                txn_id = %txn.id,
+                merchant = %txn.merchant_name,
+                category_id = %category_id,
+                "rule matched"
+            );
             state
                 .db
                 .update_transaction_category(txn.id, category_id, CategoryMethod::Rule)
@@ -223,5 +235,6 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
         }
     }
 
+    tracing::info!(categorized_count, "rule application complete");
     Ok(Json(ApplyRulesResponse { categorized_count }))
 }
