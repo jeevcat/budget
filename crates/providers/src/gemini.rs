@@ -334,7 +334,7 @@ fn build_rule_prompt(context: &RuleContext) -> String {
     format!(
         r#"You propose categorization rules for a personal budgeting tool. A rule has a field to match on and a regex pattern. When a transaction matches the pattern, it is automatically assigned the category.
 
-Given this transaction and its category, propose up to 3 rules that would correctly categorize this and similar future transactions. Each rule must be PRECISE — the pattern should match only transactions that genuinely belong to this category, not unrelated ones. A rule that is too broad (matching transactions from other merchants/payees) is worse than no rule at all.
+Given this transaction and its category, propose up to 3 rules that would correctly categorize this and similar future transactions.
 
 Available fields:
 - "Merchant" — regex against the merchant/payee name
@@ -347,8 +347,10 @@ Available fields:
 Guidelines:
 - Only propose a rule if the pattern meaningfully identifies this payee or transaction type. Never use broad patterns like ".*", ".+", or patterns that match most transactions.
 - Only use a field if the transaction has useful data for it. If a field is absent or its value is too generic to be discriminating, skip it.
+- Only use data that is literally present in the transaction fields. Never invent name variants, abbreviations, or alternate spellings that do not appear in the transaction.
 - Prefer the field that most precisely identifies the payee. An exact IBAN is better than a merchant name substring, but a broad IBAN pattern like "^DE.*" is useless.
 - Consider the sibling merchants — if a pattern would also match them, that's good. If it would match unrelated merchants, it's too broad.
+- For Description rules, match on meaningful words (business names, product types like "hotel", "insurance", etc.). Do NOT match on banking metadata such as "remittanceinformation:", "KAUFUMSATZ", "Lastschrift", reference numbers, or other bank-internal fields — these are brittle and do not generalize.
 - It is fine to propose fewer than 3 rules if you cannot find 3 precise ones.
 
 Respond with a JSON array of objects, each containing:

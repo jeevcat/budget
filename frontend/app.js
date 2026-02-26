@@ -107,9 +107,9 @@ function NavLink({ href, children }) {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function formatAmount(amount) {
+function formatAmount(amount, { decimals = 2 } = {}) {
   const n = Number(amount);
-  const abs = Math.abs(n).toFixed(2);
+  const abs = Math.abs(n).toFixed(decimals);
   if (n > 0) return `+\u202F${abs}\u202F\u20AC`;
   if (n < 0) return `\u2212\u202F${abs}\u202F\u20AC`;
   return `${abs}\u202F\u20AC`;
@@ -178,8 +178,8 @@ function paceBadge(pace) {
 function currencyFmt(amount) {
   const n = Number(amount);
   return `${n.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   })}\u202F\u20AC`;
 }
 
@@ -350,7 +350,7 @@ function BudgetSection({
                   <span
                     class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
                   >
-                    ${formatAmount(s.remaining)}
+                    ${formatAmount(s.remaining, { decimals: 0 })}
                   </span>
                 </div>
               </div>
@@ -633,7 +633,7 @@ function Dashboard() {
                     class="${amountClass(t.amount)}"
                     style="text-align:right"
                   >
-                    ${formatAmount(t.amount)}
+                    ${formatAmount(t.amount, { decimals: 0 })}
                   </td>
                   <td>
                     <${CategoryBadge}
