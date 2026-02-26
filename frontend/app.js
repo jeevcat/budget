@@ -630,20 +630,40 @@ function Categories() {
     }
   }
 
+  const editDialogRef = (el) => {
+    if (el && !el.open) {
+      el.addEventListener("close", cancelEdit, { once: true });
+      el.showModal();
+    }
+  };
+
   if (error) return html`<p class="text-light">${error.message}</p>`;
   if (!categories) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
   const existingNames = new Set(categories.map((c) => c.name));
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
-  const childrenOf = (pid) => categories.filter((c) => c.parent_id === pid);
 
-  const rows = [];
-  for (const root of roots) {
-    rows.push({ ...root, depth: 0 });
-    for (const child of childrenOf(root.id)) {
-      rows.push({ ...child, depth: 1 });
-    }
+  function withDepth(cats) {
+    return cats.map((c) => ({
+      ...c,
+      depth: c.parent_id && catMap[c.parent_id] ? 1 : 0,
+    }));
+  }
+
+  const groups = [
+    { key: null, label: "Unbudgeted", desc: "No budget assigned yet" },
+    { key: "monthly", label: "Monthly", desc: null },
+    { key: "annual", label: "Annual", desc: null },
+    { key: "project", label: "Project", desc: null },
+  ];
+
+  const grouped = {};
+  for (const g of groups) {
+    const cats = categories.filter((c) =>
+      g.key === null ? !c.budget_mode : c.budget_mode === g.key,
+    );
+    grouped[g.key] = withDepth(cats);
   }
 
   const pendingSuggestions = (suggestions ?? []).filter(
@@ -653,12 +673,16 @@ function Categories() {
   function budgetBadge(cat) {
     if (!cat.budget_mode) return null;
     if (cat.budget_mode === "project") {
-      return html`<span class="chip outline">project</span>`;
+      const parts = [];
+      if (cat.project_start_date) parts.push(cat.project_start_date);
+      if (cat.project_end_date) parts.push(cat.project_end_date);
+      return parts.length > 0
+        ? html`<span class="text-light" style="font-size:0.85rem">${parts.join(" \u2013 ")}</span>`
+        : null;
     }
-    const label = cat.budget_mode === "monthly" ? "mo" : "yr";
     const amt =
       cat.budget_amount != null ? Number(cat.budget_amount).toFixed(0) : "?";
-    return html`<span class="chip outline">${amt}/${label}</span>`;
+    return html`<span class="mono">${amt}</span>`;
   }
 
   return html`
@@ -724,130 +748,144 @@ function Categories() {
     </form>
 
     ${
-      rows.length === 0
+      categories.length === 0
         ? html`<p class="text-light">No categories yet. Add one above.</p>`
-        : html`
+        : groups
+            .filter((g) => grouped[g.key].length > 0)
+            .map(
+              (g) => html`
+        <div key=${g.key} style="margin-bottom:1.5rem">
+          <h3 style="margin-bottom:0.25rem">${g.label}</h3>
+          ${g.desc && html`<p class="text-light" style="margin-bottom:0.5rem">${g.desc}</p>`}
           <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Budget</th>
-                <th></th>
-              </tr>
-            </thead>
             <tbody>
-              ${rows.map((c) =>
-                editingId === c.id
-                  ? html`
-                        <tr key=${c.id}>
-                          <td colspan="3">
-                            <form
-                              onSubmit=${handleEditSubmit}
-                              style="display:flex;flex-direction:column;gap:0.5rem;padding:0.5rem 0"
-                            >
-                              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
-                                <input
-                                  type="text"
-                                  value=${editForm.name}
-                                  onInput=${(e) => setEditField("name", e.target.value)}
-                                  required
-                                  placeholder="Name"
-                                />
-                                <select
-                                  value=${editForm.parent_id}
-                                  onChange=${(e) => setEditField("parent_id", e.target.value)}
-                                >
-                                  <option value="">No parent</option>
-                                  ${roots
-                                    .filter((r) => r.id !== c.id)
-                                    .map(
-                                      (r) =>
-                                        html`<option value=${r.id}>${r.name}</option>`,
-                                    )}
-                                </select>
-                              </div>
-                              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
-                                <select
-                                  value=${editForm.budget_mode}
-                                  onChange=${(e) => setEditField("budget_mode", e.target.value)}
-                                >
-                                  <option value="">No budget</option>
-                                  <option value="monthly">Monthly</option>
-                                  <option value="annual">Annual</option>
-                                  <option value="project">Project</option>
-                                </select>
-                                ${
-                                  editForm.budget_mode &&
-                                  html`
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      min="0"
-                                      placeholder="Amount"
-                                      value=${editForm.budget_amount}
-                                      onInput=${(e) => setEditField("budget_amount", e.target.value)}
-                                      style="width:8rem"
-                                    />
-                                  `
-                                }
-                                ${
-                                  editForm.budget_mode === "project" &&
-                                  html`
-                                    <input
-                                      type="date"
-                                      value=${editForm.project_start_date}
-                                      onInput=${(e) => setEditField("project_start_date", e.target.value)}
-                                      title="Start date"
-                                    />
-                                    <input
-                                      type="date"
-                                      value=${editForm.project_end_date}
-                                      onInput=${(e) => setEditField("project_end_date", e.target.value)}
-                                      title="End date"
-                                    />
-                                  `
-                                }
-                              </div>
-                              <div style="display:flex;gap:0.5rem">
-                                <button data-variant="primary" class="small" type="submit" disabled=${saving}>
-                                  ${saving ? "Saving..." : "Save"}
-                                </button>
-                                <button class="small" type="button" onClick=${cancelEdit}>Cancel</button>
-                              </div>
-                            </form>
-                          </td>
-                        </tr>
-                      `
-                  : html`
-                        <tr key=${c.id}>
-                          <td>
-                            <span style="padding-left:${c.depth * 1.5}rem">
-                              ${
-                                c.depth > 0
-                                  ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
-                                    >${catMap[c.parent_id]?.name} ></span
-                                  > `
-                                  : null
-                              }
-                              ${c.name}
-                            </span>
-                          </td>
-                          <td>${budgetBadge(c)}</td>
-                          <td style="text-align:right;white-space:nowrap">
-                            <button class="small" onClick=${() => startEdit(c)}>Edit</button>
-                            <button
-                              data-variant="danger" class="small"
-                              onClick=${() => handleDelete(c.id)}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      `,
+              ${grouped[g.key].map(
+                (c) => html`
+                <tr key=${c.id}>
+                  <td>
+                    <span style="padding-left:${c.depth * 1.5}rem">
+                      ${
+                        c.depth > 0
+                          ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
+                          >${catMap[c.parent_id]?.name} ></span
+                        > `
+                          : null
+                      }
+                      ${c.name}
+                    </span>
+                  </td>
+                  <td style="text-align:right">${budgetBadge(c)}</td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="small" onClick=${() => startEdit(c)}>Edit</button>
+                    <button
+                      data-variant="danger" class="small"
+                      onClick=${() => handleDelete(c.id)}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              `,
               )}
             </tbody>
           </table>
-        `
+        </div>
+      `,
+            )
+    }
+
+    ${
+      editForm &&
+      html`
+      <dialog ref=${editDialogRef} closedby="any">
+        <form onSubmit=${handleEditSubmit}>
+          <header>
+            <h3>Edit Category</h3>
+          </header>
+          <div class="vstack">
+            <label data-field>
+              Name
+              <input
+                type="text"
+                value=${editForm.name}
+                onInput=${(e) => setEditField("name", e.target.value)}
+                required
+              />
+            </label>
+            <div data-field>
+              <label>Parent</label>
+              <select
+                value=${editForm.parent_id}
+                onChange=${(e) => setEditField("parent_id", e.target.value)}
+              >
+                <option value="">No parent (top-level)</option>
+                ${roots
+                  .filter((r) => r.id !== editingId)
+                  .map((r) => html`<option value=${r.id}>${r.name}</option>`)}
+              </select>
+            </div>
+            <hr />
+            <div data-field>
+              <label>Budget</label>
+              <select
+                value=${editForm.budget_mode}
+                onChange=${(e) => setEditField("budget_mode", e.target.value)}
+              >
+                <option value="">No budget</option>
+                <option value="monthly">Monthly</option>
+                <option value="annual">Annual</option>
+                <option value="project">Project</option>
+              </select>
+            </div>
+            ${
+              editForm.budget_mode &&
+              html`
+              <label data-field>
+                Amount
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value=${editForm.budget_amount}
+                  onInput=${(e) => setEditField("budget_amount", e.target.value)}
+                />
+              </label>
+            `
+            }
+            ${
+              editForm.budget_mode === "project" &&
+              html`
+              <div class="hstack gap-2">
+                <label data-field style="flex:1">
+                  Start date
+                  <input
+                    type="date"
+                    value=${editForm.project_start_date}
+                    onInput=${(e) => setEditField("project_start_date", e.target.value)}
+                  />
+                </label>
+                <label data-field style="flex:1">
+                  End date
+                  <input
+                    type="date"
+                    value=${editForm.project_end_date}
+                    onInput=${(e) => setEditField("project_end_date", e.target.value)}
+                  />
+                </label>
+              </div>
+            `
+            }
+          </div>
+          <footer>
+            <button type="button" class="outline" onClick=${(e) => e.target.closest("dialog").close()}>Cancel</button>
+            <button type="submit" disabled=${saving}>
+              ${saving ? "Saving..." : "Save"}
+            </button>
+          </footer>
+        </form>
+      </dialog>
+    `
     }
   `;
 }
