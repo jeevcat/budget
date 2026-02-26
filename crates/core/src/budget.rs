@@ -1160,4 +1160,274 @@ mod tests {
         // remaining = budget(500) + rollover(200) - spent(100) = 600
         assert_eq!(status.remaining, dec!(600));
     }
+
+    #[test]
+    fn spending_nets_refund_against_expenses() {
+        let food = food_category();
+        let categories = vec![food.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(food.id), dec!(-80), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-45), date(2025, 1, 22)),
+            // Refund credited back (positive amount from the bank)
+            make_txn(Some(food.id), dec!(25), date(2025, 1, 24)),
+        ];
+
+        let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
+        // Net outflow: -80 + -45 + 25 = -100, negated → 100
+        assert_eq!(spending, dec!(100));
+    }
+
+    #[test]
+    fn mixed_monthly_and_annual_categories() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let mut insurance = make_category(200, "Insurance", None);
+        insurance.budget_mode = Some(BudgetMode::Annual);
+        insurance.budget_amount = Some(dec!(2400));
+        let categories = vec![food.clone(), insurance.clone()];
+
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm_jan.clone(), bm_feb.clone()];
+
+        let transactions = vec![
+            // Food expenses across two months
+            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-200), date(2025, 2, 20)),
+            // Insurance in both months
+            make_txn(Some(insurance.id), dec!(-100), date(2025, 1, 25)),
+            make_txn(Some(insurance.id), dec!(-150), date(2025, 2, 18)),
+        ];
+
+        let today = date(2025, 2, 25);
+
+        // Monthly food status for current month (Feb)
+        let food_status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm_feb,
+            &all_months,
+            &categories,
+            today,
+        );
+        assert_eq!(food_status.budget_mode, BudgetMode::Monthly);
+        assert_eq!(food_status.spent, dec!(200));
+        // Rollover from Jan: 500 - 300 = 200
+        assert_eq!(food_status.rollover, dec!(200));
+        // remaining = 500 + 200 - 200 = 500
+        assert_eq!(food_status.remaining, dec!(500));
+
+        // Annual insurance status (sums all months in the year)
+        let ins_status = compute_budget_status(
+            &insurance,
+            &transactions,
+            &bm_feb,
+            &all_months,
+            &categories,
+            today,
+        );
+        assert_eq!(ins_status.budget_mode, BudgetMode::Annual);
+        // 100 + 150 = 250 across two months
+        assert_eq!(ins_status.spent, dec!(250));
+        assert_eq!(ins_status.remaining, dec!(2150));
+        assert_eq!(ins_status.rollover, Decimal::ZERO);
+    }
+
+    #[test]
+    fn annual_transactions_do_not_affect_monthly_budget() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let mut insurance = make_category(200, "Insurance", None);
+        insurance.budget_mode = Some(BudgetMode::Annual);
+        insurance.budget_amount = Some(dec!(2400));
+        let categories = vec![food.clone(), insurance.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        let transactions = vec![
+            make_txn(Some(food.id), dec!(-120), date(2025, 1, 20)),
+            // Large annual insurance payment in the same month
+            make_txn(Some(insurance.id), dec!(-1200), date(2025, 1, 18)),
+        ];
+
+        let today = date(2025, 1, 25);
+
+        // Monthly food spending must only reflect food transactions
+        let food_spending = compute_category_spending(&transactions, food.id, &bm, &categories);
+        assert_eq!(food_spending, dec!(120));
+
+        let food_status =
+            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        assert_eq!(food_status.spent, dec!(120));
+        assert_eq!(food_status.remaining, dec!(380));
+
+        // Annual insurance must not include food
+        let ins_spending = compute_category_spending(&transactions, insurance.id, &bm, &categories);
+        assert_eq!(ins_spending, dec!(1200));
+
+        let ins_status = compute_budget_status(
+            &insurance,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+        );
+        assert_eq!(ins_status.spent, dec!(1200));
+        assert_eq!(ins_status.remaining, dec!(1200));
+    }
+
+    #[test]
+    fn zero_spending_yields_full_remaining() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let categories = vec![food.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        let transactions: Vec<Transaction> = vec![];
+
+        let today = date(2025, 1, 25);
+        let status =
+            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+
+        assert_eq!(status.spent, Decimal::ZERO);
+        assert_eq!(status.remaining, dec!(500));
+        assert_eq!(status.pace, PaceIndicator::UnderBudget);
+    }
+
+    #[test]
+    fn income_in_expense_category_reduces_spending() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let categories = vec![food.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        // Net positive inflow in an expense category (e.g. large refund)
+        let transactions = vec![
+            make_txn(Some(food.id), dec!(-100), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(300), date(2025, 1, 22)),
+        ];
+
+        let today = date(2025, 1, 25);
+        let status =
+            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+
+        // Net: -100 + 300 = +200, negated → -200 (negative spending = net income)
+        assert_eq!(status.spent, dec!(-200));
+        // remaining = 500 - (-200) = 700
+        assert_eq!(status.remaining, dec!(700));
+    }
+
+    #[test]
+    fn project_with_mixed_expenses_and_refunds() {
+        let mut project = make_category(300, "Renovation", None);
+        project.budget_mode = Some(BudgetMode::Project);
+        project.budget_amount = Some(dec!(10000));
+        project.project_start_date = Some(date(2025, 1, 1));
+        project.project_end_date = Some(date(2025, 6, 30));
+        let categories = vec![project.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm.clone()];
+
+        let transactions = vec![
+            make_txn(Some(project.id), dec!(-5000), date(2025, 2, 15)),
+            make_txn(Some(project.id), dec!(-3000), date(2025, 4, 10)),
+            // Partial refund on materials
+            make_txn(Some(project.id), dec!(800), date(2025, 4, 20)),
+        ];
+
+        let today = date(2025, 4, 25);
+        let status = compute_budget_status(
+            &project,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+        );
+
+        assert_eq!(status.budget_mode, BudgetMode::Project);
+        // Net: -5000 + -3000 + 800 = -7200, negated → 7200
+        assert_eq!(status.spent, dec!(7200));
+        assert_eq!(status.remaining, dec!(2800));
+    }
+
+    #[test]
+    fn rollover_with_mixed_expenses_and_refunds() {
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
+        let categories = vec![food.clone()];
+
+        let bm1 = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+
+        let bm2 = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 2, 14),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm1.clone(), bm2.clone()];
+
+        let transactions = vec![
+            // Month 1: -400 expense + 50 refund = -350 net → 350 spent → 150 surplus
+            make_txn(Some(food.id), dec!(-400), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(50), date(2025, 1, 28)),
+            // Month 2 (current): -200 expense
+            make_txn(Some(food.id), dec!(-200), date(2025, 2, 20)),
+        ];
+
+        let today = date(2025, 2, 25);
+        let status =
+            compute_budget_status(&food, &transactions, &bm2, &all_months, &categories, today);
+
+        assert_eq!(status.spent, dec!(200));
+        // Rollover: 500 - 350 = 150
+        assert_eq!(status.rollover, dec!(150));
+        // remaining = 500 + 150 - 200 = 450
+        assert_eq!(status.remaining, dec!(450));
+    }
 }
