@@ -92,6 +92,25 @@
   margin-top: -0.25rem;
 }
 
+/* Sync schedule rows inside queue card */
+.sync-schedule {
+  width: 100%;
+}
+.sync-row {
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+}
+.sync-row + .sync-row {
+  border-top: 1px solid var(--border);
+}
+.sync-row-name {
+  font-weight: 500;
+  min-width: 8rem;
+}
+.sync-row-next {
+  margin-left: auto;
+}
+
 /* Transactions */
 .txn-search {
   flex: 1;

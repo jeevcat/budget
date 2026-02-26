@@ -2288,24 +2288,16 @@ function timeAgo(iso) {
 
 function Jobs() {
   const [counts, setCounts] = useState(null);
-  const [accounts, setAccounts] = useState(null);
   const [schedule, setSchedule] = useState(null);
-  const [error, setError] = useState(null);
-  const [syncAccountId, setSyncAccountId] = useState("");
-  const [triggering, setTriggering] = useState(null);
+  const [triggering, setTriggering] = useState(new Set());
 
   function load() {
-    Promise.all([
-      api.get("/jobs/counts"),
-      api.get("/accounts"),
-      api.get("/jobs/schedule"),
-    ])
-      .then(([c, a, s]) => {
+    Promise.all([api.get("/jobs/counts"), api.get("/jobs/schedule")])
+      .then(([c, s]) => {
         setCounts(c);
-        setAccounts(a);
         setSchedule(s);
       })
-      .catch(setError);
+      .catch((err) => ot.toast(err.message, "Error", { variant: "danger" }));
   }
 
   useEffect(() => {
@@ -2321,22 +2313,49 @@ function Jobs() {
     return () => clearInterval(interval);
   }, []);
 
-  async function trigger(path, name) {
-    setTriggering(name);
-    setError(null);
+  function addTriggering(key) {
+    setTriggering((prev) => new Set(prev).add(key));
+  }
+  function removeTriggering(key) {
+    setTriggering((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }
+
+  async function trigger(path, key, successMsg) {
+    addTriggering(key);
     try {
       await api.post(path);
       load();
+      if (successMsg) ot.toast(successMsg, "", { variant: "success" });
     } catch (err) {
-      setError(err);
+      ot.toast(err.message, "Error", { variant: "danger" });
     } finally {
-      setTriggering(null);
+      removeTriggering(key);
     }
   }
 
-  async function triggerSync() {
-    if (!syncAccountId) return;
-    await trigger(`/jobs/pipeline/${syncAccountId}`, "sync");
+  async function triggerSyncAll() {
+    if (!schedule || schedule.length === 0) return;
+    addTriggering("sync-all");
+    try {
+      await Promise.all(
+        schedule.map((s) => {
+          addTriggering(`sync-${s.account_id}`);
+          return api
+            .post(`/jobs/pipeline/${s.account_id}`)
+            .finally(() => removeTriggering(`sync-${s.account_id}`));
+        }),
+      );
+      load();
+      ot.toast("Sync queued for all accounts", "", { variant: "success" });
+    } catch (err) {
+      ot.toast(err.message, "Error", { variant: "danger" });
+    } finally {
+      removeTriggering("sync-all");
+    }
   }
 
   // Aggregate queue counts for a card's job types
@@ -2357,109 +2376,93 @@ function Jobs() {
     return agg;
   }
 
-  function renderQueueCard(card) {
+  function renderSyncCard() {
+    const card = QUEUE_CARDS.find((c) => c.key === "sync");
     const c = cardCounts(card);
-    const isSync = card.key === "sync";
+    const syncAllBusy = triggering.has("sync-all");
 
     return html`
       <div class="queue-card">
         <span class="queue-card-title">${card.title}</span>
+        ${c.failed > 0 ? html`<span class="chip danger">${c.failed} failed</span>` : null}
+        ${c.active > 0 ? html`<span class="chip outline"><span class="text-light">Active</span> <span class="mono">${c.active}</span></span>` : null}
+        ${c.waiting > 0 ? html`<span class="chip outline"><span class="text-light">Waiting</span> <span class="mono">${c.waiting}</span></span>` : null}
+        <button
+          data-variant="primary" class="small"
+          onClick=${triggerSyncAll}
+          disabled=${syncAllBusy || !schedule || schedule.length === 0}
+        >
+          ${syncAllBusy ? "..." : "Sync All"}
+        </button>
+        <span class="queue-card-desc">${card.desc}</span>
         ${
-          c.failed > 0
-            ? html`<span class="chip danger">${c.failed} failed</span>`
+          schedule && schedule.length > 0
+            ? html`
+          <div class="sync-schedule">
+            ${schedule.map((s) => {
+              const isOk = s.last_run_status === "succeeded";
+              const isFailed = s.last_run_status === "failed";
+              const isRunning = s.last_run_status === "running";
+              const nextReason = s.next_run_reason
+                ? ` (${s.next_run_reason})`
+                : "";
+              const busy =
+                triggering.has(`sync-${s.account_id}`) || syncAllBusy;
+              return html`
+                <div class="sync-row hstack gap-3">
+                  <span class="sync-row-name">${s.account_name}</span>
+                  <span class="text-light">${timeAgo(s.last_run_at)}</span>
+                  ${isOk ? html`<span class="chip success">OK</span>` : null}
+                  ${isFailed ? html`<span class="chip danger" title=${s.last_error || ""}>Failed</span>` : null}
+                  ${isRunning ? html`<span class="chip outline">Running</span>` : null}
+                  ${!s.last_run_status ? html`<span class="text-light">\u2014</span>` : null}
+                  <span class="sync-row-next text-light">
+                    ${s.next_run_at ? html`${timeAgo(s.next_run_at)}${nextReason}` : "\u2014"}
+                  </span>
+                  <button
+                    class="small outline"
+                    onClick=${() => trigger(`/jobs/pipeline/${s.account_id}`, `sync-${s.account_id}`, `Sync queued for ${s.account_name}`)}
+                    disabled=${busy}
+                  >
+                    ${busy ? "..." : "Sync"}
+                  </button>
+                </div>
+              `;
+            })}
+          </div>
+        `
             : null
         }
-        ${
-          isSync
-            ? html`
-                <select
-                  value=${syncAccountId}
-                  onChange=${(e) => setSyncAccountId(e.target.value)}
-                  style="font-size:0.85rem"
-                >
-                  <option value="">Account...</option>
-                  ${(accounts ?? []).map(
-                    (a) =>
-                      html`<option value=${a.id}>${accountDisplayName(a)}</option>`,
-                  )}
-                </select>
-                <button
-                  data-variant="primary" class="small"
-                  onClick=${triggerSync}
-                  disabled=${!syncAccountId || triggering === "sync"}
-                >
-                  ${triggering === "sync" ? "..." : "Sync"}
-                </button>
-              `
-            : html`
-                <button
-                  data-variant="primary" class="small"
-                  onClick=${() => trigger(`/jobs/${card.key === "recompute" ? "recompute" : card.key}`, card.key)}
-                  disabled=${triggering === card.key}
-                >
-                  ${triggering === card.key ? "..." : card.key === "recompute" ? "Run" : "Run All"}
-                </button>
-              `
-        }
-        <span class="queue-card-desc">${card.desc}</span>
-        <div class="hstack gap-2" style="width:100%;margin-top:0.25rem">
-          <span class="chip outline"><span class="text-light">Active</span> <span class="mono">${c.active}</span></span>
-          <span class="chip outline"><span class="text-light">Waiting</span> <span class="mono">${c.waiting}</span></span>
-        </div>
       </div>
     `;
   }
 
-  if (error && !counts) return html`<p class="text-light">${error.message}</p>`;
-  if (!counts) return html`<p class="text-light">Loading...</p>`;
+  function renderQueueCard(card) {
+    if (card.key === "sync") return renderSyncCard();
+    const c = cardCounts(card);
 
-  function renderScheduleRow(s) {
-    const isOk = s.last_run_status === "succeeded";
-    const isFailed = s.last_run_status === "failed";
-    const isRunning = s.last_run_status === "running";
-    const nextReason = s.next_run_reason ? ` (${s.next_run_reason})` : "";
     return html`
-      <tr>
-        <td>${s.account_name}</td>
-        <td>${timeAgo(s.last_run_at)}</td>
-        <td>
-          ${isOk && html`<span class="chip success">OK</span>`}
-          ${isFailed && html`<span class="chip danger" title=${s.last_error || ""}>Failed</span>`}
-          ${isRunning && html`<span class="chip outline">Running</span>`}
-          ${!s.last_run_status && html`<span class="text-light">\u2014</span>`}
-        </td>
-        <td>
-          ${s.next_run_at ? html`${timeAgo(s.next_run_at)}${nextReason}` : html`<span class="text-light">\u2014</span>`}
-        </td>
-      </tr>
+      <div class="queue-card">
+        <span class="queue-card-title">${card.title}</span>
+        ${c.failed > 0 ? html`<span class="chip danger">${c.failed} failed</span>` : null}
+        ${c.active > 0 ? html`<span class="chip outline"><span class="text-light">Active</span> <span class="mono">${c.active}</span></span>` : null}
+        ${c.waiting > 0 ? html`<span class="chip outline"><span class="text-light">Waiting</span> <span class="mono">${c.waiting}</span></span>` : null}
+        <button
+          data-variant="primary" class="small"
+          onClick=${() => trigger(`/jobs/${card.key === "recompute" ? "recompute" : card.key}`, card.key, `${card.title} queued`)}
+          disabled=${triggering.has(card.key)}
+        >
+          ${triggering.has(card.key) ? "..." : card.key === "recompute" ? "Run" : "Run All"}
+        </button>
+        <span class="queue-card-desc">${card.desc}</span>
+      </div>
     `;
   }
 
+  if (!counts) return html`<p class="text-light">Loading...</p>`;
+
   return html`
     <h2>Jobs</h2>
-
-    ${error && html`<p role="alert" data-variant="error">${error.message}</p>`}
-
-    ${
-      schedule &&
-      schedule.length > 0 &&
-      html`
-      <h3>Schedule</h3>
-      <table style="margin-bottom:1.5rem">
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th>Last Run</th>
-            <th>Status</th>
-            <th>Next Run</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${schedule.map(renderScheduleRow)}
-        </tbody>
-      </table>
-    `
-    }
 
     <div class="queue-cards">
       ${QUEUE_CARDS.map(renderQueueCard)}
