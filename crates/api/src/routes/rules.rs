@@ -1,11 +1,7 @@
-use std::collections::HashMap;
-
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -41,6 +37,7 @@ pub struct CreateRule {
 /// - `POST /` -- create a new rule
 /// - `PUT /{id}` -- update an existing rule
 /// - `DELETE /{id}` -- delete a rule
+/// - `POST /apply` -- apply all categorization rules to uncategorized transactions
 ///
 /// # Errors
 ///
@@ -49,7 +46,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
         .route("/{id}", axum::routing::put(update).delete(remove))
-        .route("/generate", axum::routing::post(generate))
         .route("/apply", axum::routing::post(apply))
 }
 
@@ -158,226 +154,8 @@ async fn remove(
 }
 
 // ---------------------------------------------------------------------------
-// Generate / Apply
+// Apply
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-struct SampleMatch {
-    id: String,
-    merchant_name: String,
-    amount: Decimal,
-    posted_date: NaiveDate,
-}
-
-#[derive(Serialize)]
-struct RuleProposal {
-    match_field: String,
-    match_pattern: String,
-    target_category_id: String,
-    category_name: String,
-    explanation: String,
-    merchant_examples: Vec<String>,
-    matches_count: usize,
-    sample_matches: Vec<SampleMatch>,
-}
-
-#[derive(Serialize)]
-struct GenerateRulesResponse {
-    proposals: Vec<RuleProposal>,
-    analyzed_groups: usize,
-    filtered_by_existing_rules: usize,
-}
-
-/// Cluster merchants by category, filtering out those already covered by existing rules.
-fn cluster_merchants(
-    groups: &[(CategoryId, String, i64)],
-    compiled_rules: &[budget_core::rules::CompiledRule],
-) -> (HashMap<CategoryId, Vec<String>>, usize) {
-    let mut filtered_count: usize = 0;
-    let mut clusters: HashMap<CategoryId, Vec<String>> = HashMap::new();
-
-    for (category_id, merchant_name, _count) in groups {
-        let already_covered = compiled_rules.iter().any(|compiled| {
-            if let budget_core::rules::CompiledPattern::Regex(ref regex) = compiled.pattern
-                && compiled.rule.match_field == MatchField::Merchant
-            {
-                return regex.is_match(merchant_name);
-            }
-            false
-        });
-
-        if already_covered {
-            tracing::debug!(%merchant_name, %category_id, "  filtered: already covered by existing rule");
-            filtered_count += 1;
-            continue;
-        }
-
-        clusters
-            .entry(*category_id)
-            .or_default()
-            .push(merchant_name.clone());
-    }
-
-    (clusters, filtered_count)
-}
-
-/// Build a [`RuleProposal`] from an LLM-proposed pattern, validating the regex
-/// and collecting sample matches from uncategorized transactions.
-fn build_proposal(
-    proposed: &budget_providers::ProposedRule,
-    category_id: &CategoryId,
-    category_name: String,
-    merchants: &[String],
-    uncategorized: &[budget_core::models::Transaction],
-) -> Option<RuleProposal> {
-    let match_field_domain = match proposed.match_field {
-        budget_providers::MatchField::Merchant => MatchField::Merchant,
-        budget_providers::MatchField::Description => MatchField::Description,
-    };
-    let test_rule = Rule {
-        id: RuleId::new(),
-        rule_type: RuleType::Categorization,
-        match_field: match_field_domain,
-        match_pattern: proposed.match_pattern.clone(),
-        target_category_id: Some(*category_id),
-        target_correlation_type: None,
-        priority: 0,
-    };
-    let Ok(compiled) = compile_rule_pattern(&test_rule) else {
-        tracing::warn!(
-            pattern = %proposed.match_pattern,
-            "rule generation: skipping proposal, pattern failed to compile"
-        );
-        return None;
-    };
-
-    let matching: Vec<_> = uncategorized
-        .iter()
-        .filter(|txn| evaluate_categorization_rules(txn, std::slice::from_ref(&compiled)).is_some())
-        .collect();
-
-    tracing::info!(
-        %category_name,
-        pattern = %proposed.match_pattern,
-        matches = matching.len(),
-        "rule generation: proposal ready"
-    );
-
-    let sample_matches: Vec<SampleMatch> = matching
-        .iter()
-        .take(5)
-        .map(|txn| SampleMatch {
-            id: txn.id.to_string(),
-            merchant_name: txn.merchant_name.clone(),
-            amount: txn.amount,
-            posted_date: txn.posted_date,
-        })
-        .collect();
-
-    Some(RuleProposal {
-        match_field: match_field_domain.to_string(),
-        match_pattern: proposed.match_pattern.clone(),
-        target_category_id: category_id.to_string(),
-        category_name,
-        explanation: proposed.explanation.clone(),
-        merchant_examples: merchants.to_vec(),
-        matches_count: matching.len(),
-        sample_matches,
-    })
-}
-
-/// Batch-generate rule proposals from categorized transactions.
-///
-/// Groups categorized transactions by (category, merchant), filters out
-/// merchants already covered by existing rules, then asks the LLM to propose
-/// a regex for each remaining cluster.
-///
-/// # Errors
-///
-/// Returns `AppError` on database or LLM failures.
-async fn generate(State(state): State<AppState>) -> Result<Json<GenerateRulesResponse>, AppError> {
-    let groups = state.db.get_categorized_merchant_groups().await?;
-    let analyzed_groups = groups.len();
-    tracing::info!(
-        analyzed_groups,
-        "rule generation: loaded categorized merchant groups"
-    );
-    for (category_id, merchant_name, count) in &groups {
-        tracing::debug!(%category_id, %merchant_name, count, "  group");
-    }
-
-    let raw_rules = state
-        .db
-        .list_rules_by_type(RuleType::Categorization)
-        .await?;
-    tracing::info!(
-        raw_rules = raw_rules.len(),
-        "rule generation: loaded existing categorization rules"
-    );
-    let compiled_rules: Vec<_> = raw_rules
-        .iter()
-        .filter_map(|rule| compile_rule_pattern(rule).ok())
-        .collect();
-
-    let (clusters, filtered_count) = cluster_merchants(&groups, &compiled_rules);
-    tracing::info!(
-        clusters = clusters.len(),
-        filtered = filtered_count,
-        "rule generation: clustered merchants"
-    );
-
-    let categories = state.db.list_categories().await?;
-    let cat_map: HashMap<CategoryId, String> =
-        categories.into_iter().map(|c| (c.id, c.name)).collect();
-
-    let uncategorized = state.db.get_uncategorized_transactions().await?;
-    tracing::info!(
-        uncategorized = uncategorized.len(),
-        "rule generation: loaded uncategorized transactions for match preview"
-    );
-
-    let mut proposals = Vec::new();
-
-    for (category_id, merchants) in &clusters {
-        let Some(category_name) = cat_map.get(category_id).cloned() else {
-            tracing::warn!(%category_id, "rule generation: skipping cluster, category not found");
-            continue;
-        };
-
-        tracing::info!(%category_id, %category_name, merchant_count = merchants.len(), "rule generation: requesting LLM proposal");
-
-        let proposed = state
-            .llm
-            .propose_rule(merchants, &category_name)
-            .await
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("LLM error: {e}")))?;
-
-        tracing::info!(match_field = ?proposed.match_field, match_pattern = %proposed.match_pattern, "rule generation: LLM proposed pattern");
-
-        if let Some(proposal) = build_proposal(
-            &proposed,
-            category_id,
-            category_name,
-            merchants,
-            &uncategorized,
-        ) {
-            proposals.push(proposal);
-        }
-    }
-
-    tracing::info!(
-        proposals = proposals.len(),
-        analyzed_groups,
-        filtered = filtered_count,
-        "rule generation: complete"
-    );
-
-    Ok(Json(GenerateRulesResponse {
-        proposals,
-        analyzed_groups,
-        filtered_by_existing_rules: filtered_count,
-    }))
-}
 
 #[derive(Serialize)]
 struct ApplyRulesResponse {

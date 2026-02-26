@@ -20,6 +20,6 @@ pub use error::ProviderError;
 pub use gemini::GeminiProvider;
 pub use llm::{
     CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
-    TransactionSummary,
+    RuleContext, TransactionSummary,
 };
 pub use mock::{MockBankProvider, MockLlmProvider};

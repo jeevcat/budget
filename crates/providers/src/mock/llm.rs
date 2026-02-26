@@ -2,8 +2,8 @@ use rust_decimal::Decimal;
 
 use crate::error::ProviderError;
 use crate::llm::{
-    CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, ProposedRule,
-    TransactionSummary,
+    CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
+    RuleContext, TransactionSummary,
 };
 
 /// A mock LLM provider that uses simple keyword matching for categorization
@@ -162,21 +162,43 @@ impl LlmProvider for MockLlmProvider {
         }
     }
 
-    async fn propose_rule(
+    async fn propose_rules(
         &self,
-        merchant_examples: &[String],
-        user_category: &str,
-    ) -> Result<ProposedRule, ProviderError> {
-        let pattern = merchant_examples
-            .first()
-            .map_or_else(String::new, Clone::clone);
-        Ok(ProposedRule {
-            match_field: crate::llm::MatchField::Merchant,
-            match_pattern: pattern.clone(),
-            explanation: format!(
-                "Transactions from \"{pattern}\" are typically \"{user_category}\""
-            ),
-        })
+        context: &RuleContext,
+    ) -> Result<Vec<ProposedRule>, ProviderError> {
+        let merchant = &context.merchant_name;
+        // Tight: exact match
+        let exact = format!("^{merchant}$");
+        // Medium: simplified prefix
+        let simplified = merchant
+            .split_whitespace()
+            .next()
+            .unwrap_or(merchant)
+            .to_owned();
+        // Broad: case-insensitive keyword
+        let broad = merchant
+            .split_whitespace()
+            .next()
+            .unwrap_or(merchant)
+            .to_lowercase();
+
+        Ok(vec![
+            ProposedRule {
+                match_field: MatchField::Merchant,
+                match_pattern: exact,
+                explanation: format!("Exact match for \"{merchant}\""),
+            },
+            ProposedRule {
+                match_field: MatchField::Merchant,
+                match_pattern: simplified,
+                explanation: "Matches merchants starting with the same name".to_owned(),
+            },
+            ProposedRule {
+                match_field: MatchField::Merchant,
+                match_pattern: broad,
+                explanation: "Broad match for similar merchants".to_owned(),
+            },
+        ])
     }
 }
 
@@ -186,6 +208,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use super::*;
+    use crate::llm::RuleContext;
 
     #[tokio::test]
     async fn categorize_grocery_merchant() {
@@ -315,21 +338,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propose_rule_returns_merchant_match() {
+    async fn propose_rules_returns_three_patterns() {
         let provider = MockLlmProvider::new();
-        let rule = provider
-            .propose_rule(
-                &[
-                    "WHOLE FOODS MARKET".to_owned(),
-                    "WHOLE FOODS #123".to_owned(),
-                ],
-                "Food:Groceries",
-            )
-            .await
-            .unwrap();
-        assert_eq!(rule.match_field, crate::llm::MatchField::Merchant);
-        assert_eq!(rule.match_pattern, "WHOLE FOODS MARKET");
-        assert!(rule.explanation.contains("WHOLE FOODS MARKET"));
-        assert!(rule.explanation.contains("Food:Groceries"));
+        let context = RuleContext {
+            merchant_name: "WHOLE FOODS MARKET".to_owned(),
+            description: "Groceries".to_owned(),
+            amount: dec!(72.34),
+            posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            category_name: "Food:Groceries".to_owned(),
+            sibling_merchants: vec![],
+            existing_rule_patterns: vec![],
+        };
+        let rules = provider.propose_rules(&context).await.unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].match_field, MatchField::Merchant);
+        assert_eq!(rules[0].match_pattern, "^WHOLE FOODS MARKET$");
+        assert_eq!(rules[1].match_pattern, "WHOLE");
+        assert_eq!(rules[2].match_pattern, "whole");
     }
 }

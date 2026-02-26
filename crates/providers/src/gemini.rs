@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ProviderError;
 use crate::llm::{
     CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField, ProposedRule,
-    TransactionSummary,
+    RuleContext, TransactionSummary,
 };
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
@@ -91,13 +91,17 @@ impl GeminiProvider {
             .await
             .map_err(|e| ProviderError::Other(format!("failed to parse Gemini response: {e}")))?;
 
-        parsed
+        let text = parsed
             .candidates
             .into_iter()
             .next()
             .and_then(|c| c.content.parts.into_iter().next())
             .map(|p| p.text)
-            .ok_or_else(|| ProviderError::Other("empty response from Gemini".to_owned()))
+            .ok_or_else(|| ProviderError::Other("empty response from Gemini".to_owned()))?;
+
+        tracing::debug!(response = %text, "gemini response");
+
+        Ok(text)
     }
 }
 
@@ -228,56 +232,88 @@ JSON response:"#,
         })
     }
 
-    async fn propose_rule(
+    async fn propose_rules(
         &self,
-        merchant_examples: &[String],
-        user_category: &str,
-    ) -> Result<ProposedRule, ProviderError> {
-        let merchants_block = merchant_examples
-            .iter()
-            .map(|m| format!("- {m}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        context: &RuleContext,
+    ) -> Result<Vec<ProposedRule>, ProviderError> {
+        let siblings_block = if context.sibling_merchants.is_empty() {
+            "No other merchants in this category.".to_owned()
+        } else {
+            context
+                .sibling_merchants
+                .iter()
+                .map(|m| format!("- {m}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let existing_rules_block = if context.existing_rule_patterns.is_empty() {
+            "No existing rules for this category.".to_owned()
+        } else {
+            context
+                .existing_rule_patterns
+                .iter()
+                .map(|p| format!("- {p}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
 
         let prompt = format!(
             r#"You propose deterministic categorization rules for a personal budgeting tool.
 
-The user has categorized several transactions with the same category. You need to propose a single regex rule that would automatically categorize all similar transactions in the future.
+Given a specific transaction and its category, propose exactly 3 regex rules at varying specificity that would automatically categorize similar transactions in the future. The rules should go from tight (matching only this specific merchant) to broad (matching a wider class of similar merchants).
 
 Rules can match on:
 - "Merchant" — match against the merchant/payee name
 - "Description" — match against the transaction description
 
-The match_pattern should be a regex pattern that would catch all the merchant variations listed below and similar ones. Keep it simple and precise — avoid overly broad patterns.
-
-Respond with a JSON object containing:
+Respond with a JSON array of exactly 3 objects, each containing:
 - "match_field": "Merchant" or "Description"
-- "match_pattern": string — a regex pattern
-- "explanation": string — brief explanation of the rule
+- "match_pattern": string — a regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
+- "explanation": string — brief explanation of what the rule matches
 
-Merchant examples (all categorized as "{user_category}"):
-{merchants_block}
+Transaction:
+Merchant: {merchant}
+Description: {description}
+Amount: {amount}
+Date: {date}
+Category: {category}
 
-JSON response:"#
+Other merchants in this category:
+{siblings_block}
+
+Existing rules for this category (avoid duplicating these):
+{existing_rules_block}
+
+JSON response:"#,
+            merchant = context.merchant_name,
+            description = context.description,
+            amount = context.amount,
+            date = context.posted_date,
+            category = context.category_name,
         );
 
         let text = self.generate(&prompt).await?;
-        let result: RuleProposalResponse = serde_json::from_str(&text).map_err(|e| {
+        let results: Vec<RuleProposalResponse> = serde_json::from_str(&text).map_err(|e| {
             ProviderError::Other(format!(
-                "failed to parse rule proposal response: {e} (raw: {text})"
+                "failed to parse rule proposals response: {e} (raw: {text})"
             ))
         })?;
 
-        let match_field = match result.match_field.as_str() {
-            "Description" => MatchField::Description,
-            _ => MatchField::Merchant,
-        };
-
-        Ok(ProposedRule {
-            match_field,
-            match_pattern: result.match_pattern,
-            explanation: result.explanation,
-        })
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let match_field = match r.match_field.as_str() {
+                    "Description" => MatchField::Description,
+                    _ => MatchField::Merchant,
+                };
+                ProposedRule {
+                    match_field,
+                    match_pattern: r.match_pattern,
+                    explanation: r.explanation,
+                }
+            })
+            .collect())
     }
 }
 
@@ -353,6 +389,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+    use crate::llm::RuleContext;
 
     fn gemini_json_response(json_text: &str) -> serde_json::Value {
         serde_json::json!({
@@ -483,24 +520,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propose_rule_parses_response() {
+    async fn propose_rules_parses_response() {
         let (server, provider) = setup().await;
 
         Mock::given(method("POST"))
             .and(path_regex(r"/v1beta/models/.+:generateContent"))
             .respond_with(ResponseTemplate::new(200).set_body_json(gemini_json_response(
-                r#"{"match_field": "Merchant", "match_pattern": "(?i)whole\\s*foods", "explanation": "Matches Whole Foods variations"}"#,
+                r#"[{"match_field": "Merchant", "match_pattern": "^WHOLE FOODS MARKET$", "explanation": "Exact match"},{"match_field": "Merchant", "match_pattern": "whole\\s*foods", "explanation": "Matches Whole Foods variations"},{"match_field": "Merchant", "match_pattern": "foods|grocery", "explanation": "Broad grocery match"}]"#,
             )))
             .mount(&server)
             .await;
 
-        let result = provider
-            .propose_rule(&["WHOLE FOODS MARKET".to_owned()], "Food:Groceries")
-            .await
-            .unwrap();
-        assert_eq!(result.match_field, MatchField::Merchant);
-        assert!(result.match_pattern.contains("whole"));
-        assert!(!result.explanation.is_empty());
+        let context = RuleContext {
+            merchant_name: "WHOLE FOODS MARKET".to_owned(),
+            description: "Groceries".to_owned(),
+            amount: dec!(72.34),
+            posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).expect("valid date"),
+            category_name: "Food:Groceries".to_owned(),
+            sibling_merchants: vec!["TRADER JOE'S".to_owned()],
+            existing_rule_patterns: vec![],
+        };
+
+        let results = provider.propose_rules(&context).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].match_field, MatchField::Merchant);
+        assert!(results[0].match_pattern.contains("WHOLE FOODS"));
+        assert!(!results[2].explanation.is_empty());
     }
 
     #[tokio::test]
@@ -592,6 +637,7 @@ mod live_tests {
     use rust_decimal_macros::dec;
 
     use super::*;
+    use crate::llm::RuleContext;
 
     fn require_provider() -> GeminiProvider {
         let config = budget_core::load_config().expect("failed to load budget config");
@@ -678,18 +724,26 @@ mod live_tests {
 
     #[tokio::test]
     #[ignore = "hits live Gemini API"]
-    async fn live_propose_rule() {
+    async fn live_propose_rules() {
         let provider = require_provider();
-        let result = provider
-            .propose_rule(&["TRADER JOE'S #123".to_owned()], "Food:Groceries")
-            .await
-            .unwrap();
+        let context = RuleContext {
+            merchant_name: "TRADER JOE'S #123".to_owned(),
+            description: "Grocery purchase".to_owned(),
+            amount: dec!(58.12),
+            posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
+            category_name: "Food:Groceries".to_owned(),
+            sibling_merchants: vec!["WHOLE FOODS MARKET".to_owned()],
+            existing_rule_patterns: vec![],
+        };
+        let results = provider.propose_rules(&context).await.unwrap();
 
-        println!(
-            "rule: {:?} match on '{}' — {}",
-            result.match_field, result.match_pattern, result.explanation
-        );
-        assert!(!result.match_pattern.is_empty());
-        assert!(!result.explanation.is_empty());
+        for r in &results {
+            println!(
+                "rule: {:?} match on '{}' — {}",
+                r.match_field, r.match_pattern, r.explanation
+            );
+        }
+        assert_eq!(results.len(), 3);
+        assert!(!results[0].match_pattern.is_empty());
     }
 }

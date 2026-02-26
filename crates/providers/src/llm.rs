@@ -51,6 +51,17 @@ pub struct ProposedRule {
     pub explanation: String,
 }
 
+/// Full transaction context for per-transaction rule generation.
+pub struct RuleContext {
+    pub merchant_name: String,
+    pub description: String,
+    pub amount: Decimal,
+    pub posted_date: NaiveDate,
+    pub category_name: String,
+    pub sibling_merchants: Vec<String>,
+    pub existing_rule_patterns: Vec<String>,
+}
+
 #[trait_variant::make(Send)]
 pub trait LlmProvider {
     async fn categorize(
@@ -67,9 +78,8 @@ pub trait LlmProvider {
         txn_b: &TransactionSummary,
     ) -> Result<CorrelationResult, ProviderError>;
 
-    async fn propose_rule(
+    async fn propose_rules(
         &self,
-        merchant_examples: &[String],
-        user_category: &str,
-    ) -> Result<ProposedRule, ProviderError>;
+        context: &RuleContext,
+    ) -> Result<Vec<ProposedRule>, ProviderError>;
 }

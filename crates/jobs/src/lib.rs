@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use budget_providers::{
     CategorizeResult, CorrelationResult, EnableBankingConfig, EnableBankingProvider,
-    GeminiProvider, MockLlmProvider, ProposedRule, ProviderError, TransactionSummary,
+    GeminiProvider, MockLlmProvider, ProposedRule, ProviderError, RuleContext, TransactionSummary,
 };
 
 pub mod categorize;
@@ -323,20 +323,17 @@ impl LlmClient {
         self.inner.propose_correlation_erased(txn_a, txn_b).await
     }
 
-    /// Ask the LLM to propose a deterministic rule from multiple merchant
-    /// examples that share the same category.
+    /// Ask the LLM to propose 3 categorization rules at varying specificity
+    /// for a single transaction.
     ///
     /// # Errors
     ///
     /// Propagates any [`ProviderError`] from the underlying provider.
-    pub async fn propose_rule(
+    pub async fn propose_rules(
         &self,
-        merchant_examples: &[String],
-        user_category: &str,
-    ) -> Result<ProposedRule, ProviderError> {
-        self.inner
-            .propose_rule_erased(merchant_examples, user_category)
-            .await
+        context: &RuleContext,
+    ) -> Result<Vec<ProposedRule>, ProviderError> {
+        self.inner.propose_rules_erased(context).await
     }
 }
 
@@ -356,11 +353,10 @@ trait ErasedLlmProvider {
         txn_b: &'a TransactionSummary,
     ) -> BoxFuture<'a, Result<CorrelationResult, ProviderError>>;
 
-    fn propose_rule_erased<'a>(
+    fn propose_rules_erased<'a>(
         &'a self,
-        merchant_examples: &'a [String],
-        user_category: &'a str,
-    ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>>;
+        context: &'a RuleContext,
+    ) -> BoxFuture<'a, Result<Vec<ProposedRule>, ProviderError>>;
 }
 
 impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
@@ -382,12 +378,11 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
         Box::pin(self.propose_correlation(txn_a, txn_b))
     }
 
-    fn propose_rule_erased<'a>(
+    fn propose_rules_erased<'a>(
         &'a self,
-        merchant_examples: &'a [String],
-        user_category: &'a str,
-    ) -> BoxFuture<'a, Result<ProposedRule, ProviderError>> {
-        Box::pin(self.propose_rule(merchant_examples, user_category))
+        context: &'a RuleContext,
+    ) -> BoxFuture<'a, Result<Vec<ProposedRule>, ProviderError>> {
+        Box::pin(self.propose_rules(context))
     }
 }
 

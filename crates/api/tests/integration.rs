@@ -1,8 +1,7 @@
 use axum::Router;
 use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use axum::middleware;
-use http::Request;
-use http::StatusCode;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -735,30 +734,17 @@ async fn rules_create_invalid_rule_type_returns_400(pool: PgPool) {
 }
 
 // ===========================================================================
-// Rules: Generate & Apply
+// Transactions: Generate Rule
 // ===========================================================================
 
 #[sqlx::test]
-async fn rules_generate_returns_empty_when_no_categorized_transactions(pool: PgPool) {
-    let (app, _db) = setup(pool).await;
-
-    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
-    assert_eq!(status, StatusCode::OK);
-
-    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(resp["proposals"].as_array().expect("array").len(), 0);
-    assert_eq!(resp["analyzed_groups"], 0);
-    assert_eq!(resp["filtered_by_existing_rules"], 0);
-}
-
-#[sqlx::test]
-async fn rules_generate_proposes_rule_from_categorized_transactions(pool: PgPool) {
+async fn generate_rule_for_categorized_transaction(pool: PgPool) {
     let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
-        provider_account_id: "prov-gen-1".to_owned(),
-        name: "Gen Test".to_owned(),
+        provider_account_id: "prov-gen-rule".to_owned(),
+        name: "Gen Rule Test".to_owned(),
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),
@@ -769,48 +755,50 @@ async fn rules_generate_proposes_rule_from_categorized_transactions(pool: PgPool
     let category = make_category("Groceries");
     db.insert_category(&category).await.expect("category");
 
-    // Insert 2+ categorized transactions with the same merchant to cross HAVING >= 2 threshold
-    for i in 0_u32..3 {
-        let mut txn = make_txn(account.id, "WHOLE FOODS MARKET", 10 + i);
-        txn.category_id = Some(category.id);
-        txn.amount = rust_decimal::Decimal::new(i64::from(2500 + i), 2);
-        txn.description = "Groceries".to_owned();
-        db.upsert_transaction(&txn, None).await.expect("insert txn");
-    }
+    // Manually categorized transaction
+    let mut txn = make_txn(account.id, "WHOLE FOODS MARKET", 15);
+    txn.category_id = Some(category.id);
+    txn.amount = rust_decimal::Decimal::new(7234, 2);
+    txn.description = "Weekly groceries".to_owned();
+    db.upsert_transaction(&txn, None).await.expect("insert txn");
+    db.update_transaction_category(
+        txn.id,
+        category.id,
+        budget_core::models::CategoryMethod::Manual,
+    )
+    .await
+    .expect("categorize");
 
-    // Also insert an uncategorized transaction that the mock pattern should match
-    let mut uncat_txn = make_txn(account.id, "WHOLE FOODS MARKET #42", 20);
-    uncat_txn.amount = rust_decimal::Decimal::new(3100, 2);
-    uncat_txn.description = "Weekly shop".to_owned();
-    db.upsert_transaction(&uncat_txn, None)
-        .await
-        .expect("insert uncat");
-
-    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
+    let (status, body) = send(
+        app,
+        post_empty(&format!("/api/transactions/{}/generate-rule", txn.id)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
-    assert!(resp["analyzed_groups"].as_u64().expect("u64") >= 1);
+    assert_eq!(resp["category_name"], "Groceries");
+    assert_eq!(resp["target_category_id"], category.id.to_string());
 
     let proposals = resp["proposals"].as_array().expect("array");
-    assert_eq!(proposals.len(), 1);
-
-    let proposal = &proposals[0];
-    assert_eq!(proposal["category_name"], "Groceries");
-    assert_eq!(proposal["target_category_id"], category.id.to_string());
-    // MockLlmProvider uses first merchant example as the pattern
-    assert_eq!(proposal["match_pattern"], "WHOLE FOODS MARKET");
-    assert!(proposal["matches_count"].as_u64().expect("u64") >= 1);
+    // MockLlmProvider returns 3 proposals; some may be filtered if regex is invalid,
+    // but at least 1 should survive
+    assert!(
+        !proposals.is_empty(),
+        "expected at least one valid proposal"
+    );
+    assert!(proposals[0]["match_pattern"].is_string());
+    assert!(proposals[0]["explanation"].is_string());
 }
 
 #[sqlx::test]
-async fn rules_generate_filters_merchants_covered_by_existing_rules(pool: PgPool) {
+async fn generate_rule_rejects_rule_categorized_transaction(pool: PgPool) {
     let (app, db) = setup(pool).await;
 
     let account = Account {
         id: AccountId::new(),
-        provider_account_id: "prov-gen-filt".to_owned(),
-        name: "Filter Test".to_owned(),
+        provider_account_id: "prov-gen-rule-rej".to_owned(),
+        name: "Rule Rej Test".to_owned(),
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),
@@ -821,37 +809,54 @@ async fn rules_generate_filters_merchants_covered_by_existing_rules(pool: PgPool
     let category = make_category("Coffee");
     db.insert_category(&category).await.expect("category");
 
-    // Insert an existing rule that already covers "STARBUCKS"
-    let rule = Rule {
-        id: budget_core::models::RuleId::new(),
-        rule_type: budget_core::models::RuleType::Categorization,
-        match_field: budget_core::models::MatchField::Merchant,
-        match_pattern: "STARBUCKS".to_owned(),
-        target_category_id: Some(category.id),
-        target_correlation_type: None,
-        priority: 10,
-    };
-    db.insert_rule(&rule).await.expect("rule");
+    let mut txn = make_txn(account.id, "STARBUCKS", 10);
+    txn.category_id = Some(category.id);
+    db.upsert_transaction(&txn, None).await.expect("insert txn");
+    db.update_transaction_category(
+        txn.id,
+        category.id,
+        budget_core::models::CategoryMethod::Rule,
+    )
+    .await
+    .expect("categorize");
 
-    // Insert 2 categorized transactions for the already-covered merchant
-    for i in 0_u32..2 {
-        let mut txn = make_txn(account.id, "STARBUCKS", 1 + i);
-        txn.category_id = Some(category.id);
-        txn.amount = rust_decimal::Decimal::new(i64::from(550 + i), 2);
-        txn.description = "Coffee".to_owned();
-        txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1 + i).expect("date");
-        db.upsert_transaction(&txn, None).await.expect("insert txn");
-    }
-
-    let (status, body) = send(app, post_empty("/api/rules/generate")).await;
-    assert_eq!(status, StatusCode::OK);
-
-    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
-    // The merchant group was analyzed but filtered out
-    assert!(resp["analyzed_groups"].as_u64().expect("u64") >= 1);
-    assert_eq!(resp["filtered_by_existing_rules"], 1);
-    assert_eq!(resp["proposals"].as_array().expect("array").len(), 0);
+    let (status, _body) = send(
+        app,
+        post_empty(&format!("/api/transactions/{}/generate-rule", txn.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test]
+async fn generate_rule_rejects_uncategorized_transaction(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-gen-rule-uncat".to_owned(),
+        name: "Uncat Test".to_owned(),
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    let txn = make_txn(account.id, "UNKNOWN SHOP", 10);
+    db.upsert_transaction(&txn, None).await.expect("insert txn");
+
+    let (status, _body) = send(
+        app,
+        post_empty(&format!("/api/transactions/{}/generate-rule", txn.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ===========================================================================
+// Rules: Apply
+// ===========================================================================
 
 #[sqlx::test]
 async fn rules_apply_with_no_rules_categorizes_nothing(pool: PgPool) {

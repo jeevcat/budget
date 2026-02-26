@@ -564,6 +564,26 @@ impl Db {
             .collect()
     }
 
+    /// Get distinct merchant names for transactions in a given category.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn get_sibling_merchants(
+        &self,
+        category_id: CategoryId,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        let pool = &self.0;
+        let rows =
+            sqlx::query("SELECT DISTINCT merchant_name FROM transactions WHERE category_id = $1")
+                .bind(category_id.to_string())
+                .fetch_all(pool)
+                .await?;
+        rows.iter()
+            .map(|row| row.try_get("merchant_name"))
+            .collect()
+    }
+
     /// List all distinct category names currently in the categories table.
     ///
     /// Used to pass existing categories to the LLM so it maps to known names.
