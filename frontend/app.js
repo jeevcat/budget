@@ -1,6 +1,6 @@
 import htm from "htm";
 import { h, render } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 const html = htm.bind(h);
 
@@ -518,30 +518,68 @@ function Dashboard() {
 
   const hasProjects = projects.length > 0;
 
+  // Track active tab (0 = Monthly, 1 = Annual, 2 = Projects)
+  const [activeTab, setActiveTab] = useState(0);
+  const tabsRef = useRef(null);
+  const tabsCallbackRef = useCallback((el) => {
+    if (tabsRef.current === el) return;
+    tabsRef.current = el;
+    if (!el) return;
+    el.addEventListener("click", (e) => {
+      const tab = e.target.closest("[role=tab]");
+      if (!tab) return;
+      const tabs = [...el.querySelectorAll("[role=tab]")];
+      const idx = tabs.indexOf(tab);
+      if (idx >= 0) setActiveTab(idx);
+    });
+  }, []);
+
+  const isAnnualTab = activeTab === 1;
+  const annualTimeLabel = timeLeft(annual, "mo");
+
+  // Derive the budget year from the active month (mirrors backend logic:
+  // walk backwards through sorted months to find the January anchor)
+  const budgetYear = (() => {
+    for (let i = activeIdx; i >= 0; i--) {
+      const sd = new Date(`${sortedMonths[i].start_date}T00:00:00`);
+      if (sd.getMonth() === 0) return sd.getFullYear();
+    }
+    return new Date(`${activeMonth.start_date}T00:00:00`).getFullYear();
+  })();
+
   return html`
     <div class="hstack" style="margin-bottom:1.25rem">
-      <div class="hstack" style="gap:0.5rem;align-items:center">
-        <button
-          onClick=${goPrev}
-          disabled=${!hasPrev}
-          style="padding:0.25rem 0.5rem;font-size:1rem"
-          aria-label="Previous month"
-        >\u2039</button>
-        <div style="text-align:center">
-          <strong>${formatMonthRange(activeMonth)}</strong>
-          ${
-            isCurrentMonth
-              ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
-              : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
-          }
-        </div>
-        <button
-          onClick=${goNext}
-          disabled=${!hasNext}
-          style="padding:0.25rem 0.5rem;font-size:1rem"
-          aria-label="Next month"
-        >\u203A</button>
-      </div>
+      ${
+        isAnnualTab
+          ? html`
+          <div style="text-align:center">
+            <strong>${budgetYear}</strong>
+            ${annualTimeLabel && html`<div class="text-light mono" style="font-size:0.85rem">${annualTimeLabel}</div>`}
+          </div>`
+          : html`
+          <div class="hstack" style="gap:0.5rem;align-items:center">
+            <button
+              onClick=${goPrev}
+              disabled=${!hasPrev}
+              style="padding:0.25rem 0.5rem;font-size:1rem"
+              aria-label="Previous month"
+            >\u2039</button>
+            <div style="text-align:center">
+              <strong>${formatMonthRange(activeMonth)}</strong>
+              ${
+                isCurrentMonth
+                  ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
+                  : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
+              }
+            </div>
+            <button
+              onClick=${goNext}
+              disabled=${!hasNext}
+              style="padding:0.25rem 0.5rem;font-size:1rem"
+              aria-label="Next month"
+            >\u203A</button>
+          </div>`
+      }
       ${
         uncategorizedCount > 0 &&
         html`
@@ -556,7 +594,7 @@ function Dashboard() {
       }
     </div>
 
-    <ot-tabs>
+    <ot-tabs ref=${tabsCallbackRef}>
       <div role="tablist">
         <button role="tab">Monthly</button>
         <button role="tab">Annual</button>
