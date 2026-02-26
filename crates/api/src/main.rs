@@ -194,7 +194,6 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .nest("/categories", routes::categories::router())
         .nest("/rules", routes::rules::router())
         .nest("/budgets", routes::budgets::router())
-        .nest("/projects", routes::projects::router())
         .nest("/jobs", routes::jobs::router())
         .nest("/connections", routes::connections::router())
         .layer(middleware::from_fn_with_state(

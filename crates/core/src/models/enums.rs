@@ -105,28 +105,31 @@ impl std::str::FromStr for MatchField {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PeriodType {
+pub enum BudgetMode {
     Monthly,
     Annual,
+    Project,
 }
 
-impl fmt::Display for PeriodType {
+impl fmt::Display for BudgetMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Monthly => write!(f, "monthly"),
             Self::Annual => write!(f, "annual"),
+            Self::Project => write!(f, "project"),
         }
     }
 }
 
-impl std::str::FromStr for PeriodType {
+impl std::str::FromStr for BudgetMode {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "monthly" => Ok(Self::Monthly),
             "annual" => Ok(Self::Annual),
-            _ => Err(Error::InvalidPeriodType(s.to_owned())),
+            "project" => Ok(Self::Project),
+            _ => Err(Error::InvalidBudgetMode(s.to_owned())),
         }
     }
 }

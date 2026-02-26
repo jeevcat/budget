@@ -13,8 +13,8 @@ use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, Category,
-    CategoryId, Project, Rule, Transaction, TransactionId,
+    Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId, Rule,
+    Transaction, TransactionId,
 };
 use budget_jobs::LlmClient;
 use budget_providers::MockLlmProvider;
@@ -55,7 +55,6 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         .nest("/categories", routes::categories::router())
         .nest("/rules", routes::rules::router())
         .nest("/budgets", routes::budgets::router())
-        .nest("/projects", routes::projects::router())
         .nest("/jobs", routes::jobs::router())
         .nest("/connections", routes::connections::router())
         .layer(middleware::from_fn_with_state(
@@ -152,7 +151,39 @@ fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Tr
         description: String::new(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
         budget_month_id: None,
-        project_id: None,
+        correlation_id: None,
+        correlation_type: None,
+        category_method: None,
+        suggested_category: None,
+    }
+}
+
+/// Helper: build a category with no budget config.
+fn make_category(name: &str) -> Category {
+    Category {
+        id: CategoryId::new(),
+        name: name.to_owned(),
+        parent_id: None,
+        budget_mode: None,
+        budget_amount: None,
+        project_start_date: None,
+        project_end_date: None,
+    }
+}
+
+/// Helper: build a basic transaction.
+fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
+    Transaction {
+        id: TransactionId::new(),
+        account_id,
+        category_id: None,
+        amount: rust_decimal::Decimal::new(1000, 2),
+        original_amount: None,
+        original_currency: None,
+        merchant_name: merchant.to_owned(),
+        description: String::new(),
+        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
+        budget_month_id: None,
         correlation_id: None,
         correlation_type: None,
         category_method: None,
@@ -297,52 +328,20 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Groceries".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Groceries");
     db.insert_category(&category).await.expect("category");
 
     // Insert one categorized and one uncategorized transaction
-    let txn_categorized = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: Some(category.id),
-        amount: rust_decimal::Decimal::new(2500, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "Grocery Store".to_owned(),
-        description: "Weekly groceries".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 15).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let mut txn_categorized = make_txn(account.id, "Grocery Store", 15);
+    txn_categorized.category_id = Some(category.id);
+    txn_categorized.amount = rust_decimal::Decimal::new(2500, 2);
+    txn_categorized.description = "Weekly groceries".to_owned();
     db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
         .await
         .expect("insert categorized");
 
-    let txn_uncategorized = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: None,
-        amount: rust_decimal::Decimal::new(1000, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "Coffee Shop".to_owned(),
-        description: "Morning coffee".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 16).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let mut txn_uncategorized = make_txn(account.id, "Coffee Shop", 16);
+    txn_uncategorized.description = "Morning coffee".to_owned();
     db.upsert_transaction(&txn_uncategorized, Some("txn-uncat-1"))
         .await
         .expect("insert uncategorized");
@@ -379,30 +378,13 @@ async fn transactions_categorize_success(pool: PgPool) {
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Dining".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Dining");
     db.insert_category(&category).await.expect("category");
 
-    let txn = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: None,
-        amount: rust_decimal::Decimal::new(1500, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "Restaurant".to_owned(),
-        description: "Dinner".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let mut txn = make_txn(account.id, "Restaurant", 1);
+    txn.amount = rust_decimal::Decimal::new(1500, 2);
+    txn.description = "Dinner".to_owned();
+    txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date");
     db.upsert_transaction(&txn, Some("txn-to-categorize"))
         .await
         .expect("insert");
@@ -469,6 +451,7 @@ async fn categories_create_and_list(pool: PgPool) {
     let created: Category = serde_json::from_slice(&body).expect("parse");
     assert_eq!(created.name, "Entertainment");
     assert!(created.parent_id.is_none());
+    assert!(created.budget_mode.is_none());
 
     // List should contain the created category
     let (status, body) = send(app, get("/api/categories")).await;
@@ -477,6 +460,96 @@ async fn categories_create_and_list(pool: PgPool) {
     let cats: Vec<Category> = serde_json::from_slice(&body).expect("parse");
     assert_eq!(cats.len(), 1);
     assert_eq!(cats[0].name, "Entertainment");
+}
+
+#[sqlx::test]
+async fn categories_create_with_budget_fields(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let payload = serde_json::json!({
+        "name": "Groceries",
+        "budget_mode": "monthly",
+        "budget_amount": "500.00"
+    });
+
+    let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let created: Category = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(created.name, "Groceries");
+    assert_eq!(
+        created.budget_mode,
+        Some(budget_core::models::BudgetMode::Monthly)
+    );
+    assert_eq!(
+        created.budget_amount,
+        Some(rust_decimal::Decimal::new(50000, 2))
+    );
+}
+
+#[sqlx::test]
+async fn categories_create_project_with_dates(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let payload = serde_json::json!({
+        "name": "Kitchen Renovation",
+        "budget_mode": "project",
+        "budget_amount": "10000.00",
+        "project_start_date": "2025-03-01",
+        "project_end_date": "2025-06-30"
+    });
+
+    let (status, body) = send(app, post_json("/api/categories", &payload)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let created: Category = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(
+        created.budget_mode,
+        Some(budget_core::models::BudgetMode::Project)
+    );
+    assert_eq!(
+        created.project_start_date,
+        Some(chrono::NaiveDate::from_ymd_opt(2025, 3, 1).expect("date"))
+    );
+    assert_eq!(
+        created.project_end_date,
+        Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 30).expect("date"))
+    );
+}
+
+#[sqlx::test]
+async fn categories_update_budget_fields(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    // Create with no budget
+    let payload = serde_json::json!({ "name": "Transport" });
+    let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let created: Category = serde_json::from_slice(&body).expect("parse");
+    assert!(created.budget_mode.is_none());
+
+    // Update to monthly budget
+    let update = serde_json::json!({
+        "name": "Transport",
+        "budget_mode": "monthly",
+        "budget_amount": "300.00"
+    });
+    let (status, body) = send(
+        app,
+        put_json(&format!("/api/categories/{}", created.id), &update),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let updated: Category = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(
+        updated.budget_mode,
+        Some(budget_core::models::BudgetMode::Monthly)
+    );
+    assert_eq!(
+        updated.budget_amount,
+        Some(rust_decimal::Decimal::new(30000, 2))
+    );
 }
 
 #[sqlx::test]
@@ -533,6 +606,19 @@ async fn categories_create_with_parent(pool: PgPool) {
     assert_eq!(cats.len(), 2);
 }
 
+#[sqlx::test]
+async fn categories_create_invalid_budget_mode_returns_400(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let payload = serde_json::json!({
+        "name": "Bad",
+        "budget_mode": "weekly"
+    });
+
+    let (status, _body) = send(app, post_json("/api/categories", &payload)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 // ===========================================================================
 // Rules
 // ===========================================================================
@@ -541,13 +627,7 @@ async fn categories_create_with_parent(pool: PgPool) {
 async fn rules_create_and_list(pool: PgPool) {
     let (app, db) = setup(pool).await;
 
-    // Rules with target_category_id need a valid category for context,
-    // but the DB schema only has a FK constraint. Insert a category first.
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Groceries".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Groceries");
     db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
@@ -577,11 +657,7 @@ async fn rules_create_and_list(pool: PgPool) {
 async fn rules_update(pool: PgPool) {
     let (app, db) = setup(pool).await;
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Transport".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Transport");
     db.insert_category(&category).await.expect("category");
 
     let payload = serde_json::json!({
@@ -690,53 +766,22 @@ async fn rules_generate_proposes_rule_from_categorized_transactions(pool: PgPool
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Groceries".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Groceries");
     db.insert_category(&category).await.expect("category");
 
     // Insert 2+ categorized transactions with the same merchant to cross HAVING >= 2 threshold
     for i in 0_u32..3 {
-        let txn = Transaction {
-            id: TransactionId::new(),
-            account_id: account.id,
-            category_id: Some(category.id),
-            amount: rust_decimal::Decimal::new(i64::from(2500 + i), 2),
-            original_amount: None,
-            original_currency: None,
-            merchant_name: "WHOLE FOODS MARKET".to_owned(),
-            description: "Groceries".to_owned(),
-            posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 10 + i).expect("date"),
-            budget_month_id: None,
-            project_id: None,
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-        };
+        let mut txn = make_txn(account.id, "WHOLE FOODS MARKET", 10 + i);
+        txn.category_id = Some(category.id);
+        txn.amount = rust_decimal::Decimal::new(i64::from(2500 + i), 2);
+        txn.description = "Groceries".to_owned();
         db.upsert_transaction(&txn, None).await.expect("insert txn");
     }
 
     // Also insert an uncategorized transaction that the mock pattern should match
-    let uncat_txn = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: None,
-        amount: rust_decimal::Decimal::new(3100, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "WHOLE FOODS MARKET #42".to_owned(),
-        description: "Weekly shop".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 20).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let mut uncat_txn = make_txn(account.id, "WHOLE FOODS MARKET #42", 20);
+    uncat_txn.amount = rust_decimal::Decimal::new(3100, 2);
+    uncat_txn.description = "Weekly shop".to_owned();
     db.upsert_transaction(&uncat_txn, None)
         .await
         .expect("insert uncat");
@@ -773,11 +818,7 @@ async fn rules_generate_filters_merchants_covered_by_existing_rules(pool: PgPool
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Coffee".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Coffee");
     db.insert_category(&category).await.expect("category");
 
     // Insert an existing rule that already covers "STARBUCKS"
@@ -794,23 +835,11 @@ async fn rules_generate_filters_merchants_covered_by_existing_rules(pool: PgPool
 
     // Insert 2 categorized transactions for the already-covered merchant
     for i in 0_u32..2 {
-        let txn = Transaction {
-            id: TransactionId::new(),
-            account_id: account.id,
-            category_id: Some(category.id),
-            amount: rust_decimal::Decimal::new(i64::from(550 + i), 2),
-            original_amount: None,
-            original_currency: None,
-            merchant_name: "STARBUCKS".to_owned(),
-            description: "Coffee".to_owned(),
-            posted_date: chrono::NaiveDate::from_ymd_opt(2025, 2, 1 + i).expect("date"),
-            budget_month_id: None,
-            project_id: None,
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-        };
+        let mut txn = make_txn(account.id, "STARBUCKS", 1 + i);
+        txn.category_id = Some(category.id);
+        txn.amount = rust_decimal::Decimal::new(i64::from(550 + i), 2);
+        txn.description = "Coffee".to_owned();
+        txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1 + i).expect("date");
         db.upsert_transaction(&txn, None).await.expect("insert txn");
     }
 
@@ -839,23 +868,7 @@ async fn rules_apply_with_no_rules_categorizes_nothing(pool: PgPool) {
     };
     db.upsert_account(&account).await.expect("account");
 
-    let txn = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: None,
-        amount: rust_decimal::Decimal::new(1000, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "RANDOM SHOP".to_owned(),
-        description: "Stuff".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 15).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let txn = make_txn(account.id, "RANDOM SHOP", 15);
     db.upsert_transaction(&txn, None).await.expect("insert");
 
     let (status, body) = send(app, post_empty("/api/rules/apply")).await;
@@ -880,11 +893,7 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Groceries".to_owned(),
-        parent_id: None,
-    };
+    let category = make_category("Groceries");
     db.insert_category(&category).await.expect("category");
 
     // Create a rule matching "LIDL"
@@ -958,16 +967,8 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
     };
     db.upsert_account(&account).await.expect("account");
 
-    let category_a = Category {
-        id: CategoryId::new(),
-        name: "Coffee".to_owned(),
-        parent_id: None,
-    };
-    let category_b = Category {
-        id: CategoryId::new(),
-        name: "Tea".to_owned(),
-        parent_id: None,
-    };
+    let category_a = make_category("Coffee");
+    let category_b = make_category("Tea");
     db.insert_category(&category_a).await.expect("category");
     db.insert_category(&category_b).await.expect("category");
 
@@ -984,23 +985,11 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
     db.insert_rule(&rule).await.expect("rule");
 
     // Already-categorized transaction — should not be re-categorized
-    let txn = Transaction {
-        id: TransactionId::new(),
-        account_id: account.id,
-        category_id: Some(category_b.id),
-        amount: rust_decimal::Decimal::new(550, 2),
-        original_amount: None,
-        original_currency: None,
-        merchant_name: "STARBUCKS RESERVE".to_owned(),
-        description: "Coffee".to_owned(),
-        posted_date: chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date"),
-        budget_month_id: None,
-        project_id: None,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-    };
+    let mut txn = make_txn(account.id, "STARBUCKS RESERVE", 1);
+    txn.category_id = Some(category_b.id);
+    txn.amount = rust_decimal::Decimal::new(550, 2);
+    txn.description = "Coffee".to_owned();
+    txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date");
     db.upsert_transaction(&txn, None).await.expect("insert");
 
     let (status, body) = send(app, post_empty("/api/rules/apply")).await;
@@ -1031,31 +1020,6 @@ async fn budgets_status_returns_404_when_no_months(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn budgets_create_period(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Rent".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "monthly",
-        "amount": "1500.00"
-    });
-
-    let (status, body) = send(app, post_json("/api/budgets/periods", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    let created: BudgetPeriod = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(created.category_id, category.id);
-    assert_eq!(created.amount, rust_decimal::Decimal::new(150_000, 2));
-}
-
-#[sqlx::test]
 async fn budgets_months_empty(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
@@ -1067,57 +1031,18 @@ async fn budgets_months_empty(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn budgets_delete_period(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Utils".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "annual",
-        "amount": "600.00"
-    });
-
-    let (status, body) = send(app.clone(), post_json("/api/budgets/periods", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let created: BudgetPeriod = serde_json::from_slice(&body).expect("parse");
-
-    let (status, _body) = send(
-        app.clone(),
-        delete(&format!("/api/budgets/periods/{}", created.id)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    // Verify the period is gone via the DB
-    let periods = db.list_budget_periods().await.expect("list");
-    assert!(periods.is_empty());
-}
-
-#[sqlx::test]
 async fn budgets_status_with_current_month(pool: PgPool) {
     let (app, db) = setup(pool).await;
 
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Food".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    // Create a budget period
-    let bp_payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "monthly",
-        "amount": "500.00"
+    // Create a category with a monthly budget
+    let payload = serde_json::json!({
+        "name": "Food",
+        "budget_mode": "monthly",
+        "budget_amount": "500.00"
     });
-    let (status, _) = send(app.clone(), post_json("/api/budgets/periods", &bp_payload)).await;
+    let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
     assert_eq!(status, StatusCode::CREATED);
+    let category: Category = serde_json::from_slice(&body).expect("parse");
 
     // Insert a budget month with no end_date (current month)
     let month = BudgetMonth {
@@ -1135,157 +1060,6 @@ async fn budgets_status_with_current_month(pool: PgPool) {
         serde_json::from_slice(&body).expect("parse");
     assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].category_id, category.id);
-}
-
-// ===========================================================================
-// Projects
-// ===========================================================================
-
-#[sqlx::test]
-async fn projects_create_and_list(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Home".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "name": "Kitchen Renovation",
-        "category_id": category.id.to_string(),
-        "start_date": "2025-03-01",
-        "end_date": "2025-06-30",
-        "budget_amount": "10000.00"
-    });
-
-    let (status, body) = send(app.clone(), post_json("/api/projects", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    let created: Project = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(created.name, "Kitchen Renovation");
-    assert_eq!(created.category_id, category.id);
-    assert_eq!(
-        created.start_date,
-        chrono::NaiveDate::from_ymd_opt(2025, 3, 1).expect("date")
-    );
-    assert_eq!(
-        created.end_date,
-        Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 30).expect("date"))
-    );
-    assert_eq!(
-        created.budget_amount,
-        Some(rust_decimal::Decimal::new(1_000_000, 2))
-    );
-
-    // List should contain the project
-    let (status, body) = send(app, get("/api/projects")).await;
-    assert_eq!(status, StatusCode::OK);
-
-    let projects: Vec<Project> = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(projects.len(), 1);
-    assert_eq!(projects[0].name, "Kitchen Renovation");
-}
-
-#[sqlx::test]
-async fn projects_update(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Travel".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "name": "Trip to Paris",
-        "category_id": category.id.to_string(),
-        "start_date": "2025-07-01"
-    });
-
-    let (_, body) = send(app.clone(), post_json("/api/projects", &payload)).await;
-    let created: Project = serde_json::from_slice(&body).expect("parse");
-
-    let update_payload = serde_json::json!({
-        "name": "Trip to Tokyo",
-        "category_id": category.id.to_string(),
-        "start_date": "2025-08-01",
-        "end_date": "2025-08-15",
-        "budget_amount": "5000.00"
-    });
-
-    let (status, body) = send(
-        app,
-        put_json(&format!("/api/projects/{}", created.id), &update_payload),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let updated: Project = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(updated.name, "Trip to Tokyo");
-    assert_eq!(updated.id, created.id);
-    assert_eq!(
-        updated.start_date,
-        chrono::NaiveDate::from_ymd_opt(2025, 8, 1).expect("date")
-    );
-}
-
-#[sqlx::test]
-async fn projects_delete(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Misc".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "name": "Temp Project",
-        "category_id": category.id.to_string(),
-        "start_date": "2025-01-01"
-    });
-
-    let (status, body) = send(app.clone(), post_json("/api/projects", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let created: Project = serde_json::from_slice(&body).expect("parse");
-
-    let (status, _body) = send(
-        app.clone(),
-        delete(&format!("/api/projects/{}", created.id)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    // Verify it's gone
-    let (status, body) = send(app, get("/api/projects")).await;
-    assert_eq!(status, StatusCode::OK);
-    let projects: Vec<Project> = serde_json::from_slice(&body).expect("parse");
-    assert!(projects.is_empty());
-}
-
-#[sqlx::test]
-async fn projects_create_invalid_date_returns_400(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Bad Date Category".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "name": "Bad Date Project",
-        "category_id": category.id.to_string(),
-        "start_date": "not-a-date"
-    });
-
-    let (status, _body) = send(app, post_json("/api/projects", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // ===========================================================================
@@ -1417,75 +1191,6 @@ async fn rules_create_correlation_rule(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn budgets_update_period(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Insurance".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "monthly",
-        "amount": "200.00"
-    });
-
-    let (status, body) = send(app.clone(), post_json("/api/budgets/periods", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let created: BudgetPeriod = serde_json::from_slice(&body).expect("parse");
-
-    let update_payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "annual",
-        "amount": "2400.00"
-    });
-
-    let (status, body) = send(
-        app,
-        put_json(
-            &format!("/api/budgets/periods/{}", created.id),
-            &update_payload,
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let updated: BudgetPeriod = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(updated.id, created.id);
-    assert_eq!(updated.period_type, budget_core::models::PeriodType::Annual);
-    assert_eq!(updated.amount, rust_decimal::Decimal::new(240_000, 2));
-}
-
-#[sqlx::test]
-async fn projects_create_without_optional_fields(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "Minimal".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "name": "Minimal Project",
-        "category_id": category.id.to_string(),
-        "start_date": "2025-05-01"
-    });
-
-    let (status, body) = send(app, post_json("/api/projects", &payload)).await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    let created: Project = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(created.name, "Minimal Project");
-    assert!(created.end_date.is_none());
-    assert!(created.budget_amount.is_none());
-}
-
-#[sqlx::test]
 async fn transactions_categorize_with_invalid_txn_id_returns_400(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
@@ -1513,27 +1218,6 @@ async fn rules_create_invalid_match_field_returns_400(pool: PgPool) {
     });
 
     let (status, _body) = send(app, post_json("/api/rules", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-}
-
-#[sqlx::test]
-async fn budgets_create_period_invalid_amount_returns_400(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "BadAmount".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "monthly",
-        "amount": "not-a-number"
-    });
-
-    let (status, _body) = send(app, post_json("/api/budgets/periods", &payload)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -1570,41 +1254,6 @@ async fn accounts_create_all_types(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     let accounts: Vec<Account> = serde_json::from_slice(&body).expect("parse");
     assert_eq!(accounts.len(), 6);
-}
-
-#[sqlx::test]
-async fn budgets_create_period_invalid_period_type_returns_400(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    let category = Category {
-        id: CategoryId::new(),
-        name: "BadPeriod".to_owned(),
-        parent_id: None,
-    };
-    db.insert_category(&category).await.expect("category");
-
-    let payload = serde_json::json!({
-        "category_id": category.id.to_string(),
-        "period_type": "weekly",
-        "amount": "100.00"
-    });
-
-    let (status, _body) = send(app, post_json("/api/budgets/periods", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-}
-
-#[sqlx::test]
-async fn projects_create_invalid_category_uuid_returns_400(pool: PgPool) {
-    let (app, _db) = setup(pool).await;
-
-    let payload = serde_json::json!({
-        "name": "Bad UUID Project",
-        "category_id": "not-a-uuid",
-        "start_date": "2025-01-01"
-    });
-
-    let (status, _body) = send(app, post_json("/api/projects", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // ===========================================================================

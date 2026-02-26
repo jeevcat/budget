@@ -89,6 +89,10 @@ async fn seed_category(db: &Db, name: &str) -> Category {
         id: CategoryId::new(),
         name: name.to_owned(),
         parent_id: None,
+        budget_mode: None,
+        budget_amount: None,
+        project_start_date: None,
+        project_end_date: None,
     };
     db.insert_category(&cat).await.expect("seed category");
     cat
@@ -114,7 +118,6 @@ async fn seed_transaction(
         description: String::new(),
         posted_date,
         budget_month_id: None,
-        project_id: None,
         correlation_id: None,
         correlation_type: None,
         category_method: None,

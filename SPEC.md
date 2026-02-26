@@ -103,7 +103,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - Project spend is tracked against its own budget and timeline, with the same spent/remaining/days-left model. The pace indicator pro-rates across the project's full timeline (start to end date). No rollover — projects are finite.
 - **Projects are excluded from monthly/annual budgets by default.** Project transactions are visible but do not count toward regular category budgets or the overall monthly total. The "overall total" in Section 4 covers regular-budget categories only; projects have their own separate summary.
 - When the project ends (or the category is unlinked), transactions in that category resume flowing into regular budgets going forward.
-- **Retroactive project creation**: Because the system is always-live/functional, creating a project with a start date in the past will retroactively pull matching historical transactions into the project and out of regular budget months.
+- **Retroactive project categories**: Because the system is always-live/functional, setting a category to project mode retroactively excludes its historical transactions from regular budget months — no reassignment needed, project membership is derived from category + date range at query time.
 - Use cases: home renovations, weddings, one-time medical expenses, relocation costs, etc.
 
 ### 6. Cross-Account Transaction Correlation
@@ -199,16 +199,13 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - [x] **Provider error retry with backoff**: The scheduler retries failed pipelines with exponential backoff (60s–15min, up to 5 attempts) for transient failures (timeouts, rate limits, connection resets). Per-provider-call retry with jitter is not yet implemented — the retry granularity is at the pipeline level.
 - [x] **Partial failure recovery in sync**: A single failed `upsert_transaction` aborts the entire sync (early `?` return in the for-loop). Isolate per-transaction errors so one bad record doesn't block the rest of the batch. Accumulate errors and report them without losing successfully synced transactions.
 
-### Retroactive & Backfill Logic
+### Backfill Logic
 
-- [ ] **Retroactive project creation**: Creating a project with a past start date should reassign historical transactions in the linked category (and its children) to that project. Currently `insert_project` is a plain INSERT with no retroactive transaction assignment.
 - [ ] **Inter-month gap transaction assignment**: Transactions posted between calendar month start and salary arrival are left unassigned if they don't fall within any budget month's date range. They should be assigned to the previous (still-open) budget month.
 - [ ] **First-time backfill**: Initial sync fetches all provider history (since `latest_transaction_date` is `None`), which works, but there's no verification that retroactive budget month detection and assignment covers the full imported history end-to-end.
 
 ### Edge Case Coverage
 
-- [ ] **Overlapping project dates**: Test behavior when two projects cover the same category in overlapping time windows.
-- [ ] **Category re-linking**: Test what happens when a category is unlinked from one project and linked to another — do transactions reassign correctly?
 - [ ] **Rule conflict resolution**: Test priority ordering when multiple rules match the same transaction (merchant regex vs. amount range vs. description pattern).
 - [ ] **Late/missing salary**: Verify the previous budget month stays open indefinitely and that the UX surfaces a clear signal when expected salaries haven't arrived.
 
@@ -216,7 +213,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 - [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month.
 - [ ] **Rollover visualization**: Dashboard doesn't show rollover surplus/deficit carried from prior months.
-- [ ] **Project transaction list**: No UI to browse which transactions are assigned to a project.
+- [ ] **Project category transaction list**: No UI to browse which transactions belong to a project-mode category.
 
 ---
 

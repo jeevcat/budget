@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 
 use crate::error::Error;
 use crate::models::{
-    BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetStatus, Category, CategoryId, PaceIndicator,
-    PeriodType, Transaction,
+    BudgetMode, BudgetMonth, BudgetMonthId, BudgetStatus, Category, CategoryId, PaceIndicator,
+    Transaction,
 };
 
 /// Collect all descendant category IDs for a given category (including itself).
@@ -24,14 +24,38 @@ fn collect_category_subtree(category_id: CategoryId, categories: &[Category]) ->
     result
 }
 
+/// Collect category IDs that belong to a project-mode category (or whose
+/// ancestor is project-mode). Used to exclude project transactions from
+/// regular budget math.
+fn project_category_ids(categories: &[Category]) -> std::collections::HashSet<CategoryId> {
+    let project_roots: Vec<CategoryId> = categories
+        .iter()
+        .filter(|c| c.budget_mode == Some(BudgetMode::Project))
+        .map(|c| c.id)
+        .collect();
+
+    let mut ids = std::collections::HashSet::new();
+    for root in project_roots {
+        for id in collect_category_subtree(root, categories) {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
 /// Filter transactions to only include those relevant to regular budget math.
 ///
 /// Excludes:
-/// - Transactions linked to a project (project isolation)
+/// - Transactions in project-mode categories (project isolation)
 /// - Correlated transfers (net to zero, not an expense)
 /// - Correlated reimbursements on the reimbursing side (the original expense
 ///   is also excluded since the reimbursement nets it out)
-fn filter_for_budget(transactions: &[Transaction]) -> Vec<&Transaction> {
+fn filter_for_budget<'a>(
+    transactions: &'a [Transaction],
+    categories: &[Category],
+) -> Vec<&'a Transaction> {
+    let project_cats = project_category_ids(categories);
+
     // Collect IDs of transactions that are reimbursed (have a correlation partner
     // with type "reimbursement")
     let reimbursed_ids: std::collections::HashSet<_> = transactions
@@ -47,8 +71,8 @@ fn filter_for_budget(transactions: &[Transaction]) -> Vec<&Transaction> {
     transactions
         .iter()
         .filter(|t| {
-            // Exclude project-linked transactions
-            if t.project_id.is_some() {
+            // Exclude transactions in project-mode categories
+            if t.category_id.is_some_and(|cid| project_cats.contains(&cid)) {
                 return false;
             }
             // Exclude transfers
@@ -149,7 +173,7 @@ pub fn detect_budget_month_boundaries(
 /// Sum spending in a category (including children) for a budget month.
 ///
 /// Respects category hierarchy: parent includes all children's spending.
-/// Excludes project-linked, transfer, and reimbursed transactions.
+/// Excludes project-mode, transfer, and reimbursed transactions.
 #[must_use]
 pub fn compute_category_spending(
     transactions: &[Transaction],
@@ -158,7 +182,7 @@ pub fn compute_category_spending(
     categories: &[Category],
 ) -> Decimal {
     let subtree = collect_category_subtree(category_id, categories);
-    let budget_txns = filter_for_budget(transactions);
+    let budget_txns = filter_for_budget(transactions, categories);
 
     budget_txns
         .iter()
@@ -185,21 +209,15 @@ fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
 /// Compute the full budget status for a category in a budget month.
 #[must_use]
 pub fn compute_budget_status(
-    budget_period: &BudgetPeriod,
+    category: &Category,
     transactions: &[Transaction],
     budget_month: &BudgetMonth,
     categories: &[Category],
     today: NaiveDate,
 ) -> BudgetStatus {
-    let spent = compute_category_spending(
-        transactions,
-        budget_period.category_id,
-        budget_month,
-        categories,
-    );
+    let spent = compute_category_spending(transactions, category.id, budget_month, categories);
 
-    // For monthly budgets, use the base amount (rollover handled separately)
-    let budget_amount = budget_period.amount;
+    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
     let end_date = budget_month
@@ -231,7 +249,7 @@ pub fn compute_budget_status(
     };
 
     BudgetStatus {
-        category_id: budget_period.category_id,
+        category_id: category.id,
         budget_amount,
         spent,
         remaining,
@@ -243,30 +261,28 @@ pub fn compute_budget_status(
 /// Compute cumulative rollover for a monthly category across budget months.
 ///
 /// Rollover = sum of (budget - spent) for each completed budget month.
-/// Only applies to monthly budget periods. Annual categories do not roll over.
+/// Only applies to monthly budget categories. Annual/project categories do not
+/// roll over.
 #[must_use]
 pub fn compute_rollover(
-    category_id: CategoryId,
-    budget_periods: &[BudgetPeriod],
+    category: &Category,
     budget_months: &[BudgetMonth],
     transactions: &[Transaction],
     categories: &[Category],
 ) -> Decimal {
-    let period = budget_periods
-        .iter()
-        .find(|bp| bp.category_id == category_id && bp.period_type == PeriodType::Monthly);
-
-    let Some(period) = period else {
+    if category.budget_mode != Some(BudgetMode::Monthly) {
         return Decimal::ZERO;
-    };
+    }
+
+    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
 
     // Only closed budget months contribute to rollover
     budget_months
         .iter()
         .filter(|bm| bm.end_date.is_some())
         .fold(Decimal::ZERO, |rollover, bm| {
-            let spent = compute_category_spending(transactions, category_id, bm, categories);
-            let surplus = period.amount - spent;
+            let spent = compute_category_spending(transactions, category.id, bm, categories);
+            let surplus = budget_amount - spent;
             rollover + surplus
         })
 }
@@ -274,11 +290,12 @@ pub fn compute_rollover(
 /// Get all transactions assigned to a specific budget month, excluding project
 /// transactions. Useful for computing overall totals.
 #[must_use]
-pub fn transactions_for_budget_month(
-    transactions: &[Transaction],
+pub fn transactions_for_budget_month<'a>(
+    transactions: &'a [Transaction],
     budget_month_id: BudgetMonthId,
-) -> Vec<&Transaction> {
-    let filtered = filter_for_budget(transactions);
+    categories: &[Category],
+) -> Vec<&'a Transaction> {
+    let filtered = filter_for_budget(transactions, categories);
     filtered
         .into_iter()
         .filter(|t| t.budget_month_id == Some(budget_month_id))
@@ -288,7 +305,7 @@ pub fn transactions_for_budget_month(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AccountId, BudgetMonthId, BudgetPeriodId, CategoryId, TransactionId};
+    use crate::models::{AccountId, BudgetMonthId, CategoryId, TransactionId};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -312,7 +329,6 @@ mod tests {
             description: "Test transaction".to_owned(),
             posted_date,
             budget_month_id: None,
-            project_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,
@@ -320,12 +336,20 @@ mod tests {
         }
     }
 
-    fn salary_category() -> Category {
+    fn make_category(id: u128, name: &str, parent_id: Option<u128>) -> Category {
         Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(1)),
-            name: "Salary".to_owned(),
-            parent_id: None,
+            id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
+            name: name.to_owned(),
+            parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
+            budget_mode: None,
+            budget_amount: None,
+            project_start_date: None,
+            project_end_date: None,
         }
+    }
+
+    fn salary_category() -> Category {
+        make_category(1, "Salary", None)
     }
 
     fn salary_cat_id() -> CategoryId {
@@ -333,26 +357,22 @@ mod tests {
     }
 
     fn food_category() -> Category {
-        Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(100)),
-            name: "Food".to_owned(),
-            parent_id: None,
-        }
+        make_category(100, "Food", None)
     }
 
     fn groceries_category() -> Category {
-        Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(101)),
-            name: "Groceries".to_owned(),
-            parent_id: Some(CategoryId::from_uuid(uuid::Uuid::from_u128(100))),
-        }
+        make_category(101, "Groceries", Some(100))
     }
 
     fn restaurants_category() -> Category {
+        make_category(102, "Restaurants", Some(100))
+    }
+
+    fn food_with_budget(mode: BudgetMode, amount: Decimal) -> Category {
         Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(102)),
-            name: "Restaurants".to_owned(),
-            parent_id: Some(CategoryId::from_uuid(uuid::Uuid::from_u128(100))),
+            budget_mode: Some(mode),
+            budget_amount: Some(amount),
+            ..food_category()
         }
     }
 
@@ -464,7 +484,10 @@ mod tests {
     #[test]
     fn project_transactions_excluded_from_budget() {
         let food = food_category();
-        let categories = vec![food.clone()];
+        // A project category whose transactions should be excluded
+        let mut project_cat = make_category(200, "Renovation", None);
+        project_cat.budget_mode = Some(BudgetMode::Project);
+        let categories = vec![food.clone(), project_cat.clone()];
 
         let bm = BudgetMonth {
             id: BudgetMonthId::new(),
@@ -473,17 +496,20 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let mut project_txn = make_txn(Some(food.id), dec!(500), date(2025, 1, 20));
-        project_txn.project_id = Some(crate::models::ProjectId::new());
-
         let transactions = vec![
             make_txn(Some(food.id), dec!(50), date(2025, 1, 20)),
-            project_txn,
+            // This transaction is in a project category — excluded from budget
+            make_txn(Some(project_cat.id), dec!(500), date(2025, 1, 20)),
         ];
 
         let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
-        // Project transaction excluded
         assert_eq!(spending, dec!(50));
+
+        // The project category spending is also excluded when computing "all"
+        // spending via a parent that doesn't exist, so let's verify via filter
+        let filtered = filter_for_budget(&transactions, &categories);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].amount, dec!(50));
     }
 
     #[test]
@@ -544,7 +570,7 @@ mod tests {
 
     #[test]
     fn budget_status_under_budget() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let categories = vec![food.clone()];
 
         let bm = BudgetMonth {
@@ -554,17 +580,10 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(500),
-        };
-
         let transactions = vec![make_txn(Some(food.id), dec!(100), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
-        let status = compute_budget_status(&period, &transactions, &bm, &categories, today);
+        let status = compute_budget_status(&food, &transactions, &bm, &categories, today);
 
         assert_eq!(status.spent, dec!(100));
         assert_eq!(status.remaining, dec!(400));
@@ -575,7 +594,7 @@ mod tests {
 
     #[test]
     fn budget_status_over_budget() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Monthly, dec!(200));
         let categories = vec![food.clone()];
 
         let bm = BudgetMonth {
@@ -585,17 +604,10 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(200),
-        };
-
         let transactions = vec![make_txn(Some(food.id), dec!(250), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
-        let status = compute_budget_status(&period, &transactions, &bm, &categories, today);
+        let status = compute_budget_status(&food, &transactions, &bm, &categories, today);
 
         assert_eq!(status.spent, dec!(250));
         assert_eq!(status.remaining, dec!(-50));
@@ -604,7 +616,7 @@ mod tests {
 
     #[test]
     fn rollover_accumulates_surplus() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let categories = vec![food.clone()];
 
         let bm1 = BudgetMonth {
@@ -621,13 +633,6 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(500),
-        };
-
         let transactions = vec![
             // Month 1: spent 300, surplus 200
             make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
@@ -635,8 +640,7 @@ mod tests {
             make_txn(Some(food.id), dec!(400), date(2025, 2, 20)),
         ];
 
-        let rollover =
-            compute_rollover(food.id, &[period], &[bm1, bm2], &transactions, &categories);
+        let rollover = compute_rollover(&food, &[bm1, bm2], &transactions, &categories);
 
         // Month 1: 500 - 300 = 200 surplus
         // Month 2: 500 - 400 = 100 surplus
@@ -646,7 +650,7 @@ mod tests {
 
     #[test]
     fn rollover_accumulates_deficit() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let categories = vec![food.clone()];
 
         let bm1 = BudgetMonth {
@@ -656,16 +660,9 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(500),
-        };
-
         let transactions = vec![make_txn(Some(food.id), dec!(700), date(2025, 1, 20))];
 
-        let rollover = compute_rollover(food.id, &[period], &[bm1], &transactions, &categories);
+        let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
 
         // 500 - 700 = -200 deficit carried forward
         assert_eq!(rollover, dec!(-200));
@@ -673,7 +670,7 @@ mod tests {
 
     #[test]
     fn rollover_zero_for_annual() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Annual, dec!(6000));
         let categories = vec![food.clone()];
 
         let bm1 = BudgetMonth {
@@ -683,16 +680,9 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Annual,
-            amount: dec!(6000),
-        };
-
         let transactions = vec![make_txn(Some(food.id), dec!(300), date(2025, 1, 20))];
 
-        let rollover = compute_rollover(food.id, &[period], &[bm1], &transactions, &categories);
+        let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
 
         // Annual budgets don't roll over
         assert_eq!(rollover, Decimal::ZERO);
@@ -700,7 +690,7 @@ mod tests {
 
     #[test]
     fn open_budget_month_not_included_in_rollover() {
-        let food = food_category();
+        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let categories = vec![food.clone()];
 
         let bm_closed = BudgetMonth {
@@ -717,25 +707,12 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let period = BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id: food.id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(500),
-        };
-
         let transactions = vec![
             make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
             make_txn(Some(food.id), dec!(100), date(2025, 2, 20)),
         ];
 
-        let rollover = compute_rollover(
-            food.id,
-            &[period],
-            &[bm_closed, bm_open],
-            &transactions,
-            &categories,
-        );
+        let rollover = compute_rollover(&food, &[bm_closed, bm_open], &transactions, &categories);
 
         // Only closed month counts: 500 - 300 = 200
         assert_eq!(rollover, dec!(200));

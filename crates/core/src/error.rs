@@ -5,11 +5,8 @@ pub enum Error {
     #[error("no salary category provided")]
     NoSalaryCategory,
 
-    #[error("budget period not found for category {0}")]
-    BudgetPeriodNotFound(String),
-
-    #[error("invalid period type: {0}")]
-    InvalidPeriodType(String),
+    #[error("invalid budget mode: {0}")]
+    InvalidBudgetMode(String),
 
     #[error("invalid rule type: {0}")]
     InvalidRuleType(String),

@@ -2,10 +2,12 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::NaiveDate;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::models::{Category, CategoryId};
+use budget_core::models::{BudgetMode, Category, CategoryId};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -17,6 +19,14 @@ pub struct CreateCategory {
     pub name: String,
     /// Optional parent category UUID for nesting.
     pub parent_id: Option<String>,
+    /// Budget mode: "monthly", "annual", or "project". Null for no budget.
+    pub budget_mode: Option<String>,
+    /// Budget amount as a decimal string (e.g. "500.00").
+    pub budget_amount: Option<String>,
+    /// Project start date (YYYY-MM-DD). Only used when `budget_mode` is "project".
+    pub project_start_date: Option<String>,
+    /// Project end date (YYYY-MM-DD). Only used when `budget_mode` is "project".
+    pub project_end_date: Option<String>,
 }
 
 /// A single entry in the LLM suggestion histogram.
@@ -32,6 +42,7 @@ pub struct SuggestionEntry {
 /// - `GET /` -- list all categories
 /// - `POST /` -- create a new category
 /// - `GET /suggestions` -- histogram of LLM-suggested categories
+/// - `PUT /{id}` -- update a category
 /// - `DELETE /{id}` -- delete a category
 ///
 /// # Errors
@@ -41,7 +52,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
         .route("/suggestions", get(suggestions))
-        .route("/{id}", axum::routing::delete(remove))
+        .route("/{id}", axum::routing::put(update).delete(remove))
 }
 
 /// List all categories.
@@ -76,11 +87,68 @@ async fn suggestions(
     Ok(Json(entries))
 }
 
+/// Parsed budget fields from a create/update request.
+struct BudgetFields {
+    mode: Option<BudgetMode>,
+    amount: Option<Decimal>,
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+}
+
+/// Parse optional budget fields from a create/update request body.
+fn parse_budget_fields(body: &CreateCategory) -> Result<BudgetFields, AppError> {
+    let mode = body
+        .budget_mode
+        .as_deref()
+        .map(|s| {
+            s.parse::<BudgetMode>()
+                .map_err(|e: budget_core::error::Error| {
+                    AppError(StatusCode::BAD_REQUEST, e.to_string())
+                })
+        })
+        .transpose()?;
+
+    let amount = body
+        .budget_amount
+        .as_deref()
+        .map(|s| {
+            s.parse::<Decimal>()
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
+        })
+        .transpose()?;
+
+    let start = body
+        .project_start_date
+        .as_deref()
+        .map(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
+        })
+        .transpose()?;
+
+    let end = body
+        .project_end_date
+        .as_deref()
+        .map(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
+        })
+        .transpose()?;
+
+    Ok(BudgetFields {
+        mode,
+        amount,
+        start,
+        end,
+    })
+}
+
 /// Create a new category.
 ///
 /// # Errors
 ///
-/// Returns 400 if `parent_id` is present but not a valid UUID.
+/// Returns 400 if `parent_id` is present but not a valid UUID, or if budget
+/// fields are invalid.
 /// Returns `AppError` if the database insert fails.
 async fn create(
     State(state): State<AppState>,
@@ -88,21 +156,68 @@ async fn create(
 ) -> Result<(StatusCode, Json<Category>), AppError> {
     let parent_id = body
         .parent_id
+        .as_deref()
         .map(|s| {
-            Uuid::parse_str(&s)
+            Uuid::parse_str(s)
                 .map(CategoryId::from_uuid)
                 .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
         })
         .transpose()?;
 
+    let budget = parse_budget_fields(&body)?;
+
     let category = Category {
         id: CategoryId::new(),
         name: body.name,
         parent_id,
+        budget_mode: budget.mode,
+        budget_amount: budget.amount,
+        project_start_date: budget.start,
+        project_end_date: budget.end,
     };
 
     state.db.insert_category(&category).await?;
     Ok((StatusCode::CREATED, Json(category)))
+}
+
+/// Update an existing category by ID.
+///
+/// # Errors
+///
+/// Returns 400 if the ID or any field value is invalid.
+/// Returns `AppError` if the database update fails.
+async fn update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateCategory>,
+) -> Result<Json<Category>, AppError> {
+    let uuid =
+        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let parent_id = body
+        .parent_id
+        .as_deref()
+        .map(|s| {
+            Uuid::parse_str(s)
+                .map(CategoryId::from_uuid)
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
+        })
+        .transpose()?;
+
+    let budget = parse_budget_fields(&body)?;
+
+    let category = Category {
+        id: CategoryId::from_uuid(uuid),
+        name: body.name,
+        parent_id,
+        budget_mode: budget.mode,
+        budget_amount: budget.amount,
+        project_start_date: budget.start,
+        project_end_date: budget.end,
+    };
+
+    state.db.update_category(&category).await?;
+    Ok(Json(category))
 }
 
 /// Delete a category by its UUID path parameter.

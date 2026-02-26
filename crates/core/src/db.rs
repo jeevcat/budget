@@ -5,10 +5,9 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::models::{
-    Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetPeriodId,
-    Category, CategoryId, CategoryMethod, Connection, ConnectionId, ConnectionStatus,
-    CorrelationType, MatchField, PeriodType, Project, ProjectId, Rule, RuleId, RuleType,
-    Transaction, TransactionId,
+    Account, AccountId, AccountType, BudgetMode, BudgetMonth, BudgetMonthId, Category, CategoryId,
+    CategoryMethod, Connection, ConnectionId, ConnectionStatus, CorrelationType, MatchField, Rule,
+    RuleId, RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -91,6 +90,10 @@ fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
         id: CategoryId::from_uuid(parse_uuid(row, "id")?),
         name: row.try_get("name")?,
         parent_id: parse_uuid_opt(row, "parent_id")?.map(CategoryId::from_uuid),
+        budget_mode: parse_enum_opt::<BudgetMode>(row, "budget_mode")?,
+        budget_amount: row.try_get("budget_amount")?,
+        project_start_date: row.try_get("project_start_date")?,
+        project_end_date: row.try_get("project_end_date")?,
     })
 }
 
@@ -106,7 +109,6 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         description: row.try_get("description")?,
         posted_date: row.try_get("posted_date")?,
         budget_month_id: parse_uuid_opt(row, "budget_month_id")?.map(BudgetMonthId::from_uuid),
-        project_id: parse_uuid_opt(row, "project_id")?.map(ProjectId::from_uuid),
         correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
         category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
@@ -126,32 +128,12 @@ fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
     })
 }
 
-fn row_to_budget_period(row: &PgRow) -> Result<BudgetPeriod, sqlx::Error> {
-    Ok(BudgetPeriod {
-        id: BudgetPeriodId::from_uuid(parse_uuid(row, "id")?),
-        category_id: CategoryId::from_uuid(parse_uuid(row, "category_id")?),
-        period_type: parse_enum::<PeriodType>(row, "period_type")?,
-        amount: row.try_get("amount")?,
-    })
-}
-
 fn row_to_budget_month(row: &PgRow) -> Result<BudgetMonth, sqlx::Error> {
     Ok(BudgetMonth {
         id: BudgetMonthId::from_uuid(parse_uuid(row, "id")?),
         start_date: row.try_get("start_date")?,
         end_date: row.try_get("end_date")?,
         salary_transactions_detected: row.try_get("salary_transactions_detected")?,
-    })
-}
-
-fn row_to_project(row: &PgRow) -> Result<Project, sqlx::Error> {
-    Ok(Project {
-        id: ProjectId::from_uuid(parse_uuid(row, "id")?),
-        name: row.try_get("name")?,
-        category_id: CategoryId::from_uuid(parse_uuid(row, "category_id")?),
-        start_date: row.try_get("start_date")?,
-        end_date: row.try_get("end_date")?,
-        budget_amount: row.try_get("budget_amount")?,
     })
 }
 
@@ -299,8 +281,7 @@ impl Db {
     ///
     /// When `provider_transaction_id` is `Some`, uses `ON CONFLICT(account_id,
     /// provider_transaction_id)` to update provider-sourced fields while
-    /// preserving locally-enriched fields (category, budget month, project,
-    /// correlation).
+    /// preserving locally-enriched fields (category, budget month, correlation).
     ///
     /// # Errors
     ///
@@ -314,9 +295,9 @@ impl Db {
         sqlx::query(
             "INSERT INTO transactions
                  (id, account_id, category_id, amount, original_amount, original_currency,
-                  merchant_name, description, posted_date, budget_month_id, project_id,
+                  merchant_name, description, posted_date, budget_month_id,
                   correlation_id, correlation_type, provider_transaction_id, suggested_category)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
@@ -335,7 +316,6 @@ impl Db {
         .bind(&txn.description)
         .bind(txn.posted_date)
         .bind(txn.budget_month_id.map(|id| id.to_string()))
-        .bind(txn.project_id.map(|id| id.to_string()))
         .bind(txn.correlation_id.map(|id| id.to_string()))
         .bind(txn.correlation_type.map(|ct| ct.to_string()))
         .bind(provider_transaction_id)
@@ -354,7 +334,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              ORDER BY posted_date DESC, merchant_name ASC",
@@ -378,7 +358,7 @@ impl Db {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE id = $1",
@@ -398,7 +378,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE category_id IS NULL",
@@ -420,7 +400,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
@@ -446,7 +426,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
@@ -630,7 +610,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id, project_id,
+                    merchant_name, description, posted_date, budget_month_id,
                     correlation_id, correlation_type, category_method, suggested_category
              FROM transactions
              WHERE account_id = $1",
@@ -675,12 +655,43 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails (e.g. duplicate primary key).
     pub async fn insert_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("INSERT INTO categories (id, name, parent_id) VALUES ($1, $2, $3)")
-            .bind(category.id.to_string())
-            .bind(&category.name)
-            .bind(category.parent_id.map(|id| id.to_string()))
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO categories (id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(category.id.to_string())
+        .bind(&category.name)
+        .bind(category.parent_id.map(|id| id.to_string()))
+        .bind(category.budget_mode.map(|m| m.to_string()))
+        .bind(category.budget_amount)
+        .bind(category.project_start_date)
+        .bind(category.project_end_date)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update all mutable fields of an existing category.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn update_category(&self, category: &Category) -> Result<(), sqlx::Error> {
+        let pool = &self.0;
+        sqlx::query(
+            "UPDATE categories SET name = $1, parent_id = $2, budget_mode = $3, budget_amount = $4,
+                    project_start_date = $5, project_end_date = $6
+             WHERE id = $7",
+        )
+        .bind(&category.name)
+        .bind(category.parent_id.map(|id| id.to_string()))
+        .bind(category.budget_mode.map(|m| m.to_string()))
+        .bind(category.budget_amount)
+        .bind(category.project_start_date)
+        .bind(category.project_end_date)
+        .bind(category.id.to_string())
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -691,9 +702,11 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn list_categories(&self) -> Result<Vec<Category>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query("SELECT id, name, parent_id FROM categories")
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date FROM categories",
+        )
+        .fetch_all(pool)
+        .await?;
         rows.iter().map(row_to_category).collect()
     }
 
@@ -706,10 +719,13 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_category(&self, id: CategoryId) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
-        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE id = $1")
-            .bind(id.to_string())
-            .fetch_optional(pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date
+             FROM categories WHERE id = $1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(pool)
+        .await?;
         row.as_ref().map(row_to_category).transpose()
     }
 
@@ -722,10 +738,13 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
-        let row = sqlx::query("SELECT id, name, parent_id FROM categories WHERE name = $1")
-            .bind(name)
-            .fetch_optional(pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date
+             FROM categories WHERE name = $1",
+        )
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
         row.as_ref().map(row_to_category).transpose()
     }
 
@@ -865,97 +884,6 @@ impl Db {
     }
 
     // ---------------------------------------------------------------------------
-    // Budget Periods
-    // ---------------------------------------------------------------------------
-
-    /// Insert a new budget period.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn insert_budget_period(&self, bp: &BudgetPeriod) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query(
-            "INSERT INTO budget_periods (id, category_id, period_type, amount)
-             VALUES ($1, $2, $3, $4)",
-        )
-        .bind(bp.id.to_string())
-        .bind(bp.category_id.to_string())
-        .bind(bp.period_type.to_string())
-        .bind(bp.amount)
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// List all budget periods.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_budget_periods(&self) -> Result<Vec<BudgetPeriod>, sqlx::Error> {
-        let pool = &self.0;
-        let rows = sqlx::query("SELECT id, category_id, period_type, amount FROM budget_periods")
-            .fetch_all(pool)
-            .await?;
-        rows.iter().map(row_to_budget_period).collect()
-    }
-
-    /// Get a single budget period by its ID.
-    ///
-    /// Returns `None` if no budget period with the given ID exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_budget_period(
-        &self,
-        id: BudgetPeriodId,
-    ) -> Result<Option<BudgetPeriod>, sqlx::Error> {
-        let pool = &self.0;
-        let row = sqlx::query(
-            "SELECT id, category_id, period_type, amount FROM budget_periods WHERE id = $1",
-        )
-        .bind(id.to_string())
-        .fetch_optional(pool)
-        .await?;
-        row.as_ref().map(row_to_budget_period).transpose()
-    }
-
-    /// Update all mutable fields of an existing budget period.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn update_budget_period(&self, bp: &BudgetPeriod) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query(
-            "UPDATE budget_periods SET category_id = $1, period_type = $2, amount = $3 WHERE id = $4",
-        )
-        .bind(bp.category_id.to_string())
-        .bind(bp.period_type.to_string())
-        .bind(bp.amount)
-        .bind(bp.id.to_string())
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Delete a budget period by its ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn delete_budget_period(&self, id: BudgetPeriodId) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query("DELETE FROM budget_periods WHERE id = $1")
-            .bind(id.to_string())
-            .execute(pool)
-            .await?;
-        Ok(())
-    }
-
-    // ---------------------------------------------------------------------------
     // Budget Months
     // ---------------------------------------------------------------------------
 
@@ -1004,101 +932,6 @@ impl Db {
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_budget_month).collect()
-    }
-
-    // ---------------------------------------------------------------------------
-    // Projects
-    // ---------------------------------------------------------------------------
-
-    /// Insert a new project.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn insert_project(&self, project: &Project) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query(
-            "INSERT INTO projects (id, name, category_id, start_date, end_date, budget_amount)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(project.id.to_string())
-        .bind(&project.name)
-        .bind(project.category_id.to_string())
-        .bind(project.start_date)
-        .bind(project.end_date)
-        .bind(project.budget_amount)
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// List all projects.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_projects(&self) -> Result<Vec<Project>, sqlx::Error> {
-        let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, name, category_id, start_date, end_date, budget_amount FROM projects",
-        )
-        .fetch_all(pool)
-        .await?;
-        rows.iter().map(row_to_project).collect()
-    }
-
-    /// Get a single project by its ID.
-    ///
-    /// Returns `None` if no project with the given ID exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_project(&self, id: ProjectId) -> Result<Option<Project>, sqlx::Error> {
-        let pool = &self.0;
-        let row = sqlx::query(
-            "SELECT id, name, category_id, start_date, end_date, budget_amount FROM projects WHERE id = $1",
-        )
-        .bind(id.to_string())
-        .fetch_optional(pool)
-        .await?;
-        row.as_ref().map(row_to_project).transpose()
-    }
-
-    /// Update all mutable fields of an existing project.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn update_project(&self, project: &Project) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query(
-            "UPDATE projects SET name = $1, category_id = $2, start_date = $3, end_date = $4, budget_amount = $5
-             WHERE id = $6",
-        )
-        .bind(&project.name)
-        .bind(project.category_id.to_string())
-        .bind(project.start_date)
-        .bind(project.end_date)
-        .bind(project.budget_amount)
-        .bind(project.id.to_string())
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Delete a project by its ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn delete_project(&self, id: ProjectId) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query("DELETE FROM projects WHERE id = $1")
-            .bind(id.to_string())
-            .execute(pool)
-            .await?;
-        Ok(())
     }
 
     // ---------------------------------------------------------------------------
@@ -1272,9 +1105,9 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use crate::models::{
-        Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, BudgetPeriod, BudgetPeriodId,
-        Category, CategoryId, CategoryMethod, CorrelationType, MatchField, PeriodType, Project,
-        ProjectId, Rule, RuleId, RuleType, Transaction, TransactionId,
+        Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId,
+        CategoryMethod, CorrelationType, MatchField, Rule, RuleId, RuleType, Transaction,
+        TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1302,6 +1135,10 @@ mod tests {
             id: CategoryId::new(),
             name: name.into(),
             parent_id: None,
+            budget_mode: None,
+            budget_amount: None,
+            project_start_date: None,
+            project_end_date: None,
         }
     }
 
@@ -1317,7 +1154,6 @@ mod tests {
             description: "Morning coffee".into(),
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).unwrap(),
             budget_month_id: None,
-            project_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,
@@ -1337,32 +1173,12 @@ mod tests {
         }
     }
 
-    fn make_budget_period(category_id: CategoryId) -> BudgetPeriod {
-        BudgetPeriod {
-            id: BudgetPeriodId::new(),
-            category_id,
-            period_type: PeriodType::Monthly,
-            amount: dec!(500.00),
-        }
-    }
-
     fn make_budget_month(start: NaiveDate, end: Option<NaiveDate>) -> BudgetMonth {
         BudgetMonth {
             id: BudgetMonthId::new(),
             start_date: start,
             end_date: end,
             salary_transactions_detected: 0,
-        }
-    }
-
-    fn make_project(category_id: CategoryId) -> Project {
-        Project {
-            id: ProjectId::new(),
-            name: "Kitchen Renovation".into(),
-            category_id,
-            start_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
-            end_date: None,
-            budget_amount: Some(dec!(10000.00)),
         }
     }
 
@@ -1464,7 +1280,6 @@ mod tests {
         );
         assert!(fetched.category_id.is_none());
         assert!(fetched.budget_month_id.is_none());
-        assert!(fetched.project_id.is_none());
         assert!(fetched.correlation_id.is_none());
         assert!(fetched.correlation_type.is_none());
     }
@@ -1480,8 +1295,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Second insert with same provider_transaction_id but different
-        // domain ID should trigger ON CONFLICT update, not create a duplicate.
         let mut txn2 = make_transaction(acct.id);
         txn2.merchant_name = "Updated Coffee Shop".into();
         txn2.amount = dec!(-45.00);
@@ -1492,7 +1305,6 @@ mod tests {
         let all = db.list_transactions().await.unwrap();
         assert_eq!(all.len(), 1, "dedup should prevent duplicate rows");
 
-        // The provider-sourced fields should reflect the second insert.
         let fetched = &all[0];
         assert_eq!(fetched.merchant_name, "Updated Coffee Shop");
         assert_eq!(fetched.amount, dec!(-45.00));
@@ -1515,13 +1327,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Insert original transaction with a provider ID.
         let txn = make_transaction(acct.id);
         db.upsert_transaction(&txn, Some("PROV-TXN-002"))
             .await
             .unwrap();
 
-        // Locally enrich the transaction with category and budget month.
         db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
             .await
             .unwrap();
@@ -1529,8 +1339,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Now simulate a provider re-sync: upsert again with the same
-        // provider_transaction_id but updated provider fields.
         let mut txn_updated = make_transaction(acct.id);
         txn_updated.merchant_name = "Coffee Shop (corrected)".into();
         txn_updated.amount = dec!(-43.00);
@@ -1542,11 +1350,8 @@ mod tests {
         assert_eq!(all.len(), 1);
 
         let fetched = &all[0];
-        // Provider-sourced fields should be updated.
         assert_eq!(fetched.merchant_name, "Coffee Shop (corrected)");
         assert_eq!(fetched.amount, dec!(-43.00));
-
-        // Locally-enriched fields should be preserved.
         assert_eq!(fetched.category_id, Some(cat.id));
         assert_eq!(fetched.budget_month_id, Some(bm.id));
     }
@@ -1560,7 +1365,6 @@ mod tests {
         let cat = make_category("Groceries");
         db.insert_category(&cat).await.unwrap();
 
-        // Insert two transactions: one uncategorized, one categorized.
         let txn_uncat = make_transaction(acct.id);
         db.upsert_transaction(&txn_uncat, None).await.unwrap();
 
@@ -1582,16 +1386,13 @@ mod tests {
         let cat = make_category("Transfers");
         db.insert_category(&cat).await.unwrap();
 
-        // Uncategorized transaction: should NOT appear (not categorized).
         let txn_uncat = make_transaction(acct.id);
         db.upsert_transaction(&txn_uncat, None).await.unwrap();
 
-        // Categorized but uncorrelated: SHOULD appear.
         let mut txn_uncorr = make_transaction(acct.id);
         txn_uncorr.category_id = Some(cat.id);
         db.upsert_transaction(&txn_uncorr, None).await.unwrap();
 
-        // Categorized AND correlated: should NOT appear.
         let mut txn_corr = make_transaction(acct.id);
         txn_corr.category_id = Some(cat.id);
         txn_corr.correlation_id = Some(txn_uncorr.id);
@@ -1681,7 +1482,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate provider re-sync with same provider_transaction_id
         let mut txn_updated = make_transaction(acct.id);
         txn_updated.merchant_name = "Updated Merchant".into();
         db.upsert_transaction(&txn_updated, Some("PROV-METHOD-001"))
@@ -1836,6 +1636,63 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_category_with_budget_fields(pool: PgPool) {
+        let db = wrap(pool);
+
+        let mut cat = make_category("Rent");
+        cat.budget_mode = Some(BudgetMode::Monthly);
+        cat.budget_amount = Some(dec!(1500.00));
+        db.insert_category(&cat).await.unwrap();
+
+        let fetched = db.get_category(cat.id).await.unwrap().unwrap();
+        assert_eq!(fetched.budget_mode, Some(BudgetMode::Monthly));
+        assert_eq!(fetched.budget_amount, Some(dec!(1500.00)));
+        assert!(fetched.project_start_date.is_none());
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_update_category_changes_budget_fields(pool: PgPool) {
+        let db = wrap(pool);
+
+        let mut cat = make_category("Utilities");
+        cat.budget_mode = Some(BudgetMode::Monthly);
+        cat.budget_amount = Some(dec!(200.00));
+        db.insert_category(&cat).await.unwrap();
+
+        cat.budget_mode = Some(BudgetMode::Annual);
+        cat.budget_amount = Some(dec!(2400.00));
+        db.update_category(&cat).await.unwrap();
+
+        let fetched = db.get_category(cat.id).await.unwrap().unwrap();
+        assert_eq!(fetched.budget_mode, Some(BudgetMode::Annual));
+        assert_eq!(fetched.budget_amount, Some(dec!(2400.00)));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_insert_project_category(pool: PgPool) {
+        let db = wrap(pool);
+
+        let mut cat = make_category("Kitchen Renovation");
+        cat.budget_mode = Some(BudgetMode::Project);
+        cat.budget_amount = Some(dec!(10000.00));
+        cat.project_start_date = Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
+        cat.project_end_date = Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap());
+        db.insert_category(&cat).await.unwrap();
+
+        let fetched = db.get_category(cat.id).await.unwrap().unwrap();
+        assert_eq!(fetched.budget_mode, Some(BudgetMode::Project));
+        assert_eq!(fetched.budget_amount, Some(dec!(10000.00)));
+        assert_eq!(
+            fetched.project_start_date,
+            Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap())
+        );
+        assert_eq!(
+            fetched.project_end_date,
+            Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap())
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Rule tests
     // -----------------------------------------------------------------------
@@ -1883,7 +1740,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cat_rules.len(), 2);
-        // Highest priority first.
         assert_eq!(cat_rules[0].priority, 100);
         assert_eq!(cat_rules[1].priority, 1);
 
@@ -1943,85 +1799,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Budget Period tests
-    // -----------------------------------------------------------------------
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_insert_budget_period_and_list_roundtrip(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Utilities");
-        db.insert_category(&cat).await.unwrap();
-
-        let bp = make_budget_period(cat.id);
-        db.insert_budget_period(&bp).await.unwrap();
-
-        let all = db.list_budget_periods().await.unwrap();
-        assert_eq!(all.len(), 1);
-
-        let fetched = &all[0];
-        assert_eq!(fetched.id, bp.id);
-        assert_eq!(fetched.category_id, cat.id);
-        assert_eq!(fetched.period_type, PeriodType::Monthly);
-        assert_eq!(fetched.amount, dec!(500.00));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_get_budget_period_by_id(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Rent");
-        db.insert_category(&cat).await.unwrap();
-
-        let bp = make_budget_period(cat.id);
-        db.insert_budget_period(&bp).await.unwrap();
-
-        let fetched = db.get_budget_period(bp.id).await.unwrap().unwrap();
-        assert_eq!(fetched.id, bp.id);
-        assert_eq!(fetched.amount, dec!(500.00));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_update_budget_period_changes_fields(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat1 = make_category("Groceries");
-        let cat2 = make_category("Dining");
-        db.insert_category(&cat1).await.unwrap();
-        db.insert_category(&cat2).await.unwrap();
-
-        let mut bp = make_budget_period(cat1.id);
-        db.insert_budget_period(&bp).await.unwrap();
-
-        bp.category_id = cat2.id;
-        bp.period_type = PeriodType::Annual;
-        bp.amount = dec!(6000.00);
-
-        db.update_budget_period(&bp).await.unwrap();
-
-        let fetched = db.get_budget_period(bp.id).await.unwrap().unwrap();
-        assert_eq!(fetched.category_id, cat2.id);
-        assert_eq!(fetched.period_type, PeriodType::Annual);
-        assert_eq!(fetched.amount, dec!(6000.00));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_delete_budget_period(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Insurance");
-        db.insert_category(&cat).await.unwrap();
-
-        let bp = make_budget_period(cat.id);
-        db.insert_budget_period(&bp).await.unwrap();
-
-        db.delete_budget_period(bp.id).await.unwrap();
-
-        let result = db.get_budget_period(bp.id).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    // -----------------------------------------------------------------------
     // Budget Month tests
     // -----------------------------------------------------------------------
 
@@ -2054,7 +1831,6 @@ mod tests {
     async fn test_replace_budget_months_replaces_all(pool: PgPool) {
         let db = wrap(pool);
 
-        // Insert initial set.
         let old_months = vec![
             make_budget_month(
                 NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
@@ -2067,7 +1843,6 @@ mod tests {
         ];
         db.replace_budget_months(&old_months).await.unwrap();
 
-        // Replace with a completely different set.
         let new_months = vec![make_budget_month(
             NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
             Some(NaiveDate::from_ymd_opt(2025, 3, 31).unwrap()),
@@ -2082,7 +1857,6 @@ mod tests {
             NaiveDate::from_ymd_opt(2025, 3, 1).unwrap()
         );
 
-        // Old months should be gone.
         let ids: Vec<_> = all.iter().map(|m| m.id).collect();
         assert!(!ids.contains(&old_months[0].id));
         assert!(!ids.contains(&old_months[1].id));
@@ -2111,79 +1885,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Project tests
-    // -----------------------------------------------------------------------
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_insert_project_and_list_roundtrip(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Home Improvement");
-        db.insert_category(&cat).await.unwrap();
-
-        let proj = make_project(cat.id);
-        db.insert_project(&proj).await.unwrap();
-
-        let all = db.list_projects().await.unwrap();
-        assert_eq!(all.len(), 1);
-
-        let fetched = &all[0];
-        assert_eq!(fetched.id, proj.id);
-        assert_eq!(fetched.name, "Kitchen Renovation");
-        assert_eq!(fetched.category_id, cat.id);
-        assert_eq!(
-            fetched.start_date,
-            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()
-        );
-        assert!(fetched.end_date.is_none());
-        assert_eq!(fetched.budget_amount, Some(dec!(10000.00)));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_get_project_by_id(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Education");
-        db.insert_category(&cat).await.unwrap();
-
-        let proj = make_project(cat.id);
-        db.insert_project(&proj).await.unwrap();
-
-        let fetched = db.get_project(proj.id).await.unwrap().unwrap();
-        assert_eq!(fetched.id, proj.id);
-        assert_eq!(fetched.name, "Kitchen Renovation");
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_update_project_changes_fields(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat1 = make_category("Home");
-        let cat2 = make_category("Garden");
-        db.insert_category(&cat1).await.unwrap();
-        db.insert_category(&cat2).await.unwrap();
-
-        let mut proj = make_project(cat1.id);
-        db.insert_project(&proj).await.unwrap();
-
-        proj.name = "Garden Landscaping".into();
-        proj.category_id = cat2.id;
-        proj.end_date = Some(NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
-        proj.budget_amount = Some(dec!(5000.00));
-
-        db.update_project(&proj).await.unwrap();
-
-        let fetched = db.get_project(proj.id).await.unwrap().unwrap();
-        assert_eq!(fetched.name, "Garden Landscaping");
-        assert_eq!(fetched.category_id, cat2.id);
-        assert_eq!(
-            fetched.end_date,
-            Some(NaiveDate::from_ymd_opt(2025, 12, 31).unwrap())
-        );
-        assert_eq!(fetched.budget_amount, Some(dec!(5000.00)));
-    }
-
-    // -----------------------------------------------------------------------
     // Categorized merchant groups
     // -----------------------------------------------------------------------
 
@@ -2203,7 +1904,6 @@ mod tests {
         let cat = make_category("Groceries");
         db.insert_category(&cat).await.unwrap();
 
-        // Only one categorized transaction for this merchant — below the HAVING >= 2 threshold
         let mut txn = make_transaction(acct.id);
         txn.category_id = Some(cat.id);
         txn.merchant_name = "LIDL 1234".into();
@@ -2222,7 +1922,6 @@ mod tests {
         let cat = make_category("Groceries");
         db.insert_category(&cat).await.unwrap();
 
-        // Two transactions with the same (category, merchant) — qualifies
         for _ in 0..3 {
             let mut txn = make_transaction(acct.id);
             txn.category_id = Some(cat.id);
@@ -2243,7 +1942,6 @@ mod tests {
         let acct = make_account();
         db.upsert_account(&acct).await.unwrap();
 
-        // Two uncategorized transactions with the same merchant — should NOT appear
         for _ in 0..2 {
             let mut txn = make_transaction(acct.id);
             txn.merchant_name = "LIDL 1234".into();
@@ -2263,7 +1961,6 @@ mod tests {
         let cat = make_category("Food");
         db.insert_category(&cat).await.unwrap();
 
-        // 2 transactions for merchant A
         for _ in 0..2 {
             let mut txn = make_transaction(acct.id);
             txn.category_id = Some(cat.id);
@@ -2271,7 +1968,6 @@ mod tests {
             db.upsert_transaction(&txn, None).await.unwrap();
         }
 
-        // 4 transactions for merchant B
         for _ in 0..4 {
             let mut txn = make_transaction(acct.id);
             txn.category_id = Some(cat.id);
@@ -2281,26 +1977,9 @@ mod tests {
 
         let groups = db.get_categorized_merchant_groups().await.unwrap();
         assert_eq!(groups.len(), 2);
-        // Higher count first
         assert_eq!(groups[0].1, "LIDL");
         assert_eq!(groups[0].2, 4);
         assert_eq!(groups[1].1, "ALDI");
         assert_eq!(groups[1].2, 2);
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_delete_project(pool: PgPool) {
-        let db = wrap(pool);
-
-        let cat = make_category("Misc");
-        db.insert_category(&cat).await.unwrap();
-
-        let proj = make_project(cat.id);
-        db.insert_project(&proj).await.unwrap();
-
-        db.delete_project(proj.id).await.unwrap();
-
-        let result = db.get_project(proj.id).await.unwrap();
-        assert!(result.is_none());
     }
 }

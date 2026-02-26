@@ -497,6 +497,9 @@ function Categories() {
   const [parentId, setParentId] = useState("");
   const [adding, setAdding] = useState(false);
   const [selectedSuggestions, setSelectedSuggestions] = useState(new Set());
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   function load() {
     Promise.all([api.get("/categories"), api.get("/categories/suggestions")])
@@ -533,6 +536,7 @@ function Categories() {
   async function handleDelete(id) {
     try {
       await api.del(`/categories/${id}`);
+      if (editingId === id) cancelEdit();
       load();
     } catch (err) {
       setError(err);
@@ -584,6 +588,48 @@ function Categories() {
     }
   }
 
+  function startEdit(cat) {
+    setEditingId(cat.id);
+    setEditForm({
+      name: cat.name,
+      parent_id: cat.parent_id ?? "",
+      budget_mode: cat.budget_mode ?? "",
+      budget_amount: cat.budget_amount ?? "",
+      project_start_date: cat.project_start_date ?? "",
+      project_end_date: cat.project_end_date ?? "",
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditForm(null);
+  }
+
+  function setEditField(key, value) {
+    setEditForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleEditSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put(`/categories/${editingId}`, {
+        name: editForm.name,
+        parent_id: editForm.parent_id || null,
+        budget_mode: editForm.budget_mode || null,
+        budget_amount: editForm.budget_amount || null,
+        project_start_date: editForm.project_start_date || null,
+        project_end_date: editForm.project_end_date || null,
+      });
+      cancelEdit();
+      load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (error) return html`<p class="text-light">${error.message}</p>`;
   if (!categories) return html`<p class="text-light">Loading...</p>`;
 
@@ -603,6 +649,17 @@ function Categories() {
   const pendingSuggestions = (suggestions ?? []).filter(
     (s) => !existingNames.has(s.category_name),
   );
+
+  function budgetBadge(cat) {
+    if (!cat.budget_mode) return null;
+    if (cat.budget_mode === "project") {
+      return html`<span class="chip outline">project</span>`;
+    }
+    const label = cat.budget_mode === "monthly" ? "mo" : "yr";
+    const amt =
+      cat.budget_amount != null ? Number(cat.budget_amount).toFixed(0) : "?";
+    return html`<span class="chip outline">${amt}/${label}</span>`;
+  }
 
   return html`
     <h2>Categories</h2>
@@ -674,35 +731,119 @@ function Categories() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Budget</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map(
-                (c) => html`
-                  <tr>
-                    <td>
-                      <span style="padding-left:${c.depth * 1.5}rem">
-                        ${
-                          c.depth > 0
-                            ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
-                              >${catMap[c.parent_id]?.name} ></span
-                            > `
-                            : null
-                        }
-                        ${c.name}
-                      </span>
-                    </td>
-                    <td style="text-align:right">
-                      <button
-                        data-variant="danger" class="small"
-                        onClick=${() => handleDelete(c.id)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                `,
+              ${rows.map((c) =>
+                editingId === c.id
+                  ? html`
+                        <tr key=${c.id}>
+                          <td colspan="3">
+                            <form
+                              onSubmit=${handleEditSubmit}
+                              style="display:flex;flex-direction:column;gap:0.5rem;padding:0.5rem 0"
+                            >
+                              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+                                <input
+                                  type="text"
+                                  value=${editForm.name}
+                                  onInput=${(e) => setEditField("name", e.target.value)}
+                                  required
+                                  placeholder="Name"
+                                />
+                                <select
+                                  value=${editForm.parent_id}
+                                  onChange=${(e) => setEditField("parent_id", e.target.value)}
+                                >
+                                  <option value="">No parent</option>
+                                  ${roots
+                                    .filter((r) => r.id !== c.id)
+                                    .map(
+                                      (r) =>
+                                        html`<option value=${r.id}>${r.name}</option>`,
+                                    )}
+                                </select>
+                              </div>
+                              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+                                <select
+                                  value=${editForm.budget_mode}
+                                  onChange=${(e) => setEditField("budget_mode", e.target.value)}
+                                >
+                                  <option value="">No budget</option>
+                                  <option value="monthly">Monthly</option>
+                                  <option value="annual">Annual</option>
+                                  <option value="project">Project</option>
+                                </select>
+                                ${
+                                  editForm.budget_mode &&
+                                  html`
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      placeholder="Amount"
+                                      value=${editForm.budget_amount}
+                                      onInput=${(e) => setEditField("budget_amount", e.target.value)}
+                                      style="width:8rem"
+                                    />
+                                  `
+                                }
+                                ${
+                                  editForm.budget_mode === "project" &&
+                                  html`
+                                    <input
+                                      type="date"
+                                      value=${editForm.project_start_date}
+                                      onInput=${(e) => setEditField("project_start_date", e.target.value)}
+                                      title="Start date"
+                                    />
+                                    <input
+                                      type="date"
+                                      value=${editForm.project_end_date}
+                                      onInput=${(e) => setEditField("project_end_date", e.target.value)}
+                                      title="End date"
+                                    />
+                                  `
+                                }
+                              </div>
+                              <div style="display:flex;gap:0.5rem">
+                                <button data-variant="primary" class="small" type="submit" disabled=${saving}>
+                                  ${saving ? "Saving..." : "Save"}
+                                </button>
+                                <button class="small" type="button" onClick=${cancelEdit}>Cancel</button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
+                      `
+                  : html`
+                        <tr key=${c.id}>
+                          <td>
+                            <span style="padding-left:${c.depth * 1.5}rem">
+                              ${
+                                c.depth > 0
+                                  ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
+                                    >${catMap[c.parent_id]?.name} ></span
+                                  > `
+                                  : null
+                              }
+                              ${c.name}
+                            </span>
+                          </td>
+                          <td>${budgetBadge(c)}</td>
+                          <td style="text-align:right;white-space:nowrap">
+                            <button class="small" onClick=${() => startEdit(c)}>Edit</button>
+                            <button
+                              data-variant="danger" class="small"
+                              onClick=${() => handleDelete(c.id)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      `,
               )}
             </tbody>
           </table>
@@ -1140,379 +1281,6 @@ function Rules() {
             </tbody>
           </table>
         `
-    }
-  `;
-}
-
-// ---------------------------------------------------------------------------
-// Budgets (Budget Periods)
-// ---------------------------------------------------------------------------
-
-function Budgets() {
-  const [periods, setPeriods] = useState(null);
-  const [categories, setCategories] = useState(null);
-  const [error, setError] = useState(null);
-  const [formCategoryId, setFormCategoryId] = useState("");
-  const [formPeriodType, setFormPeriodType] = useState("monthly");
-  const [formAmount, setFormAmount] = useState("");
-  const [editingId, setEditingId] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  function load() {
-    Promise.all([api.get("/budgets/periods"), api.get("/categories")])
-      .then(([p, c]) => {
-        setPeriods(p);
-        setCategories(c);
-      })
-      .catch(setError);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  function resetForm() {
-    setFormCategoryId("");
-    setFormPeriodType("monthly");
-    setFormAmount("");
-    setEditingId(null);
-  }
-
-  function startEdit(bp) {
-    setEditingId(bp.id);
-    setFormCategoryId(bp.category_id);
-    setFormPeriodType(bp.period_type);
-    setFormAmount(String(bp.amount));
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setSubmitting(true);
-    try {
-      const body = {
-        category_id: formCategoryId,
-        period_type: formPeriodType,
-        amount: formAmount,
-      };
-      if (editingId) {
-        await api.put(`/budgets/periods/${editingId}`, body);
-      } else {
-        await api.post("/budgets/periods", body);
-      }
-      resetForm();
-      load();
-    } catch (err) {
-      setError(err);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleDelete(id) {
-    try {
-      await api.del(`/budgets/periods/${id}`);
-      load();
-    } catch (err) {
-      setError(err);
-    }
-  }
-
-  if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!periods || !categories)
-    return html`<p class="text-light">Loading...</p>`;
-
-  const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
-
-  return html`
-    <h2>Budget Periods</h2>
-    <p class="text-light" style="margin-bottom:1rem">
-      ${periods.length} budget period${periods.length !== 1 ? "s" : ""}
-    </p>
-
-    <form style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem" onSubmit=${handleSubmit}>
-      <select
-        value=${formCategoryId}
-        onInput=${(e) => setFormCategoryId(e.target.value)}
-        required
-      >
-        <option value="" disabled>Category</option>
-        ${categories.map(
-          (c) =>
-            html`<option value=${c.id}>${categoryName(catMap, c.id)}</option>`,
-        )}
-      </select>
-      <select
-        value=${formPeriodType}
-        onInput=${(e) => setFormPeriodType(e.target.value)}
-      >
-        <option value="monthly">Monthly</option>
-        <option value="annual">Annual</option>
-      </select>
-      <input
-        type="number"
-        step="0.01"
-        min="0"
-        placeholder="Amount"
-        value=${formAmount}
-        onInput=${(e) => setFormAmount(e.target.value)}
-        required
-      />
-      <button data-variant="primary" type="submit" disabled=${submitting}>
-        ${editingId ? "Update" : "Add Budget"}
-      </button>
-      ${
-        editingId &&
-        html`<button type="button" onClick=${resetForm}>Cancel</button>`
-      }
-    </form>
-
-    ${
-      periods.length === 0
-        ? html`<p class="text-light">No budget periods yet. Add one above.</p>`
-        : html`
-          <table>
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>Period</th>
-                <th>Amount</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${periods.map(
-                (bp) => html`
-                  <tr>
-                    <td>${categoryName(catMap, bp.category_id)}</td>
-                    <td>
-                      <span class="chip outline">${bp.period_type}</span>
-                    </td>
-                    <td class="mono">${Number(bp.amount).toFixed(2)}</td>
-                    <td>
-                      <button class="small" onClick=${() => startEdit(bp)}>Edit</button>
-                      <button data-variant="danger" class="small" onClick=${() => handleDelete(bp.id)}>
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                `,
-              )}
-            </tbody>
-          </table>
-        `
-    }
-  `;
-}
-
-// ---------------------------------------------------------------------------
-// Projects
-// ---------------------------------------------------------------------------
-
-function Projects() {
-  const [projects, setProjects] = useState(null);
-  const [categories, setCategories] = useState(null);
-  const [error, setError] = useState(null);
-  const emptyForm = {
-    name: "",
-    category_id: "",
-    start_date: "",
-    end_date: "",
-    budget_amount: "",
-  };
-  const [form, setForm] = useState(emptyForm);
-  const [editingId, setEditingId] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  function load() {
-    Promise.all([api.get("/projects"), api.get("/categories")])
-      .then(([p, c]) => {
-        setProjects(p);
-        setCategories(c);
-      })
-      .catch(setError);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
-
-  function setField(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
-
-  function startEdit(project) {
-    setEditingId(project.id);
-    setForm({
-      name: project.name,
-      category_id: project.category_id,
-      start_date: project.start_date,
-      end_date: project.end_date ?? "",
-      budget_amount: project.budget_amount ?? "",
-    });
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setForm(emptyForm);
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    const body = {
-      name: form.name,
-      category_id: form.category_id,
-      start_date: form.start_date,
-      end_date: form.end_date || null,
-      budget_amount: form.budget_amount || null,
-    };
-    try {
-      if (editingId) {
-        await api.put(`/projects/${editingId}`, body);
-      } else {
-        await api.post("/projects", body);
-      }
-      setForm(emptyForm);
-      setEditingId(null);
-      load();
-    } catch (err) {
-      setError(err);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleDelete(id) {
-    setError(null);
-    try {
-      await api.del(`/projects/${id}`);
-      if (editingId === id) cancelEdit();
-      load();
-    } catch (err) {
-      setError(err);
-    }
-  }
-
-  function isCompleted(project) {
-    if (!project.end_date) return false;
-    return project.end_date < new Date().toISOString().slice(0, 10);
-  }
-
-  if (error && !projects)
-    return html`<p class="text-light">${error.message}</p>`;
-  if (!projects) return html`<p class="text-light">Loading...</p>`;
-
-  return html`
-    <h2>Projects</h2>
-    <p class="text-light" style="margin-bottom:1rem">
-      ${projects.length} project${projects.length !== 1 ? "s" : ""}
-    </p>
-
-    ${error && html`<p role="alert" data-variant="error">${error.message}</p>`}
-
-    <form style="margin-bottom:1.5rem" onSubmit=${handleSubmit}>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
-        <input
-          type="text"
-          placeholder="Project name"
-          value=${form.name}
-          onInput=${(e) => setField("name", e.target.value)}
-          required
-        />
-        <select
-          value=${form.category_id}
-          onChange=${(e) => setField("category_id", e.target.value)}
-          required
-        >
-          <option value="" disabled>Category</option>
-          ${(categories ?? []).map(
-            (c) =>
-              html`<option value=${c.id}>${categoryName(catMap, c.id) ?? c.name}</option>`,
-          )}
-        </select>
-        <input
-          type="date"
-          value=${form.start_date}
-          onInput=${(e) => setField("start_date", e.target.value)}
-          required
-          title="Start date"
-        />
-        <input
-          type="date"
-          value=${form.end_date}
-          onInput=${(e) => setField("end_date", e.target.value)}
-          title="End date (optional)"
-        />
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          placeholder="Budget"
-          value=${form.budget_amount}
-          onInput=${(e) => setField("budget_amount", e.target.value)}
-          title="Budget amount (optional)"
-        />
-        <button data-variant="primary" type="submit" disabled=${submitting}>
-          ${editingId ? "Update" : "Add"}
-        </button>
-        ${
-          editingId &&
-          html`<button type="button" onClick=${cancelEdit}>Cancel</button>`
-        }
-      </div>
-    </form>
-
-    ${
-      projects.length === 0
-        ? html`<p class="text-light">No projects yet. Add one above.</p>`
-        : html`
-        <div class="table">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Category</th>
-                <th>Start</th>
-                <th>End</th>
-                <th>Budget</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${projects.map(
-                (p) => html`
-                <tr class=${isCompleted(p) ? "project-completed" : ""}>
-                  <td><span style="font-weight:500">${p.name}</span></td>
-                  <td>${categoryName(catMap, p.category_id) ?? html`<span class="text-light">unknown</span>`}</td>
-                  <td class="mono">${p.start_date}</td>
-                  <td>
-                    ${
-                      p.end_date
-                        ? html`<span class="mono">${p.end_date}</span>`
-                        : html`<span class="chip success">ongoing</span>`
-                    }
-                  </td>
-                  <td>
-                    ${
-                      p.budget_amount != null
-                        ? html`<span class="mono">${Number(p.budget_amount).toFixed(2)}</span>`
-                        : html`<span class="chip outline">no budget</span>`
-                    }
-                  </td>
-                  <td>
-                    <button class="small" onClick=${() => startEdit(p)}>Edit</button>
-                    <button data-variant="danger" class="small" onClick=${() => handleDelete(p.id)}>Delete</button>
-                  </td>
-                </tr>
-              `,
-              )}
-            </tbody>
-          </table>
-        </div>
-      `
     }
   `;
 }
@@ -2023,8 +1791,6 @@ function App() {
     if (route === "/transactions") return html`<${Transactions} />`;
     if (route === "/categories") return html`<${Categories} />`;
     if (route === "/rules") return html`<${Rules} />`;
-    if (route === "/budgets") return html`<${Budgets} />`;
-    if (route === "/projects") return html`<${Projects} />`;
     if (route === "/connections") return html`<${Connections} />`;
     if (route === "/jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;
@@ -2039,8 +1805,6 @@ function App() {
           <${NavLink} href="/transactions">Transactions<//>
           <${NavLink} href="/categories">Categories<//>
           <${NavLink} href="/rules">Rules<//>
-          <${NavLink} href="/budgets">Budgets<//>
-          <${NavLink} href="/projects">Projects<//>
           <${NavLink} href="/connections">Connections<//>
           <${NavLink} href="/jobs">Jobs<//>
         </nav>

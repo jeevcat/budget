@@ -3,13 +3,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use super::enums::{
-    AccountType, CategoryMethod, ConnectionStatus, CorrelationType, MatchField, PaceIndicator,
-    PeriodType, RuleType,
+    AccountType, BudgetMode, CategoryMethod, ConnectionStatus, CorrelationType, MatchField,
+    PaceIndicator, RuleType,
 };
-use super::id::{
-    AccountId, BudgetMonthId, BudgetPeriodId, CategoryId, ConnectionId, ProjectId, RuleId,
-    TransactionId,
-};
+use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -37,6 +34,10 @@ pub struct Category {
     pub id: CategoryId,
     pub name: String,
     pub parent_id: Option<CategoryId>,
+    pub budget_mode: Option<BudgetMode>,
+    pub budget_amount: Option<Decimal>,
+    pub project_start_date: Option<NaiveDate>,
+    pub project_end_date: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +52,6 @@ pub struct Transaction {
     pub description: String,
     pub posted_date: NaiveDate,
     pub budget_month_id: Option<BudgetMonthId>,
-    pub project_id: Option<ProjectId>,
     pub correlation_id: Option<TransactionId>,
     pub correlation_type: Option<CorrelationType>,
     pub category_method: Option<CategoryMethod>,
@@ -70,29 +70,11 @@ pub struct Rule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetPeriod {
-    pub id: BudgetPeriodId,
-    pub category_id: CategoryId,
-    pub period_type: PeriodType,
-    pub amount: Decimal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetMonth {
     pub id: BudgetMonthId,
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
     pub salary_transactions_detected: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Project {
-    pub id: ProjectId,
-    pub name: String,
-    pub category_id: CategoryId,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub budget_amount: Option<Decimal>,
 }
 
 /// Result of computing budget status for a category in a budget month

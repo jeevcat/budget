@@ -193,7 +193,6 @@ mod tests {
             description: description.to_owned(),
             posted_date: date(2025, 6, 15),
             budget_month_id: None,
-            project_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,

@@ -15,10 +15,6 @@
 .row-correlated {
   opacity: 0.6;
 }
-.project-completed {
-  opacity: 0.55;
-}
-
 /* Immich-style queue cards */
 .queue-cards {
   display: flex;

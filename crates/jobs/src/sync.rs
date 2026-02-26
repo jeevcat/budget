@@ -101,7 +101,6 @@ pub(crate) async fn sync_account(
             description: ptxn.description.clone().unwrap_or_default(),
             posted_date: ptxn.posted_date,
             budget_month_id: None,
-            project_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,
