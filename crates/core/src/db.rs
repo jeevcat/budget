@@ -767,7 +767,7 @@ impl Db {
     pub async fn list_categories(&self) -> Result<Vec<Category>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date FROM categories",
+            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date FROM categories ORDER BY name",
         )
         .fetch_all(pool)
         .await?;

@@ -41,6 +41,47 @@ function accountDisplayName(account) {
 }
 
 // ---------------------------------------------------------------------------
+// Date formatting (Intl APIs — zero dependencies)
+// ---------------------------------------------------------------------------
+
+const relFmt = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const shortDateFmt = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+});
+const fullDateFmt = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function formatDate(iso) {
+  if (!iso) return "\u2014";
+  const date = new Date(iso + (iso.includes("T") ? "" : "T00:00:00"));
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((target - today) / 86400000);
+  if (Math.abs(days) <= 6) return relFmt.format(days, "day");
+  if (target.getFullYear() === today.getFullYear())
+    return shortDateFmt.format(date);
+  return fullDateFmt.format(date);
+}
+
+function formatDateFull(iso) {
+  if (!iso) return "\u2014";
+  const date = new Date(iso + (iso.includes("T") ? "" : "T00:00:00"));
+  const relative = formatDate(iso);
+  return `${fullDateFmt.format(date)} (${relative})`;
+}
+
+function formatDateShort(iso) {
+  if (!iso) return "\u2014";
+  const date = new Date(iso + (iso.includes("T") ? "" : "T00:00:00"));
+  return shortDateFmt.format(date);
+}
+
+// ---------------------------------------------------------------------------
 // Simple hash router
 // ---------------------------------------------------------------------------
 
@@ -500,7 +541,7 @@ function Dashboard() {
               (t) => html`
                 <tr class=${t.correlation_type ? "row-correlated" : ""}>
                   <td class="mono text-light" style="width:7rem">
-                    ${t.posted_date}
+                    ${formatDate(t.posted_date)}
                   </td>
                   <td style="font-weight:500">
                     ${cleanMerchant(t.merchant_name || t.description)}
@@ -659,7 +700,7 @@ function TxnDetail({
         </header>
         <div>
           <dl class="txn-dl">
-            <dt>Date</dt><dd>${txn.posted_date}</dd>
+            <dt>Date</dt><dd>${formatDateFull(txn.posted_date)}</dd>
             <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount)}</dd>
             ${
               txn.original_amount
@@ -1001,7 +1042,7 @@ function Transactions() {
                 class=${t.correlation_type ? "row-correlated" : ""}
                 onClick=${() => setSelected(t)}
               >
-                <td class="mono">${t.posted_date}</td>
+                <td class="mono">${formatDate(t.posted_date)}</td>
                 <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
                 <td class="${amountClass(t.amount)}">${formatAmount(t.amount)}</td>
                 <td>
@@ -1104,27 +1145,6 @@ function Categories() {
     }
   }
 
-  async function createSuggestedCategory(catName) {
-    const parts = catName.split(":");
-    let parentIdForNew;
-    if (parts.length > 1) {
-      const parentName = parts.slice(0, -1).join(":");
-      const existingParent = (categories ?? []).find(
-        (c) => c.name === parentName,
-      );
-      if (existingParent) {
-        parentIdForNew = existingParent.id;
-      } else {
-        const created = await api.post("/categories", { name: parentName });
-        parentIdForNew = created.id;
-      }
-    }
-    await api.post("/categories", {
-      name: catName,
-      parent_id: parentIdForNew,
-    });
-  }
-
   function toggleSuggestion(catName) {
     setSelectedSuggestions((prev) => {
       const next = new Set(prev);
@@ -1137,8 +1157,29 @@ function Categories() {
   async function acceptSelected() {
     setAdding(true);
     try {
+      const createdParents = {};
       for (const catName of selectedSuggestions) {
-        await createSuggestedCategory(catName);
+        const parts = catName.split(":");
+        let parentIdForNew;
+        if (parts.length > 1) {
+          const parentName = parts.slice(0, -1).join(":");
+          const existingParent = (categories ?? []).find(
+            (c) => c.name === parentName,
+          );
+          if (existingParent) {
+            parentIdForNew = existingParent.id;
+          } else if (createdParents[parentName]) {
+            parentIdForNew = createdParents[parentName];
+          } else {
+            const created = await api.post("/categories", { name: parentName });
+            createdParents[parentName] = created.id;
+            parentIdForNew = created.id;
+          }
+        }
+        await api.post("/categories", {
+          name: catName,
+          parent_id: parentIdForNew,
+        });
       }
       setSelectedSuggestions(new Set());
       load();
@@ -1260,8 +1301,10 @@ function Categories() {
     if (!cat.budget_mode) return null;
     if (cat.budget_mode === "project") {
       const parts = [];
-      if (cat.project_start_date) parts.push(cat.project_start_date);
-      if (cat.project_end_date) parts.push(cat.project_end_date);
+      if (cat.project_start_date)
+        parts.push(formatDateShort(cat.project_start_date));
+      if (cat.project_end_date)
+        parts.push(formatDateShort(cat.project_end_date));
       return parts.length > 0
         ? html`<span class="text-light" style="font-size:0.85rem">${parts.join(" \u2013 ")}</span>`
         : null;
@@ -1954,7 +1997,7 @@ function Connections() {
                       <td>
                         <span class="chip ${statusBadge(c.status)}">${c.status}</span>
                       </td>
-                      <td class="mono">${c.valid_until}</td>
+                      <td class="mono">${formatDate(c.valid_until)}</td>
                       <td>${accountCount(c.id)}</td>
                       <td>
                         ${
