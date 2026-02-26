@@ -13,8 +13,8 @@ use sqlx::PgPool;
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, Connection, ConnectionId,
-    ConnectionStatus, CorrelationType, MatchField, Rule, RuleId, RuleType, Transaction,
-    TransactionId,
+    ConnectionStatus, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
+    Transaction, TransactionId,
 };
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
@@ -451,8 +451,10 @@ async fn categorize_rule_based_assignment(pool: PgPool) {
     let rule = Rule {
         id: RuleId::new(),
         rule_type: RuleType::Categorization,
-        match_field: MatchField::Merchant,
-        match_pattern: "WHOLE FOODS".to_owned(),
+        conditions: vec![RuleCondition {
+            field: MatchField::Merchant,
+            pattern: "WHOLE FOODS".to_owned(),
+        }],
         target_category_id: Some(groceries_cat.id),
         target_correlation_type: None,
         priority: 100,
@@ -678,8 +680,10 @@ async fn correlate_rule_based_linking(pool: PgPool) {
     let rule = Rule {
         id: RuleId::new(),
         rule_type: RuleType::Correlation,
-        match_field: MatchField::Merchant,
-        match_pattern: "PAYMENT RECEIVED".to_owned(),
+        conditions: vec![RuleCondition {
+            field: MatchField::Merchant,
+            pattern: "PAYMENT RECEIVED".to_owned(),
+        }],
         target_category_id: None,
         target_correlation_type: Some(CorrelationType::Transfer),
         priority: 100,

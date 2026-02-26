@@ -302,20 +302,22 @@ JSON response:"#,
         let prompt = format!(
             r#"You propose deterministic categorization rules for a personal budgeting tool.
 
-Given a specific transaction and its category, propose exactly 3 regex rules at varying specificity that would automatically categorize similar transactions in the future. The rules should go from tight (matching only this specific merchant) to broad (matching a wider class of similar merchants).
+Given a specific transaction and its category, propose exactly 3 categorization rules that would automatically categorize similar transactions in the future. Each rule should use the MOST RELIABLE field available for that transaction — prefer structured fields (IBAN, BIC, bank transaction code) over free-text fields (merchant, description) when they are present, as structured fields are more stable and precise.
 
 Rules can match on:
-- "Merchant" — match against the merchant/payee name
-- "Description" — match against the transaction description
-- "CounterpartyName" — match against the counterparty name
-- "CounterpartyIban" — match against the counterparty IBAN
-- "CounterpartyBic" — match against the counterparty BIC
-- "BankTransactionCode" — match against the bank transaction code
+- "Merchant" — regex against the merchant/payee name
+- "Description" — regex against the transaction description
+- "CounterpartyName" — regex against the counterparty name
+- "CounterpartyIban" — regex against the counterparty IBAN (very reliable for recurring payees)
+- "CounterpartyBic" — regex against the counterparty BIC (identifies the bank)
+- "BankTransactionCode" — regex against the bank transaction code (identifies transaction type)
+
+The 3 proposals should offer meaningfully different strategies, not just the same field at different specificity levels. For example, one might match on IBAN (exact payee), another on merchant name, and a third on bank transaction code. Use whichever fields are most appropriate given the available data.
 
 Respond with a JSON array of exactly 3 objects, each containing:
 - "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode"
 - "match_pattern": string — a regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
-- "explanation": string — brief explanation of what the rule matches
+- "explanation": string — brief explanation of what the rule matches and why this field was chosen
 
 Transaction:
 Merchant: {merchant}

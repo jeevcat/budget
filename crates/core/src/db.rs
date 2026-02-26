@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::models::{
     Account, AccountId, AccountType, BudgetMode, BudgetMonth, BudgetMonthId, Category, CategoryId,
-    CategoryMethod, Connection, ConnectionId, ConnectionStatus, CorrelationType, MatchField, Rule,
-    RuleId, RuleType, Transaction, TransactionId,
+    CategoryMethod, Connection, ConnectionId, ConnectionStatus, CorrelationType, Rule,
+    RuleCondition, RuleId, RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -122,11 +122,17 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
 }
 
 fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
+    let conditions_json: String = row.try_get("conditions")?;
+    let conditions: Vec<RuleCondition> =
+        serde_json::from_str(&conditions_json).map_err(|e| sqlx::Error::ColumnDecode {
+            index: "conditions".to_owned(),
+            source: Box::new(e),
+        })?;
+
     Ok(Rule {
         id: RuleId::from_uuid(parse_uuid(row, "id")?),
         rule_type: parse_enum::<RuleType>(row, "rule_type")?,
-        match_field: parse_enum::<MatchField>(row, "match_field")?,
-        match_pattern: row.try_get("match_pattern")?,
+        conditions,
         target_category_id: parse_uuid_opt(row, "target_category_id")?.map(CategoryId::from_uuid),
         target_correlation_type: parse_enum_opt::<CorrelationType>(row, "target_correlation_type")?,
         priority: row.try_get("priority")?,
@@ -857,14 +863,15 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn insert_rule(&self, rule: &Rule) -> Result<(), sqlx::Error> {
         let pool = &self.0;
+        let conditions_json = serde_json::to_string(&rule.conditions)
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO rules (id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO rules (id, rule_type, conditions, target_category_id, target_correlation_type, priority)
+             VALUES ($1, $2, $3::jsonb, $4, $5, $6)",
         )
         .bind(rule.id.to_string())
         .bind(rule.rule_type.to_string())
-        .bind(rule.match_field.to_string())
-        .bind(&rule.match_pattern)
+        .bind(&conditions_json)
         .bind(rule.target_category_id.map(|id| id.to_string()))
         .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
         .bind(rule.priority)
@@ -881,7 +888,7 @@ impl Db {
     pub async fn list_rules(&self) -> Result<Vec<Rule>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority
+            "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
              FROM rules",
         )
         .fetch_all(pool)
@@ -899,7 +906,7 @@ impl Db {
     pub async fn list_rules_by_type(&self, rule_type: RuleType) -> Result<Vec<Rule>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority
+            "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
              FROM rules
              WHERE rule_type = $1
              ORDER BY priority DESC",
@@ -920,7 +927,7 @@ impl Db {
     pub async fn get_rule(&self, id: RuleId) -> Result<Option<Rule>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, rule_type, match_field, match_pattern, target_category_id, target_correlation_type, priority
+            "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
              FROM rules WHERE id = $1",
         )
         .bind(id.to_string())
@@ -936,14 +943,15 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn update_rule(&self, rule: &Rule) -> Result<(), sqlx::Error> {
         let pool = &self.0;
+        let conditions_json = serde_json::to_string(&rule.conditions)
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         sqlx::query(
-            "UPDATE rules SET rule_type = $1, match_field = $2, match_pattern = $3,
-                    target_category_id = $4, target_correlation_type = $5, priority = $6
-             WHERE id = $7",
+            "UPDATE rules SET rule_type = $1, conditions = $2::jsonb,
+                    target_category_id = $3, target_correlation_type = $4, priority = $5
+             WHERE id = $6",
         )
         .bind(rule.rule_type.to_string())
-        .bind(rule.match_field.to_string())
-        .bind(&rule.match_pattern)
+        .bind(&conditions_json)
         .bind(rule.target_category_id.map(|id| id.to_string()))
         .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
         .bind(rule.priority)
@@ -1190,8 +1198,8 @@ mod tests {
 
     use crate::models::{
         Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId,
-        CategoryMethod, CorrelationType, MatchField, Rule, RuleId, RuleType, Transaction,
-        TransactionId,
+        CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
+        Transaction, TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1254,8 +1262,10 @@ mod tests {
         Rule {
             id: RuleId::new(),
             rule_type,
-            match_field: MatchField::Merchant,
-            match_pattern: "Coffee.*".into(),
+            conditions: vec![RuleCondition {
+                field: MatchField::Merchant,
+                pattern: "Coffee.*".into(),
+            }],
             target_category_id: None,
             target_correlation_type: None,
             priority,
@@ -1848,8 +1858,9 @@ mod tests {
         let fetched = &all[0];
         assert_eq!(fetched.id, rule.id);
         assert_eq!(fetched.rule_type, RuleType::Categorization);
-        assert_eq!(fetched.match_field, MatchField::Merchant);
-        assert_eq!(fetched.match_pattern, "Coffee.*");
+        assert_eq!(fetched.conditions.len(), 1);
+        assert_eq!(fetched.conditions[0].field, MatchField::Merchant);
+        assert_eq!(fetched.conditions[0].pattern, "Coffee.*");
         assert_eq!(fetched.target_category_id, Some(cat.id));
         assert!(fetched.target_correlation_type.is_none());
         assert_eq!(fetched.priority, 10);
@@ -1905,16 +1916,19 @@ mod tests {
         let mut rule = make_rule(RuleType::Categorization, 5);
         db.insert_rule(&rule).await.unwrap();
 
-        rule.match_field = MatchField::Description;
-        rule.match_pattern = "Hotel.*".into();
+        rule.conditions = vec![RuleCondition {
+            field: MatchField::Description,
+            pattern: "Hotel.*".into(),
+        }];
         rule.target_category_id = Some(cat.id);
         rule.priority = 20;
 
         db.update_rule(&rule).await.unwrap();
 
         let fetched = db.get_rule(rule.id).await.unwrap().unwrap();
-        assert_eq!(fetched.match_field, MatchField::Description);
-        assert_eq!(fetched.match_pattern, "Hotel.*");
+        assert_eq!(fetched.conditions.len(), 1);
+        assert_eq!(fetched.conditions[0].field, MatchField::Description);
+        assert_eq!(fetched.conditions[0].pattern, "Hotel.*");
         assert_eq!(fetched.target_category_id, Some(cat.id));
         assert_eq!(fetched.priority, 20);
     }

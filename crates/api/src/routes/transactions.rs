@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::models::{CategoryId, CategoryMethod, RuleType, Transaction, TransactionId};
-use budget_core::rules::compile_rule_pattern;
+use budget_core::rules::compile_rule;
 use budget_providers::{MatchField, RuleContext};
 
 use crate::routes::AppError;
@@ -156,7 +156,11 @@ async fn generate_rule(
     let existing_rule_patterns: Vec<String> = existing_rules
         .iter()
         .filter(|r| r.target_category_id == Some(category_id))
-        .map(|r| r.match_pattern.clone())
+        .flat_map(|r| {
+            r.conditions
+                .iter()
+                .map(|c| format!("{}: {}", c.field, c.pattern))
+        })
         .collect();
 
     let context = RuleContext {
@@ -179,8 +183,22 @@ async fn generate_rule(
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("LLM error: {e}")))?;
 
-    // Validate each proposed regex, filter out failures
-    let proposals: Vec<GenerateRuleProposal> = proposed
+    let proposals = validate_proposals(proposed, category_id);
+
+    Ok(Json(GenerateRuleResponse {
+        target_category_id: category_id.to_string(),
+        category_name: category.name,
+        proposals,
+    }))
+}
+
+/// Validate proposed rules by compiling their patterns, then convert to API
+/// response format. Proposals with invalid patterns are silently dropped.
+fn validate_proposals(
+    proposed: Vec<budget_providers::ProposedRule>,
+    category_id: CategoryId,
+) -> Vec<GenerateRuleProposal> {
+    proposed
         .into_iter()
         .filter(|p| {
             let match_field_domain = match p.match_field {
@@ -196,13 +214,15 @@ async fn generate_rule(
             let test_rule = budget_core::models::Rule {
                 id: budget_core::models::RuleId::new(),
                 rule_type: RuleType::Categorization,
-                match_field: match_field_domain,
-                match_pattern: p.match_pattern.clone(),
+                conditions: vec![budget_core::models::RuleCondition {
+                    field: match_field_domain,
+                    pattern: p.match_pattern.clone(),
+                }],
                 target_category_id: Some(category_id),
                 target_correlation_type: None,
                 priority: 0,
             };
-            compile_rule_pattern(&test_rule).is_ok()
+            compile_rule(&test_rule).is_ok()
         })
         .map(|p| GenerateRuleProposal {
             match_field: match p.match_field {
@@ -216,11 +236,5 @@ async fn generate_rule(
             match_pattern: p.match_pattern,
             explanation: p.explanation,
         })
-        .collect();
-
-    Ok(Json(GenerateRuleResponse {
-        target_category_id: category_id.to_string(),
-        category_name: category.name,
-        proposals,
-    }))
+        .collect()
 }

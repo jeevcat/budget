@@ -8,7 +8,7 @@ use apalis::prelude::*;
 
 use budget_core::db::Db;
 use budget_core::models::{CategoryMethod, RuleType, TransactionId};
-use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_categorization_rules};
+use budget_core::rules::{CompiledRule, compile_rule, evaluate_categorization_rules};
 
 use super::{ApalisPool, CategorizeJob, CategorizeTransactionJob, LlmClient};
 
@@ -29,7 +29,7 @@ pub(crate) async fn categorize_fan_out(
     let raw_rules = db.list_rules_by_type(RuleType::Categorization).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
         .iter()
-        .filter_map(|rule| match compile_rule_pattern(rule) {
+        .filter_map(|rule| match compile_rule(rule) {
             Ok(compiled) => Some(compiled),
             Err(e) => {
                 tracing::warn!(rule_id = %rule.id, error = %e, "skipping rule with invalid pattern");

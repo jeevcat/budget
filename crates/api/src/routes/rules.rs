@@ -6,28 +6,28 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::models::{
-    CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleId, RuleType,
+    CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
 };
-use budget_core::rules::{compile_rule_pattern, evaluate_categorization_rules};
+use budget_core::rules::{compile_rule, evaluate_categorization_rules};
 use budget_jobs::CategorizeJob;
 
 use crate::routes::AppError;
 use crate::state::AppState;
 
+/// A single condition in a rule request body.
+#[derive(Deserialize)]
+pub struct ConditionRequest {
+    pub field: String,
+    pub pattern: String,
+}
+
 /// Request body for creating or updating a rule.
 #[derive(Deserialize)]
 pub struct CreateRule {
-    /// Rule type: "categorization" or "correlation".
     pub rule_type: String,
-    /// Field to match against: "merchant", "description", or "`amount_range`".
-    pub match_field: String,
-    /// Pattern string (exact match, regex, or range expression).
-    pub match_pattern: String,
-    /// Target category UUID (for categorization rules).
+    pub conditions: Vec<ConditionRequest>,
     pub target_category_id: Option<String>,
-    /// Target correlation type: "transfer" or "reimbursement".
     pub target_correlation_type: Option<String>,
-    /// Higher-priority rules are evaluated first.
     pub priority: i32,
 }
 
@@ -58,10 +58,26 @@ fn parse_rule_body(body: &CreateRule, id: RuleId) -> Result<Rule, AppError> {
         .parse()
         .map_err(|e: budget_core::error::Error| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let match_field: MatchField = body
-        .match_field
-        .parse()
-        .map_err(|e: budget_core::error::Error| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    if body.conditions.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "conditions must not be empty".to_owned(),
+        ));
+    }
+
+    let conditions: Vec<RuleCondition> = body
+        .conditions
+        .iter()
+        .map(|c| {
+            let field: MatchField = c.field.parse().map_err(|e: budget_core::error::Error| {
+                AppError(StatusCode::BAD_REQUEST, e.to_string())
+            })?;
+            Ok(RuleCondition {
+                field,
+                pattern: c.pattern.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
 
     let target_category_id = body
         .target_category_id
@@ -87,8 +103,7 @@ fn parse_rule_body(body: &CreateRule, id: RuleId) -> Result<Rule, AppError> {
     Ok(Rule {
         id,
         rule_type,
-        match_field,
-        match_pattern: body.match_pattern.clone(),
+        conditions,
         target_category_id,
         target_correlation_type,
         priority: body.priority,
@@ -186,7 +201,7 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
         .await?;
     let compiled_rules: Vec<_> = raw_rules
         .iter()
-        .filter_map(|rule| match compile_rule_pattern(rule) {
+        .filter_map(|rule| match compile_rule(rule) {
             Ok(compiled) => Some(compiled),
             Err(e) => {
                 tracing::warn!(rule_id = %rule.id, error = %e, "skipping rule with invalid pattern");

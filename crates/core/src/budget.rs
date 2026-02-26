@@ -184,7 +184,7 @@ pub fn compute_category_spending(
     let subtree = collect_category_subtree(category_id, categories);
     let budget_txns = filter_for_budget(transactions, categories);
 
-    budget_txns
+    -budget_txns
         .iter()
         .filter(|t| {
             // Must be in the category subtree
@@ -369,7 +369,7 @@ fn compute_project_status(
     let end = category.project_end_date;
 
     // Filter transactions within the project date range, excluding transfers/reimbursements
-    let spent: Decimal = transactions
+    let spent: Decimal = -transactions
         .iter()
         .filter(|t| {
             let in_subtree = t.category_id.is_some_and(|cid| subtree.contains(&cid));
@@ -685,11 +685,11 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(groceries.id), dec!(50), date(2025, 1, 20)),
-            make_txn(Some(restaurants.id), dec!(30), date(2025, 1, 22)),
-            make_txn(Some(food.id), dec!(10), date(2025, 1, 25)),
+            make_txn(Some(groceries.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(Some(restaurants.id), dec!(-30), date(2025, 1, 22)),
+            make_txn(Some(food.id), dec!(-10), date(2025, 1, 25)),
             // Outside budget month — should be excluded
-            make_txn(Some(groceries.id), dec!(100), date(2025, 2, 14)),
+            make_txn(Some(groceries.id), dec!(-100), date(2025, 2, 14)),
         ];
 
         // Spending on Food (parent) includes all children
@@ -718,9 +718,9 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(50), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
             // This transaction is in a project category — excluded from budget
-            make_txn(Some(project_cat.id), dec!(500), date(2025, 1, 20)),
+            make_txn(Some(project_cat.id), dec!(-500), date(2025, 1, 20)),
         ];
 
         let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
@@ -730,7 +730,7 @@ mod tests {
         // spending via a parent that doesn't exist, so let's verify via filter
         let filtered = filter_for_budget(&transactions, &categories);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].amount, dec!(50));
+        assert_eq!(filtered[0].amount, dec!(-50));
     }
 
     #[test]
@@ -745,11 +745,11 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let mut transfer_txn = make_txn(Some(food.id), dec!(200), date(2025, 1, 20));
+        let mut transfer_txn = make_txn(Some(food.id), dec!(-200), date(2025, 1, 20));
         transfer_txn.correlation_type = Some(crate::models::CorrelationType::Transfer);
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(50), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
             transfer_txn,
         ];
 
@@ -770,22 +770,22 @@ mod tests {
         };
 
         // Original expense that gets reimbursed
-        let original_txn = make_txn(Some(food.id), dec!(200), date(2025, 1, 20));
+        let original_txn = make_txn(Some(food.id), dec!(-200), date(2025, 1, 20));
         let original_id = original_txn.id;
 
-        // Reimbursement linked to the original
-        let mut reimbursement = make_txn(Some(food.id), dec!(-200), date(2025, 1, 25));
+        // Reimbursement linked to the original (positive: money coming back)
+        let mut reimbursement = make_txn(Some(food.id), dec!(200), date(2025, 1, 25));
         reimbursement.correlation_id = Some(original_id);
         reimbursement.correlation_type = Some(crate::models::CorrelationType::Reimbursement);
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(50), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
             original_txn,
             reimbursement,
         ];
 
         let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
-        // 200 (reimbursed original) and -200 (reimbursement) both excluded
+        // -200 (reimbursed original) and +200 (reimbursement) both excluded
         assert_eq!(spending, dec!(50));
     }
 
@@ -802,7 +802,7 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(food.id), dec!(100), date(2025, 1, 20))];
+        let transactions = vec![make_txn(Some(food.id), dec!(-100), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
         let status =
@@ -830,7 +830,7 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(food.id), dec!(250), date(2025, 1, 20))];
+        let transactions = vec![make_txn(Some(food.id), dec!(-250), date(2025, 1, 20))];
 
         let today = date(2025, 1, 25);
         let status =
@@ -863,9 +863,9 @@ mod tests {
 
         let transactions = vec![
             // Month 1: spent 300, surplus 200
-            make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
             // Month 2: spent 400, surplus 100
-            make_txn(Some(food.id), dec!(400), date(2025, 2, 20)),
+            make_txn(Some(food.id), dec!(-400), date(2025, 2, 20)),
         ];
 
         let rollover = compute_rollover(&food, &[bm1, bm2], &transactions, &categories);
@@ -888,7 +888,7 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let transactions = vec![make_txn(Some(food.id), dec!(700), date(2025, 1, 20))];
+        let transactions = vec![make_txn(Some(food.id), dec!(-700), date(2025, 1, 20))];
 
         let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
 
@@ -908,7 +908,7 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let transactions = vec![make_txn(Some(food.id), dec!(300), date(2025, 1, 20))];
+        let transactions = vec![make_txn(Some(food.id), dec!(-300), date(2025, 1, 20))];
 
         let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
 
@@ -936,8 +936,8 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(100), date(2025, 2, 20)),
+            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-100), date(2025, 2, 20)),
         ];
 
         let rollover = compute_rollover(&food, &[bm_closed, bm_open], &transactions, &categories);
@@ -1022,9 +1022,9 @@ mod tests {
         let all_months = [bm_jan.clone(), bm_feb.clone(), bm_mar.clone()];
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(400), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(600), date(2025, 2, 20)),
-            make_txn(Some(food.id), dec!(200), date(2025, 3, 20)),
+            make_txn(Some(food.id), dec!(-400), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-600), date(2025, 2, 20)),
+            make_txn(Some(food.id), dec!(-200), date(2025, 3, 20)),
         ];
 
         let today = date(2025, 3, 25);
@@ -1065,11 +1065,11 @@ mod tests {
         let all_months = [bm.clone()];
 
         let transactions = vec![
-            make_txn(Some(project.id), dec!(2000), date(2025, 2, 15)),
-            make_txn(Some(project.id), dec!(3000), date(2025, 4, 10)),
+            make_txn(Some(project.id), dec!(-2000), date(2025, 2, 15)),
+            make_txn(Some(project.id), dec!(-3000), date(2025, 4, 10)),
             // Outside project range — excluded
-            make_txn(Some(project.id), dec!(500), date(2024, 12, 20)),
-            make_txn(Some(project.id), dec!(500), date(2025, 7, 1)),
+            make_txn(Some(project.id), dec!(-500), date(2024, 12, 20)),
+            make_txn(Some(project.id), dec!(-500), date(2025, 7, 1)),
         ];
 
         let today = date(2025, 4, 15);
@@ -1106,7 +1106,7 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(project.id), dec!(1000), date(2025, 2, 1))];
+        let transactions = vec![make_txn(Some(project.id), dec!(-1000), date(2025, 2, 1))];
 
         let today = date(2025, 4, 1);
         let status = compute_budget_status(
@@ -1145,9 +1145,9 @@ mod tests {
 
         let transactions = vec![
             // Month 1: spent 300, surplus 200
-            make_txn(Some(food.id), dec!(300), date(2025, 1, 20)),
+            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
             // Month 2 (current): spent 100
-            make_txn(Some(food.id), dec!(100), date(2025, 2, 20)),
+            make_txn(Some(food.id), dec!(-100), date(2025, 2, 20)),
         ];
 
         let today = date(2025, 2, 25);

@@ -64,11 +64,16 @@ pub struct Transaction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleCondition {
+    pub field: MatchField,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub id: RuleId,
     pub rule_type: RuleType,
-    pub match_field: MatchField,
-    pub match_pattern: String,
+    pub conditions: Vec<RuleCondition>,
     pub target_category_id: Option<CategoryId>,
     pub target_correlation_type: Option<CorrelationType>,
     pub priority: i32,

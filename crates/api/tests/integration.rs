@@ -13,7 +13,7 @@ use budget_jobs::{JobStorage, PipelineStorage};
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId, Rule,
-    Transaction, TransactionId,
+    RuleCondition, Transaction, TransactionId,
 };
 use budget_jobs::LlmClient;
 use budget_providers::MockLlmProvider;
@@ -641,8 +641,7 @@ async fn rules_create_and_list(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
-        "match_field": "merchant",
-        "match_pattern": "GROCERY.*",
+        "conditions": [{"field": "merchant", "pattern": "GROCERY.*"}],
         "target_category_id": category.id.to_string(),
         "priority": 10
     });
@@ -651,7 +650,8 @@ async fn rules_create_and_list(pool: PgPool) {
     assert_eq!(status, StatusCode::CREATED);
 
     let created: Rule = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(created.match_pattern, "GROCERY.*");
+    assert_eq!(created.conditions.len(), 1);
+    assert_eq!(created.conditions[0].pattern, "GROCERY.*");
     assert_eq!(created.priority, 10);
 
     // List should contain the created rule
@@ -671,8 +671,7 @@ async fn rules_update(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
-        "match_field": "merchant",
-        "match_pattern": "UBER.*",
+        "conditions": [{"field": "merchant", "pattern": "UBER.*"}],
         "target_category_id": category.id.to_string(),
         "priority": 5
     });
@@ -680,11 +679,9 @@ async fn rules_update(pool: PgPool) {
     let (_, body) = send(app.clone(), post_json("/api/rules", &payload)).await;
     let created: Rule = serde_json::from_slice(&body).expect("parse");
 
-    // Update the rule's priority
     let update_payload = serde_json::json!({
         "rule_type": "categorization",
-        "match_field": "merchant",
-        "match_pattern": "UBER.*|LYFT.*",
+        "conditions": [{"field": "merchant", "pattern": "UBER.*|LYFT.*"}],
         "target_category_id": category.id.to_string(),
         "priority": 20
     });
@@ -698,7 +695,7 @@ async fn rules_update(pool: PgPool) {
 
     let updated: Rule = serde_json::from_slice(&body).expect("parse");
     assert_eq!(updated.priority, 20);
-    assert_eq!(updated.match_pattern, "UBER.*|LYFT.*");
+    assert_eq!(updated.conditions[0].pattern, "UBER.*|LYFT.*");
     assert_eq!(updated.id, created.id);
 }
 
@@ -708,8 +705,7 @@ async fn rules_delete(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
-        "match_field": "description",
-        "match_pattern": "TRANSFER.*",
+        "conditions": [{"field": "description", "pattern": "TRANSFER.*"}],
         "target_correlation_type": "transfer",
         "priority": 1
     });
@@ -734,8 +730,7 @@ async fn rules_create_invalid_rule_type_returns_400(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "invalid_type",
-        "match_field": "merchant",
-        "match_pattern": "TEST",
+        "conditions": [{"field": "merchant", "pattern": "TEST"}],
         "priority": 1
     });
 
@@ -920,8 +915,10 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
     let rule = Rule {
         id: budget_core::models::RuleId::new(),
         rule_type: budget_core::models::RuleType::Categorization,
-        match_field: budget_core::models::MatchField::Merchant,
-        match_pattern: "LIDL".to_owned(),
+        conditions: vec![RuleCondition {
+            field: budget_core::models::MatchField::Merchant,
+            pattern: "LIDL".to_owned(),
+        }],
         target_category_id: Some(category.id),
         target_correlation_type: None,
         priority: 10,
@@ -997,8 +994,10 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
     let rule = Rule {
         id: budget_core::models::RuleId::new(),
         rule_type: budget_core::models::RuleType::Categorization,
-        match_field: budget_core::models::MatchField::Merchant,
-        match_pattern: "STARBUCKS".to_owned(),
+        conditions: vec![RuleCondition {
+            field: budget_core::models::MatchField::Merchant,
+            pattern: "STARBUCKS".to_owned(),
+        }],
         target_category_id: Some(category_a.id),
         target_correlation_type: None,
         priority: 10,
@@ -1190,8 +1189,7 @@ async fn rules_create_correlation_rule(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "correlation",
-        "match_field": "amount_range",
-        "match_pattern": "100-500",
+        "conditions": [{"field": "amount_range", "pattern": "100-500"}],
         "target_correlation_type": "reimbursement",
         "priority": 3
     });
@@ -1204,8 +1202,9 @@ async fn rules_create_correlation_rule(pool: PgPool) {
         created.rule_type,
         budget_core::models::RuleType::Correlation
     );
+    assert_eq!(created.conditions.len(), 1);
     assert_eq!(
-        created.match_field,
+        created.conditions[0].field,
         budget_core::models::MatchField::AmountRange
     );
     assert_eq!(
@@ -1236,8 +1235,7 @@ async fn rules_create_invalid_match_field_returns_400(pool: PgPool) {
 
     let payload = serde_json::json!({
         "rule_type": "categorization",
-        "match_field": "bogus_field",
-        "match_pattern": "TEST",
+        "conditions": [{"field": "bogus_field", "pattern": "TEST"}],
         "priority": 1
     });
 

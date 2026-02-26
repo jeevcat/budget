@@ -8,7 +8,7 @@ use apalis::prelude::*;
 
 use budget_core::db::Db;
 use budget_core::models::{CorrelationType, RuleType, TransactionId};
-use budget_core::rules::{CompiledRule, compile_rule_pattern, evaluate_correlation_rules};
+use budget_core::rules::{CompiledRule, compile_rule, evaluate_correlation_rules};
 use budget_providers::TransactionSummary;
 
 use super::{ApalisPool, CorrelateJob, CorrelateTransactionJob, LlmClient};
@@ -55,7 +55,7 @@ pub(crate) async fn correlate_fan_out(
     let raw_rules = db.list_rules_by_type(RuleType::Correlation).await?;
     let compiled_rules: Vec<CompiledRule> = raw_rules
         .iter()
-        .filter_map(|rule| match compile_rule_pattern(rule) {
+        .filter_map(|rule| match compile_rule(rule) {
             Ok(compiled) => Some(compiled),
             Err(e) => {
                 tracing::warn!(rule_id = %rule.id, error = %e, "skipping rule with invalid pattern");

@@ -261,7 +261,7 @@ function SpendBar({ items, maxVal }) {
 
 function formatMonthRange(month) {
   const fmt = (d) => {
-    const date = new Date(d + "T00:00:00");
+    const date = new Date(`${d}T00:00:00`);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
@@ -720,7 +720,7 @@ function TxnDetail({
       setSelectedProposal(null);
     } else {
       setSelectedProposal(idx);
-      setEditPattern(ruleProposals.proposals[idx].match_pattern);
+      setEditPattern(ruleProposals.proposals[idx].match_pattern ?? "");
     }
   }
 
@@ -731,8 +731,7 @@ function TxnDetail({
     try {
       await api.post("/rules", {
         rule_type: "categorization",
-        match_field: proposal.match_field,
-        match_pattern: editPattern,
+        conditions: [{ field: proposal.match_field, pattern: editPattern }],
         target_category_id: ruleProposals.target_category_id,
         target_correlation_type: null,
         priority: 0,
@@ -853,7 +852,8 @@ function TxnDetail({
                       style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.5rem;cursor:pointer;${selectedProposal === idx ? "background:var(--bg-light)" : ""}"
                       onClick=${() => handleSelectProposal(idx)}
                     >
-                      <div class="hstack" style="gap:0.5rem">
+                      <div class="hstack" style="gap:0.5rem;align-items:center">
+                        <span class="chip outline" style="font-size:0.75rem">${p.match_field.replace(/_/g, " ")}</span>
                         <code style="font-size:0.85rem">${p.match_pattern}</code>
                       </div>
                       <p class="text-light" style="margin:0.25rem 0 0;font-size:0.85rem">${p.explanation}</p>
@@ -1617,8 +1617,7 @@ function Rules() {
 
   const emptyForm = {
     rule_type: "categorization",
-    match_field: "merchant",
-    match_pattern: "",
+    conditions: [{ field: "merchant", pattern: "" }],
     target_category_id: "",
     target_correlation_type: "",
     priority: 0,
@@ -1649,8 +1648,10 @@ function Rules() {
     setEditingId(rule.id);
     setForm({
       rule_type: rule.rule_type,
-      match_field: rule.match_field,
-      match_pattern: rule.match_pattern,
+      conditions: rule.conditions.map((c) => ({
+        field: c.field,
+        pattern: c.pattern,
+      })),
       target_category_id: rule.target_category_id ?? "",
       target_correlation_type: rule.target_correlation_type ?? "",
       priority: rule.priority,
@@ -1668,8 +1669,7 @@ function Rules() {
     setSaving(true);
     const body = {
       rule_type: form.rule_type,
-      match_field: form.match_field,
-      match_pattern: form.match_pattern,
+      conditions: form.conditions,
       target_category_id: form.target_category_id || null,
       target_correlation_type: form.target_correlation_type || null,
       priority: Number(form.priority),
@@ -1746,6 +1746,29 @@ function Rules() {
     return rule.target_correlation_type ?? "none";
   }
 
+  function setCondition(idx, key, value) {
+    setForm((prev) => {
+      const conditions = prev.conditions.map((c, i) =>
+        i === idx ? { ...c, [key]: value } : c,
+      );
+      return { ...prev, conditions };
+    });
+  }
+
+  function addCondition() {
+    setForm((prev) => ({
+      ...prev,
+      conditions: [...prev.conditions, { field: "merchant", pattern: "" }],
+    }));
+  }
+
+  function removeCondition(idx) {
+    setForm((prev) => ({
+      ...prev,
+      conditions: prev.conditions.filter((_, i) => i !== idx),
+    }));
+  }
+
   function renderFormFields() {
     return html`
       <select
@@ -1755,25 +1778,41 @@ function Rules() {
         <option value="categorization">Categorization</option>
         <option value="correlation">Correlation</option>
       </select>
-      <select
-        value=${form.match_field}
-        onInput=${(e) => setField("match_field", e.target.value)}
-      >
-        <option value="merchant">Merchant</option>
-        <option value="description">Description</option>
-        <option value="amount_range">Amount Range</option>
-        <option value="counterparty_name">Counterparty Name</option>
-        <option value="counterparty_iban">Counterparty IBAN</option>
-        <option value="counterparty_bic">Counterparty BIC</option>
-        <option value="bank_transaction_code">Bank Transaction Code</option>
-      </select>
-      <input
-        type="text"
-        placeholder=${form.match_field === "amount_range" ? "e.g. 50..200, >100, <=50" : "Pattern"}
-        value=${form.match_pattern}
-        onInput=${(e) => setField("match_pattern", e.target.value)}
-        required
-      />
+      <div class="vstack gap-xs" style="flex:1">
+        ${form.conditions.map(
+          (cond, idx) => html`
+            <div class="hstack gap-xs" key=${idx}>
+              <select
+                value=${cond.field}
+                onInput=${(e) => setCondition(idx, "field", e.target.value)}
+              >
+                <option value="merchant">Merchant</option>
+                <option value="description">Description</option>
+                <option value="amount_range">Amount Range</option>
+                <option value="counterparty_name">Counterparty Name</option>
+                <option value="counterparty_iban">Counterparty IBAN</option>
+                <option value="counterparty_bic">Counterparty BIC</option>
+                <option value="bank_transaction_code">Bank Transaction Code</option>
+              </select>
+              <input
+                type="text"
+                placeholder=${cond.field === "amount_range" ? "e.g. 50..200, >100, <=50" : "Pattern"}
+                value=${cond.pattern}
+                onInput=${(e) => setCondition(idx, "pattern", e.target.value)}
+                required
+                style="flex:1"
+              />
+              ${
+                form.conditions.length > 1 &&
+                html`
+                <button type="button" class="small" data-variant="danger" onClick=${() => removeCondition(idx)} title="Remove condition">&times;</button>
+              `
+              }
+            </div>
+          `,
+        )}
+        <button type="button" class="small" onClick=${addCondition} style="align-self:start">+ Add condition</button>
+      </div>
       ${
         form.rule_type === "categorization"
           ? html`<select
@@ -1829,8 +1868,13 @@ function Rules() {
             <span class="chip outline ${rule.rule_type === "categorization" ? "success" : ""}"
               >${rule.rule_type}</span
             >
-            <span class="text-light">${fieldLabel(rule.match_field)}</span>
-            <code class="">${rule.match_pattern}</code>
+            ${rule.conditions.map(
+              (c, i) => html`
+                ${i > 0 && html`<span class="text-light" style="font-size:0.75rem">AND</span>`}
+                <span class="text-light">${fieldLabel(c.field)}</span>
+                <code>${c.pattern}</code>
+              `,
+            )}
             <span class="text-light">\u2192</span>
             <span>${ruleTarget(rule)}</span>
           </div>
@@ -1952,7 +1996,7 @@ function AccountNickname({ account, onRenamed }) {
           }}
           disabled=${saving}
           style="width:14rem"
-          ref=${(el) => el && el.focus()}
+          ref=${(el) => el?.focus()}
         />
         <button class="small" onClick=${save} disabled=${saving}>Save</button>
         <button class="small" onClick=${() => {

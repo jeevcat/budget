@@ -3,20 +3,25 @@ use rust_decimal::Decimal;
 
 use crate::error::Error;
 use crate::models::{
-    CategoryId, CorrelationType, MatchField, Rule, RuleType, Transaction, TransactionId,
+    CategoryId, CorrelationType, MatchField, Rule, RuleCondition, RuleType, Transaction,
+    TransactionId,
 };
 
-/// A rule with its match pattern pre-compiled for efficient repeated evaluation.
+/// A single compiled condition within a rule.
 #[derive(Debug)]
-pub struct CompiledRule {
-    /// The original rule definition (cloned because `Rule` contains `String` fields
-    /// and must outlive the borrow used to compile it).
-    pub rule: Rule,
-    /// The compiled form of `rule.match_pattern`.
+pub struct CompiledCondition {
+    pub field: MatchField,
     pub pattern: CompiledPattern,
 }
 
-/// The compiled representation of a rule's match pattern.
+/// A rule with all its conditions pre-compiled for efficient repeated evaluation.
+#[derive(Debug)]
+pub struct CompiledRule {
+    pub rule: Rule,
+    pub conditions: Vec<CompiledCondition>,
+}
+
+/// The compiled representation of a rule condition's match pattern.
 #[derive(Debug)]
 pub enum CompiledPattern {
     /// A case-insensitive regular expression for text field matching.
@@ -30,35 +35,44 @@ pub enum CompiledPattern {
     },
 }
 
-/// Pre-compile a rule's match pattern for efficient repeated evaluation.
-///
-/// For `Merchant` or `Description` fields, the pattern is compiled as a
-/// case-insensitive regular expression. For `AmountRange`, the pattern is
-/// parsed as `"min..max"` where both bounds are decimal numbers.
+/// Pre-compile all conditions in a rule for efficient repeated evaluation.
 ///
 /// # Errors
 ///
-/// Returns `Error::InvalidRulePattern` if the regex fails to compile or the
-/// amount range format is invalid.
-pub fn compile_rule_pattern(rule: &Rule) -> Result<CompiledRule, Error> {
-    let pattern = match rule.match_field {
+/// Returns `Error::InvalidRulePattern` if any condition's regex fails to
+/// compile or an amount range format is invalid.
+pub fn compile_rule(rule: &Rule) -> Result<CompiledRule, Error> {
+    let conditions = rule
+        .conditions
+        .iter()
+        .map(compile_condition)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(CompiledRule {
+        rule: rule.clone(),
+        conditions,
+    })
+}
+
+fn compile_condition(condition: &RuleCondition) -> Result<CompiledCondition, Error> {
+    let pattern = match condition.field {
         MatchField::Merchant
         | MatchField::Description
         | MatchField::CounterpartyName
         | MatchField::CounterpartyIban
         | MatchField::CounterpartyBic
         | MatchField::BankTransactionCode => {
-            let regex = RegexBuilder::new(&rule.match_pattern)
+            let regex = RegexBuilder::new(&condition.pattern)
                 .case_insensitive(true)
                 .build()
                 .map_err(|e| Error::InvalidRulePattern(e.to_string()))?;
             CompiledPattern::Regex(regex)
         }
-        MatchField::AmountRange => parse_amount_range(&rule.match_pattern)?,
+        MatchField::AmountRange => parse_amount_range(&condition.pattern)?,
     };
 
-    Ok(CompiledRule {
-        rule: rule.clone(),
+    Ok(CompiledCondition {
+        field: condition.field,
         pattern,
     })
 }
@@ -111,12 +125,17 @@ pub fn evaluate_correlation_rules(
     None
 }
 
-/// Check whether a transaction matches a compiled rule's pattern.
-///
-/// Returns `false` for mismatched pattern/field combinations (e.g. an
-/// `AmountRange` pattern paired with a `Merchant` field).
+/// Check whether a transaction matches all conditions of a compiled rule (AND semantics).
 fn matches_rule(transaction: &Transaction, compiled: &CompiledRule) -> bool {
-    match (&compiled.pattern, compiled.rule.match_field) {
+    compiled
+        .conditions
+        .iter()
+        .all(|cond| matches_condition(transaction, cond))
+}
+
+/// Check whether a transaction matches a single compiled condition.
+fn matches_condition(transaction: &Transaction, condition: &CompiledCondition) -> bool {
+    match (&condition.pattern, condition.field) {
         (CompiledPattern::Regex(regex), MatchField::Merchant) => {
             regex.is_match(&transaction.merchant_name)
         }
@@ -171,7 +190,6 @@ fn matches_rule(transaction: &Transaction, compiled: &CompiledRule) -> bool {
             };
             above_min && below_max
         }
-        // Mismatched pattern/field combinations never match
         _ => false,
     }
 }
@@ -276,8 +294,7 @@ mod tests {
 
     fn make_rule(
         rule_type: RuleType,
-        match_field: MatchField,
-        match_pattern: &str,
+        conditions: Vec<(MatchField, &str)>,
         target_category_id: Option<CategoryId>,
         target_correlation_type: Option<CorrelationType>,
         priority: i32,
@@ -285,8 +302,13 @@ mod tests {
         Rule {
             id: RuleId::new(),
             rule_type,
-            match_field,
-            match_pattern: match_pattern.to_owned(),
+            conditions: conditions
+                .into_iter()
+                .map(|(field, pattern)| RuleCondition {
+                    field,
+                    pattern: pattern.to_owned(),
+                })
+                .collect(),
             target_category_id,
             target_correlation_type,
             priority,
@@ -320,18 +342,18 @@ mod tests {
     fn compile_valid_regex_rule() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"^starbucks",
+            vec![(MatchField::Merchant, r"^starbucks")],
             Some(CategoryId::new()),
             None,
             10,
         );
 
-        let compiled = compile_rule_pattern(&rule);
+        let compiled = compile_rule(&rule);
         assert!(compiled.is_ok());
+        assert_eq!(compiled.as_ref().unwrap().conditions.len(), 1);
         assert!(matches!(
-            compiled.as_ref().map(|c| &c.pattern),
-            Ok(CompiledPattern::Regex(_))
+            &compiled.as_ref().unwrap().conditions[0].pattern,
+            CompiledPattern::Regex(_)
         ));
     }
 
@@ -339,14 +361,13 @@ mod tests {
     fn compile_invalid_regex_returns_error() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"[invalid(",
+            vec![(MatchField::Merchant, r"[invalid(")],
             Some(CategoryId::new()),
             None,
             10,
         );
 
-        let result = compile_rule_pattern(&rule);
+        let result = compile_rule(&rule);
         assert!(result.is_err());
     }
 
@@ -354,18 +375,17 @@ mod tests {
     fn compile_amount_range_rule() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            "100.00..500.00",
+            vec![(MatchField::AmountRange, "100.00..500.00")],
             Some(CategoryId::new()),
             None,
             5,
         );
 
-        let compiled = compile_rule_pattern(&rule);
+        let compiled = compile_rule(&rule);
         assert!(compiled.is_ok());
 
         let compiled = compiled.unwrap();
-        match &compiled.pattern {
+        match &compiled.conditions[0].pattern {
             CompiledPattern::AmountRange {
                 min,
                 max,
@@ -385,14 +405,13 @@ mod tests {
     fn invalid_amount_range_returns_error() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            "not_a_range",
+            vec![(MatchField::AmountRange, "not_a_range")],
             Some(CategoryId::new()),
             None,
             5,
         );
 
-        let result = compile_rule_pattern(&rule);
+        let result = compile_rule(&rule);
         assert!(result.is_err());
     }
 
@@ -401,29 +420,25 @@ mod tests {
         let cat_coffee = CategoryId::new();
         let cat_food = CategoryId::new();
 
-        // Higher priority rule (sorted first by caller)
         let rule_high = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"starbucks",
+            vec![(MatchField::Merchant, r"starbucks")],
             Some(cat_coffee),
             None,
             100,
         );
 
-        // Lower priority rule
         let rule_low = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"star",
+            vec![(MatchField::Merchant, r"star")],
             Some(cat_food),
             None,
             10,
         );
 
         let compiled = vec![
-            compile_rule_pattern(&rule_high).unwrap(),
-            compile_rule_pattern(&rule_low).unwrap(),
+            compile_rule(&rule_high).unwrap(),
+            compile_rule(&rule_low).unwrap(),
         ];
 
         let txn = make_txn("Starbucks Reserve", "Coffee purchase", dec!(5.50));
@@ -436,14 +451,13 @@ mod tests {
     fn categorization_no_match_returns_none() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"walmart",
+            vec![(MatchField::Merchant, r"walmart")],
             Some(CategoryId::new()),
             None,
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Target", "Household items", dec!(42.00));
 
@@ -456,41 +470,35 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            "50.00..200.00",
+            vec![(MatchField::AmountRange, "50.00..200.00")],
             Some(cat_id),
             None,
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
-        // Within range
         let txn_in = make_txn("Any", "desc", dec!(100.00));
         assert_eq!(
             evaluate_categorization_rules(&txn_in, &compiled),
             Some(cat_id)
         );
 
-        // At lower bound (inclusive)
         let txn_min = make_txn("Any", "desc", dec!(50.00));
         assert_eq!(
             evaluate_categorization_rules(&txn_min, &compiled),
             Some(cat_id)
         );
 
-        // At upper bound (inclusive)
         let txn_max = make_txn("Any", "desc", dec!(200.00));
         assert_eq!(
             evaluate_categorization_rules(&txn_max, &compiled),
             Some(cat_id)
         );
 
-        // Below range
         let txn_below = make_txn("Any", "desc", dec!(49.99));
         assert_eq!(evaluate_categorization_rules(&txn_below, &compiled), None);
 
-        // Above range
         let txn_above = make_txn("Any", "desc", dec!(200.01));
         assert_eq!(evaluate_categorization_rules(&txn_above, &compiled), None);
     }
@@ -499,14 +507,13 @@ mod tests {
     fn correlation_rule_evaluation() {
         let rule = make_rule(
             RuleType::Correlation,
-            MatchField::Merchant,
-            r"venmo",
+            vec![(MatchField::Merchant, r"venmo")],
             None,
             Some(CorrelationType::Transfer),
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Bank Transfer", "Outgoing", dec!(-500.00));
         let candidate = make_txn("Venmo", "Payment received", dec!(500.00));
@@ -520,14 +527,13 @@ mod tests {
     fn correlation_skips_rules_without_correlation_type() {
         let rule = make_rule(
             RuleType::Correlation,
-            MatchField::Merchant,
-            r"venmo",
+            vec![(MatchField::Merchant, r"venmo")],
             None,
-            None, // no correlation type set
+            None,
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Bank Transfer", "Outgoing", dec!(-500.00));
         let candidate = make_txn("Venmo", "Payment received", dec!(500.00));
@@ -540,14 +546,13 @@ mod tests {
     fn correlation_no_match_returns_none() {
         let rule = make_rule(
             RuleType::Correlation,
-            MatchField::Merchant,
-            r"venmo",
+            vec![(MatchField::Merchant, r"venmo")],
             None,
             Some(CorrelationType::Transfer),
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Bank Transfer", "Outgoing", dec!(-500.00));
         let candidate = make_txn("PayPal", "Refund", dec!(500.00));
@@ -561,14 +566,13 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::Merchant,
-            r"starbucks",
+            vec![(MatchField::Merchant, r"starbucks")],
             Some(cat_id),
             None,
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("STARBUCKS", "Coffee", dec!(5.00));
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
@@ -579,14 +583,13 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::Description,
-            r"grocery",
+            vec![(MatchField::Description, r"grocery")],
             Some(cat_id),
             None,
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Local Store", "Weekly grocery shopping", dec!(85.00));
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
@@ -596,17 +599,15 @@ mod tests {
     fn categorization_rules_skip_correlation_type() {
         let rule = make_rule(
             RuleType::Correlation,
-            MatchField::Merchant,
-            r"anything",
+            vec![(MatchField::Merchant, r"anything")],
             Some(CategoryId::new()),
             Some(CorrelationType::Transfer),
             10,
         );
 
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("anything", "desc", dec!(10.00));
-        // Should return None because the rule is Correlation, not Categorization
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), None);
     }
 
@@ -615,13 +616,12 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::CounterpartyName,
-            r"landlord",
+            vec![(MatchField::CounterpartyName, r"landlord")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(1000.00));
         txn.counterparty_name = Some("My Landlord Inc".to_owned());
@@ -632,13 +632,12 @@ mod tests {
     fn counterparty_name_none_never_matches() {
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::CounterpartyName,
-            r"landlord",
+            vec![(MatchField::CounterpartyName, r"landlord")],
             Some(CategoryId::new()),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn = make_txn("Any", "desc", dec!(1000.00));
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), None);
@@ -649,19 +648,17 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::CounterpartyIban,
-            r"^FI\d+",
+            vec![(MatchField::CounterpartyIban, r"^FI\d+")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(50.00));
         txn.counterparty_iban = Some("FI1234567890".to_owned());
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
 
-        // None never matches
         let txn_none = make_txn("Any", "desc", dec!(50.00));
         assert_eq!(evaluate_categorization_rules(&txn_none, &compiled), None);
     }
@@ -671,13 +668,12 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::CounterpartyBic,
-            r"NDEAFIHH",
+            vec![(MatchField::CounterpartyBic, r"NDEAFIHH")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(50.00));
         txn.counterparty_bic = Some("NDEAFIHH".to_owned());
@@ -689,19 +685,17 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::BankTransactionCode,
-            r"PMNT-ICDT-STDO",
+            vec![(MatchField::BankTransactionCode, r"PMNT-ICDT-STDO")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(50.00));
         txn.bank_transaction_code = Some("PMNT-ICDT-STDO".to_owned());
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
 
-        // None never matches
         let txn_none = make_txn("Any", "desc", dec!(50.00));
         assert_eq!(evaluate_categorization_rules(&txn_none, &compiled), None);
     }
@@ -711,19 +705,16 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            ">100",
+            vec![(MatchField::AmountRange, ">100")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
-        // Exactly 100 should NOT match (strict >)
         let txn_eq = make_txn("Any", "desc", dec!(100));
         assert_eq!(evaluate_categorization_rules(&txn_eq, &compiled), None);
 
-        // Above 100 should match
         let txn_above = make_txn("Any", "desc", dec!(100.01));
         assert_eq!(
             evaluate_categorization_rules(&txn_above, &compiled),
@@ -736,13 +727,12 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            ">=100",
+            vec![(MatchField::AmountRange, ">=100")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn_eq = make_txn("Any", "desc", dec!(100));
         assert_eq!(
@@ -759,19 +749,16 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            "<50",
+            vec![(MatchField::AmountRange, "<50")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
-        // Exactly 50 should NOT match (strict <)
         let txn_eq = make_txn("Any", "desc", dec!(50));
         assert_eq!(evaluate_categorization_rules(&txn_eq, &compiled), None);
 
-        // Below 50 should match
         let txn_below = make_txn("Any", "desc", dec!(49.99));
         assert_eq!(
             evaluate_categorization_rules(&txn_below, &compiled),
@@ -784,13 +771,12 @@ mod tests {
         let cat_id = CategoryId::new();
         let rule = make_rule(
             RuleType::Categorization,
-            MatchField::AmountRange,
-            "<=50",
+            vec![(MatchField::AmountRange, "<=50")],
             Some(cat_id),
             None,
             10,
         );
-        let compiled = vec![compile_rule_pattern(&rule).unwrap()];
+        let compiled = vec![compile_rule(&rule).unwrap()];
 
         let txn_eq = make_txn("Any", "desc", dec!(50));
         assert_eq!(
@@ -800,5 +786,42 @@ mod tests {
 
         let txn_above = make_txn("Any", "desc", dec!(50.01));
         assert_eq!(evaluate_categorization_rules(&txn_above, &compiled), None);
+    }
+
+    #[test]
+    fn multi_condition_and_semantics() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            vec![
+                (MatchField::Merchant, r"starbucks"),
+                (MatchField::AmountRange, "<-5"),
+            ],
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule(&rule).unwrap()];
+
+        // Matches both: merchant AND amount < -5
+        let txn_both = make_txn("Starbucks", "Coffee", dec!(-10.00));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_both, &compiled),
+            Some(cat_id)
+        );
+
+        // Merchant matches but amount does not
+        let txn_wrong_amount = make_txn("Starbucks", "Coffee", dec!(-3.00));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_wrong_amount, &compiled),
+            None
+        );
+
+        // Amount matches but merchant does not
+        let txn_wrong_merchant = make_txn("Peets Coffee", "Coffee", dec!(-10.00));
+        assert_eq!(
+            evaluate_categorization_rules(&txn_wrong_merchant, &compiled),
+            None
+        );
     }
 }

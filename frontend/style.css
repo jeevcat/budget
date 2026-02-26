@@ -209,6 +209,12 @@
   color: var(--kw-oni-violet);
 }
 
+/* Scrollable dialog body when content overflows viewport */
+dialog > form > div {
+  overflow-y: auto;
+  max-height: 60vh;
+}
+
 .txn-dl {
   display: grid;
   grid-template-columns: auto 1fr;

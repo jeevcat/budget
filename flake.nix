@@ -215,6 +215,11 @@
           packages.default = budget;
 
           checks.default = budget;
+
+          devShells.default = craneLib.devShell {
+            inputsFrom = [ budget ];
+            env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
+          };
         }
       )
     )
