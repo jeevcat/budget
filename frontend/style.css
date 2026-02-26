@@ -1,18 +1,18 @@
 /* Kanagawa Wave palette */
 :root {
   --kw-sumi-ink2: #1a1a22;
-  --kw-sumi-ink3: #1F1F28;
-  --kw-sumi-ink4: #2A2A37;
+  --kw-sumi-ink3: #1f1f28;
+  --kw-sumi-ink4: #2a2a37;
   --kw-sumi-ink5: #363646;
-  --kw-sumi-ink6: #54546D;
-  --kw-fuji-white: #DCD7BA;
+  --kw-sumi-ink6: #54546d;
+  --kw-fuji-white: #dcd7ba;
   --kw-fuji-gray: #727169;
-  --kw-crystal-blue: #7E9CD8;
-  --kw-oni-violet: #957FB8;
-  --kw-spring-violet2: #9CABCA;
-  --kw-autumn-green: #76946A;
-  --kw-autumn-red: #C34043;
-  --kw-autumn-yellow: #DCA561;
+  --kw-crystal-blue: #7e9cd8;
+  --kw-oni-violet: #957fb8;
+  --kw-spring-violet2: #9cabca;
+  --kw-autumn-green: #76946a;
+  --kw-autumn-red: #c34043;
+  --kw-autumn-yellow: #dca561;
 }
 
 /* Map Kanagawa onto Oat semantic tokens */
