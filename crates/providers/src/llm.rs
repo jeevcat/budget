@@ -70,6 +70,7 @@ pub trait LlmProvider {
         amount: Decimal,
         description: Option<&str>,
         existing_categories: &[String],
+        bank_transaction_code: Option<&str>,
     ) -> Result<CategorizeResult, ProviderError>;
 
     async fn propose_correlation(

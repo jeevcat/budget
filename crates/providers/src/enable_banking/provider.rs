@@ -232,6 +232,11 @@ fn convert_transaction(api: &ApiTransaction) -> Result<Option<Transaction>, Prov
     };
 
     let (original_amount, original_currency) = extract_fx(api);
+    let (counterparty_iban, counterparty_bic) = extract_counterparty_bank(api);
+    let bank_transaction_code = api
+        .bank_transaction_code
+        .as_ref()
+        .and_then(|b| b.description.clone());
 
     Ok(Some(Transaction {
         provider_transaction_id: id,
@@ -241,6 +246,9 @@ fn convert_transaction(api: &ApiTransaction) -> Result<Option<Transaction>, Prov
         description,
         posted_date,
         counterparty_name,
+        counterparty_iban,
+        counterparty_bic,
+        bank_transaction_code,
         merchant_category_code: api.merchant_category_code.clone(),
         original_amount,
         original_currency,
@@ -270,6 +278,26 @@ fn extract_names(api: &ApiTransaction) -> (String, Option<String>) {
     (merchant_name, counterparty)
 }
 
+/// For debits, the creditor is the merchant; for credits, the debtor is the sender.
+/// Extract the counterparty's IBAN and BIC accordingly.
+fn extract_counterparty_bank(api: &ApiTransaction) -> (Option<String>, Option<String>) {
+    let is_debit = api.credit_debit_indicator == "DBIT";
+
+    let iban = if is_debit {
+        api.creditor_account.as_ref().and_then(|a| a.iban.clone())
+    } else {
+        api.debtor_account.as_ref().and_then(|a| a.iban.clone())
+    };
+
+    let bic = if is_debit {
+        api.creditor_agent.as_ref().and_then(|a| a.bic_fi.clone())
+    } else {
+        api.debtor_agent.as_ref().and_then(|a| a.bic_fi.clone())
+    };
+
+    (iban, bic)
+}
+
 fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
     let instructed = api
         .exchange_rate
@@ -285,7 +313,10 @@ fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enable_banking::types::{Amount, ExchangeRate, PartyIdentification};
+    use crate::enable_banking::types::{
+        AccountIdentificationTxn, AgentIdentification, Amount, BankTransactionCode, ExchangeRate,
+        PartyIdentification,
+    };
     use rust_decimal_macros::dec;
 
     fn base_api_txn() -> ApiTransaction {
@@ -308,6 +339,11 @@ mod tests {
             debtor: None,
             merchant_category_code: Some("5411".to_owned()),
             exchange_rate: None,
+            creditor_account: None,
+            debtor_account: None,
+            creditor_agent: None,
+            debtor_agent: None,
+            bank_transaction_code: None,
         }
     }
 
@@ -436,6 +472,57 @@ mod tests {
         let txn = convert_transaction(&api).unwrap().unwrap();
         assert_eq!(txn.merchant_name, "Employer");
         assert_eq!(txn.counterparty_name.as_deref(), Some("Me"));
+    }
+
+    #[test]
+    fn debit_counterparty_iban_bic_from_creditor() {
+        let mut api = base_api_txn();
+        api.creditor_account = Some(AccountIdentificationTxn {
+            iban: Some("DE89370400440532013000".to_owned()),
+        });
+        api.creditor_agent = Some(AgentIdentification {
+            bic_fi: Some("COBADEFFXXX".to_owned()),
+        });
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(
+            txn.counterparty_iban.as_deref(),
+            Some("DE89370400440532013000")
+        );
+        assert_eq!(txn.counterparty_bic.as_deref(), Some("COBADEFFXXX"));
+    }
+
+    #[test]
+    fn credit_counterparty_iban_bic_from_debtor() {
+        let mut api = base_api_txn();
+        api.credit_debit_indicator = "CRDT".to_owned();
+        api.debtor = Some(PartyIdentification {
+            name: Some("Employer".to_owned()),
+        });
+        api.debtor_account = Some(AccountIdentificationTxn {
+            iban: Some("DE02120300000000202051".to_owned()),
+        });
+        api.debtor_agent = Some(AgentIdentification {
+            bic_fi: Some("BYLADEM1001".to_owned()),
+        });
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(
+            txn.counterparty_iban.as_deref(),
+            Some("DE02120300000000202051")
+        );
+        assert_eq!(txn.counterparty_bic.as_deref(), Some("BYLADEM1001"));
+    }
+
+    #[test]
+    fn bank_transaction_code_extracted() {
+        let mut api = base_api_txn();
+        api.bank_transaction_code = Some(BankTransactionCode {
+            description: Some("Gehalt/Rente".to_owned()),
+        });
+
+        let txn = convert_transaction(&api).unwrap().unwrap();
+        assert_eq!(txn.bank_transaction_code.as_deref(), Some("Gehalt/Rente"));
     }
 
     #[test]

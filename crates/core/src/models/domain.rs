@@ -57,6 +57,10 @@ pub struct Transaction {
     pub correlation_type: Option<CorrelationType>,
     pub category_method: Option<CategoryMethod>,
     pub suggested_category: Option<String>,
+    pub counterparty_name: Option<String>,
+    pub counterparty_iban: Option<String>,
+    pub counterparty_bic: Option<String>,
+    pub bank_transaction_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

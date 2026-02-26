@@ -112,9 +112,14 @@ impl LlmProvider for GeminiProvider {
         amount: Decimal,
         description: Option<&str>,
         existing_categories: &[String],
+        bank_transaction_code: Option<&str>,
     ) -> Result<CategorizeResult, ProviderError> {
         let desc_line = description
             .map(|d| format!("Description: {d}\n"))
+            .unwrap_or_default();
+
+        let btc_line = bank_transaction_code
+            .map(|b| format!("Bank classification: {b}\n"))
             .unwrap_or_default();
 
         let categories_block = if existing_categories.is_empty() {
@@ -152,7 +157,7 @@ If you are unsure, use a low confidence score. Do not guess wildly.
 Transaction:
 Merchant: {merchant_name}
 Amount: {amount}
-{desc_line}
+{desc_line}{btc_line}
 JSON response:"#
         );
 
@@ -428,6 +433,7 @@ mod tests {
                 dec!(72.34),
                 Some("Weekly groceries"),
                 &[],
+                None,
             )
             .await
             .unwrap();
@@ -450,7 +456,7 @@ mod tests {
             .await;
 
         let result = provider
-            .categorize("AMAZON", dec!(25.00), None, &[])
+            .categorize("AMAZON", dec!(25.00), None, &[], None)
             .await
             .unwrap();
         assert!((result.confidence - 1.0).abs() < f64::EPSILON);
@@ -558,7 +564,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
+        let result = provider
+            .categorize("TEST", dec!(10.00), None, &[], None)
+            .await;
         assert!(matches!(
             result,
             Err(ProviderError::AuthenticationFailed(_))
@@ -575,7 +583,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
+        let result = provider
+            .categorize("TEST", dec!(10.00), None, &[], None)
+            .await;
         assert!(matches!(result, Err(ProviderError::RateLimited)));
     }
 
@@ -589,7 +599,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
+        let result = provider
+            .categorize("TEST", dec!(10.00), None, &[], None)
+            .await;
         assert!(matches!(result, Err(ProviderError::ApiError { .. })));
     }
 
@@ -605,7 +617,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
+        let result = provider
+            .categorize("TEST", dec!(10.00), None, &[], None)
+            .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
 
@@ -622,7 +636,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = provider.categorize("TEST", dec!(10.00), None, &[]).await;
+        let result = provider
+            .categorize("TEST", dec!(10.00), None, &[], None)
+            .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
     }
 }
@@ -657,6 +673,7 @@ mod live_tests {
                 dec!(87.43),
                 Some("Groceries"),
                 &[],
+                None,
             )
             .await
             .unwrap();
@@ -684,6 +701,7 @@ mod live_tests {
                 dec!(15.99),
                 Some("Monthly subscription"),
                 &[],
+                None,
             )
             .await
             .unwrap();

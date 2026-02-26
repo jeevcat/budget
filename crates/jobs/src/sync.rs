@@ -105,6 +105,10 @@ pub(crate) async fn sync_account(
             correlation_type: None,
             category_method: None,
             suggested_category: None,
+            counterparty_name: ptxn.counterparty_name.clone(),
+            counterparty_iban: ptxn.counterparty_iban.clone(),
+            counterparty_bic: ptxn.counterparty_bic.clone(),
+            bank_transaction_code: ptxn.bank_transaction_code.clone(),
         };
 
         if let Err(e) = db

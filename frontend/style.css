@@ -1,3 +1,47 @@
+/* Kanagawa Wave palette */
+:root {
+  --kw-sumi-ink2: #1a1a22;
+  --kw-sumi-ink3: #1F1F28;
+  --kw-sumi-ink4: #2A2A37;
+  --kw-sumi-ink5: #363646;
+  --kw-sumi-ink6: #54546D;
+  --kw-fuji-white: #DCD7BA;
+  --kw-fuji-gray: #727169;
+  --kw-crystal-blue: #7E9CD8;
+  --kw-oni-violet: #957FB8;
+  --kw-spring-violet2: #9CABCA;
+  --kw-autumn-green: #76946A;
+  --kw-autumn-red: #C34043;
+  --kw-autumn-yellow: #DCA561;
+}
+
+/* Map Kanagawa onto Oat semantic tokens */
+:root {
+  --background: var(--kw-sumi-ink3);
+  --foreground: var(--kw-fuji-white);
+  --card: var(--kw-sumi-ink4);
+  --card-foreground: var(--kw-fuji-white);
+  --primary: var(--kw-crystal-blue);
+  --primary-foreground: var(--kw-sumi-ink3);
+  --secondary: var(--kw-sumi-ink5);
+  --secondary-foreground: var(--kw-fuji-white);
+  --muted: var(--kw-sumi-ink4);
+  --muted-foreground: var(--kw-fuji-gray);
+  --faint: var(--kw-sumi-ink2);
+  --faint-foreground: var(--kw-sumi-ink6);
+  --accent: var(--kw-sumi-ink5);
+  --accent-foreground: var(--kw-fuji-white);
+  --danger: var(--kw-autumn-red);
+  --danger-foreground: var(--kw-fuji-white);
+  --success: var(--kw-autumn-green);
+  --success-foreground: var(--kw-sumi-ink3);
+  --warning: var(--kw-autumn-yellow);
+  --warning-foreground: var(--kw-sumi-ink3);
+  --border: var(--kw-sumi-ink5);
+  --input: var(--kw-sumi-ink5);
+  --ring: var(--kw-crystal-blue);
+}
+
 /* Overrides on top of oat — check frontend/oat-reference.md before adding */
 
 .main {
@@ -131,7 +175,7 @@
   background: var(--success);
 }
 .method-llm {
-  background: var(--warning);
+  background: var(--kw-spring-violet2);
 }
 
 /* LLM suggestion (uncategorized with AI suggestion) */
@@ -143,7 +187,7 @@
   font-style: italic;
 }
 .llm-suggestion-icon {
-  color: var(--warning);
+  color: var(--kw-oni-violet);
 }
 
 .txn-dl {

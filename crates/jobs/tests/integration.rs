@@ -124,6 +124,10 @@ async fn seed_transaction(
         correlation_type: None,
         category_method: None,
         suggested_category: None,
+        counterparty_name: None,
+        counterparty_iban: None,
+        counterparty_bic: None,
+        bank_transaction_code: None,
     };
     db.upsert_transaction(&txn, None)
         .await

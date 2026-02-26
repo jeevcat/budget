@@ -154,6 +154,10 @@ fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Tr
         correlation_type: None,
         category_method: None,
         suggested_category: None,
+        counterparty_name: None,
+        counterparty_iban: None,
+        counterparty_bic: None,
+        bank_transaction_code: None,
     }
 }
 
@@ -187,6 +191,10 @@ fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
         correlation_type: None,
         category_method: None,
         suggested_category: None,
+        counterparty_name: None,
+        counterparty_iban: None,
+        counterparty_bic: None,
+        bank_transaction_code: None,
     }
 }
 

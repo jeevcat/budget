@@ -303,9 +303,16 @@ impl LlmClient {
         amount: Decimal,
         description: Option<&str>,
         existing_categories: &[String],
+        bank_transaction_code: Option<&str>,
     ) -> Result<CategorizeResult, ProviderError> {
         self.inner
-            .categorize_erased(merchant_name, amount, description, existing_categories)
+            .categorize_erased(
+                merchant_name,
+                amount,
+                description,
+                existing_categories,
+                bank_transaction_code,
+            )
             .await
     }
 
@@ -345,6 +352,7 @@ trait ErasedLlmProvider {
         amount: Decimal,
         description: Option<&'a str>,
         existing_categories: &'a [String],
+        bank_transaction_code: Option<&'a str>,
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>>;
 
     fn propose_correlation_erased<'a>(
@@ -366,8 +374,15 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
         amount: Decimal,
         description: Option<&'a str>,
         existing_categories: &'a [String],
+        bank_transaction_code: Option<&'a str>,
     ) -> BoxFuture<'a, Result<CategorizeResult, ProviderError>> {
-        Box::pin(self.categorize(merchant_name, amount, description, existing_categories))
+        Box::pin(self.categorize(
+            merchant_name,
+            amount,
+            description,
+            existing_categories,
+            bank_transaction_code,
+        ))
     }
 
     fn propose_correlation_erased<'a>(

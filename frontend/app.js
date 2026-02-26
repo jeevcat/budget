@@ -755,6 +755,34 @@ function TxnDetail({
             `
                 : null
             }
+            ${
+              txn.counterparty_name
+                ? html`
+              <dt>Counterparty</dt><dd>${txn.counterparty_name}</dd>
+            `
+                : null
+            }
+            ${
+              txn.counterparty_iban
+                ? html`
+              <dt>IBAN</dt><dd><code>${txn.counterparty_iban}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.counterparty_bic
+                ? html`
+              <dt>BIC</dt><dd><code>${txn.counterparty_bic}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.bank_transaction_code
+                ? html`
+              <dt>Bank code</dt><dd>${txn.bank_transaction_code}</dd>
+            `
+                : null
+            }
           </dl>
 
           ${

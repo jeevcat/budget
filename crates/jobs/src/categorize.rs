@@ -129,6 +129,7 @@ pub async fn handle_categorize_transaction_job(
             txn.amount,
             description,
             &existing_categories,
+            txn.bank_transaction_code.as_deref(),
         )
         .await?;
 

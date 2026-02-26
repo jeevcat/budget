@@ -114,6 +114,10 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
         category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
         suggested_category: row.try_get("suggested_category")?,
+        counterparty_name: row.try_get("counterparty_name")?,
+        counterparty_iban: row.try_get("counterparty_iban")?,
+        counterparty_bic: row.try_get("counterparty_bic")?,
+        bank_transaction_code: row.try_get("bank_transaction_code")?,
     })
 }
 
@@ -317,15 +321,20 @@ impl Db {
             "INSERT INTO transactions
                  (id, account_id, category_id, amount, original_amount, original_currency,
                   merchant_name, description, posted_date, budget_month_id,
-                  correlation_id, correlation_type, provider_transaction_id, suggested_category)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                  correlation_id, correlation_type, provider_transaction_id, suggested_category,
+                  counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
                  original_currency = excluded.original_currency,
                  merchant_name = excluded.merchant_name,
                  description = excluded.description,
-                 posted_date = excluded.posted_date",
+                 posted_date = excluded.posted_date,
+                 counterparty_name = excluded.counterparty_name,
+                 counterparty_iban = excluded.counterparty_iban,
+                 counterparty_bic = excluded.counterparty_bic,
+                 bank_transaction_code = excluded.bank_transaction_code",
         )
         .bind(txn.id.to_string())
         .bind(txn.account_id.to_string())
@@ -341,6 +350,10 @@ impl Db {
         .bind(txn.correlation_type.map(|ct| ct.to_string()))
         .bind(provider_transaction_id)
         .bind(txn.suggested_category.as_deref())
+        .bind(txn.counterparty_name.as_deref())
+        .bind(txn.counterparty_iban.as_deref())
+        .bind(txn.counterparty_bic.as_deref())
+        .bind(txn.bank_transaction_code.as_deref())
         .execute(pool)
         .await?;
         Ok(())
@@ -356,7 +369,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              ORDER BY posted_date DESC, merchant_name ASC",
         )
@@ -380,7 +394,8 @@ impl Db {
         let row = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE id = $1",
         )
@@ -404,7 +419,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE category_id IS NULL OR category_method = 'llm'",
         )
@@ -423,7 +439,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE category_id IS NULL",
         )
@@ -445,7 +462,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
         )
@@ -471,7 +489,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
@@ -675,7 +694,8 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date, budget_month_id,
-                    correlation_id, correlation_type, category_method, suggested_category
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
              WHERE account_id = $1",
         )
@@ -1223,6 +1243,10 @@ mod tests {
             correlation_type: None,
             category_method: None,
             suggested_category: None,
+            counterparty_name: None,
+            counterparty_iban: None,
+            counterparty_bic: None,
+            bank_transaction_code: None,
         }
     }
 

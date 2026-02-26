@@ -145,12 +145,40 @@ pub(crate) struct ApiTransaction {
     pub merchant_category_code: Option<String>,
     #[serde(default)]
     pub exchange_rate: Option<ExchangeRate>,
+    #[serde(default)]
+    pub creditor_account: Option<AccountIdentificationTxn>,
+    #[serde(default)]
+    pub debtor_account: Option<AccountIdentificationTxn>,
+    #[serde(default)]
+    pub creditor_agent: Option<AgentIdentification>,
+    #[serde(default)]
+    pub debtor_agent: Option<AgentIdentification>,
+    #[serde(default)]
+    pub bank_transaction_code: Option<BankTransactionCode>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct PartyIdentification {
     #[serde(default)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct AccountIdentificationTxn {
+    #[serde(default)]
+    pub iban: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct AgentIdentification {
+    #[serde(default)]
+    pub bic_fi: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct BankTransactionCode {
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

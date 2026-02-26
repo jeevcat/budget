@@ -121,6 +121,7 @@ impl LlmProvider for MockLlmProvider {
         _amount: Decimal,
         _description: Option<&str>,
         _existing_categories: &[String],
+        _bank_transaction_code: Option<&str>,
     ) -> Result<CategorizeResult, ProviderError> {
         let merchant_upper = merchant_name.to_uppercase();
 
@@ -219,6 +220,7 @@ mod tests {
                 dec!(72.34),
                 Some("Weekly groceries"),
                 &[],
+                None,
             )
             .await
             .unwrap();
@@ -230,7 +232,7 @@ mod tests {
     async fn categorize_restaurant() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("CHIPOTLE MEXICAN GRILL", dec!(42.50), None, &[])
+            .categorize("CHIPOTLE MEXICAN GRILL", dec!(42.50), None, &[], None)
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Restaurants");
@@ -246,6 +248,7 @@ mod tests {
                 dec!(15.99),
                 Some("Monthly subscription"),
                 &[],
+                None,
             )
             .await
             .unwrap();
@@ -257,7 +260,7 @@ mod tests {
     async fn categorize_unknown_merchant_returns_low_confidence() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("OBSCURE SHOP XYZ", dec!(25.00), None, &[])
+            .categorize("OBSCURE SHOP XYZ", dec!(25.00), None, &[], None)
             .await
             .unwrap();
         assert_eq!(result.category_name, "Uncategorized");
@@ -268,7 +271,7 @@ mod tests {
     async fn categorize_is_case_insensitive() {
         let provider = MockLlmProvider::new();
         let result = provider
-            .categorize("trader joes", dec!(58.12), None, &[])
+            .categorize("trader joes", dec!(58.12), None, &[], None)
             .await
             .unwrap();
         assert_eq!(result.category_name, "Food:Groceries");
