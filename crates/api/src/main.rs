@@ -224,7 +224,7 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             http::header::CACHE_CONTROL,
-            http::HeaderValue::from_static("public, max-age=86400, must-revalidate"),
+            http::HeaderValue::from_static("public, no-cache"),
         ))
         .service(static_files);
 
