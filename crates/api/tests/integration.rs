@@ -418,7 +418,7 @@ async fn transactions_categorize_success(pool: PgPool) {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify via DB that the category was set
     let updated_txns = db.list_transactions().await.expect("list");
