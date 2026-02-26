@@ -135,18 +135,16 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Run domain migrations (via `Db`), apalis migrations, and reset stale jobs.
-///
-/// Both migrators share the `_sqlx_migrations` table.  Each must tolerate
-/// the other's entries (`ignore_missing`) so that restarts and incremental
-/// migrations work on persistent databases.
 async fn run_migrations(
     db: &Db,
     apalis_pool: &ApalisPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Apalis migrations first — they create the apalis schema and tables.
-    // Domain migrations run second with ignore_missing so both coexist in
-    // the shared _sqlx_migrations table.
-    apalis_postgres::PostgresStorage::setup(apalis_pool).await?;
+    // Apalis and domain migrations share `_sqlx_migrations` (sqlx has no
+    // per-migrator table support — see sqlx#1698, apalis#439). Both must
+    // set `ignore_missing` so each tolerates the other's rows.
+    let mut apalis_migrator = apalis_postgres::PostgresStorage::migrations();
+    apalis_migrator.set_ignore_missing(true);
+    apalis_migrator.run(apalis_pool).await?;
 
     db.run_migrations().await?;
 
