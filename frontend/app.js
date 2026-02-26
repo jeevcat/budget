@@ -1691,7 +1691,7 @@ function Jobs() {
         <td>${timeAgo(s.last_run_at)}</td>
         <td>
           ${isOk && html`<span class="chip success">OK</span>`}
-          ${isFailed && html`<span class="chip danger">Failed</span>`}
+          ${isFailed && html`<span class="chip danger" title=${s.last_error || ""}>Failed</span>`}
           ${isRunning && html`<span class="chip outline">Running</span>`}
           ${!s.last_run_status && html`<span class="text-light">\u2014</span>`}
         </td>
