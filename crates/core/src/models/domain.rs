@@ -52,7 +52,6 @@ pub struct Transaction {
     pub merchant_name: String,
     pub description: String,
     pub posted_date: NaiveDate,
-    pub budget_month_id: Option<BudgetMonthId>,
     pub correlation_id: Option<TransactionId>,
     pub correlation_type: Option<CorrelationType>,
     pub category_method: Option<CategoryMethod>,

@@ -1,11 +1,29 @@
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
 use crate::error::Error;
 use crate::models::{
     BudgetMode, BudgetMonth, BudgetMonthId, BudgetStatus, Category, CategoryId, PaceIndicator,
     Transaction,
 };
+
+/// Derive a deterministic UUID from a start date so the same budget month
+/// always gets the same ID across requests.
+fn deterministic_month_id(start_date: NaiveDate) -> BudgetMonthId {
+    // Simple hash: XOR a fixed namespace with the date string bytes,
+    // then set version 4 and variant bits for a valid UUID.
+    let date_str = start_date.to_string();
+    let namespace: &[u8; 16] = b"budget-month-ns!";
+    let mut bytes = *namespace;
+    for (i, b) in date_str.as_bytes().iter().enumerate() {
+        bytes[i % 16] ^= b;
+    }
+    // Set version 4 (random) and variant 1 bits for a valid UUID
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    BudgetMonthId::from_uuid(Uuid::from_bytes(bytes))
+}
 
 /// Collect all descendant category IDs for a given category (including itself).
 fn collect_category_subtree(category_id: CategoryId, categories: &[Category]) -> Vec<CategoryId> {
@@ -150,7 +168,7 @@ pub fn detect_budget_month_boundaries(
             if let Some(&last_salary_date) = dates.iter().max() {
                 let detected: i32 = dates.len().try_into().unwrap_or(i32::MAX);
                 budget_months.push(BudgetMonth {
-                    id: BudgetMonthId::new(),
+                    id: deterministic_month_id(last_salary_date),
                     start_date: last_salary_date,
                     end_date: None,
                     salary_transactions_detected: detected,
@@ -504,25 +522,10 @@ pub fn compute_rollover(
         })
 }
 
-/// Get all transactions assigned to a specific budget month, excluding project
-/// transactions. Useful for computing overall totals.
-#[must_use]
-pub fn transactions_for_budget_month<'a>(
-    transactions: &'a [Transaction],
-    budget_month_id: BudgetMonthId,
-    categories: &[Category],
-) -> Vec<&'a Transaction> {
-    let filtered = filter_for_budget(transactions, categories);
-    filtered
-        .into_iter()
-        .filter(|t| t.budget_month_id == Some(budget_month_id))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AccountId, BudgetMonthId, CategoryId, TransactionId};
+    use crate::models::{AccountId, CategoryId, TransactionId};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -545,7 +548,6 @@ mod tests {
             merchant_name: "Test".to_owned(),
             description: "Test transaction".to_owned(),
             posted_date,
-            budget_month_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,
@@ -662,6 +664,39 @@ mod tests {
         assert_eq!(months.len(), 2);
         assert_eq!(months[0].start_date, date(2025, 1, 25));
         assert_eq!(months[1].start_date, date(2025, 3, 25));
+    }
+
+    #[test]
+    fn detect_months_with_mixed_categorized_and_uncategorized() {
+        // Simulates the real scenario: salary transactions across 3 calendar
+        // months with additional non-salary transactions that should be ignored.
+        let categories = vec![salary_category(), food_category()];
+        let transactions = vec![
+            // Dec salary
+            make_txn(Some(salary_cat_id()), dec!(10376.32), date(2025, 12, 18)),
+            // Jan salary
+            make_txn(Some(salary_cat_id()), dec!(9330.13), date(2026, 1, 26)),
+            // Feb salary
+            make_txn(Some(salary_cat_id()), dec!(14000.19), date(2026, 2, 26)),
+            // Non-salary positive transactions should be ignored
+            make_txn(Some(food_category().id), dec!(50), date(2026, 2, 23)),
+            // Negative salary-category transactions (transfers out) should be ignored
+            make_txn(Some(salary_cat_id()), dec!(-1000), date(2026, 1, 2)),
+        ];
+
+        let months =
+            detect_budget_month_boundaries(&transactions, 1, Some(salary_cat_id()), &categories)
+                .expect("should detect 3 months");
+
+        assert_eq!(months.len(), 3);
+        assert_eq!(months[0].start_date, date(2025, 12, 18));
+        assert_eq!(months[1].start_date, date(2026, 1, 26));
+        assert_eq!(months[2].start_date, date(2026, 2, 26));
+
+        // First two closed, last open
+        assert_eq!(months[0].end_date, Some(date(2026, 1, 25)));
+        assert_eq!(months[1].end_date, Some(date(2026, 2, 25)));
+        assert_eq!(months[2].end_date, None);
     }
 
     #[test]

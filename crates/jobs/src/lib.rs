@@ -22,7 +22,6 @@ pub mod categorize;
 pub mod correlate;
 pub mod pipeline;
 pub mod queries;
-pub mod recompute;
 pub mod schedule_queries;
 pub mod scheduler;
 pub mod sync;
@@ -123,7 +122,6 @@ pub async fn setup_test_storage(pool: &ApalisPool) -> Result<(), sqlx::Error> {
 
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
-pub use recompute::handle_recompute_job;
 pub use sync::handle_sync_job;
 
 mod storage;
@@ -403,10 +401,6 @@ pub struct CorrelateTransactionJob {
     pub transaction_id: String,
 }
 
-/// Recompute budget month boundaries and assign transactions to months.
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct BudgetRecomputeJob;
-
 /// A no-op job for health checks and testing the job queue.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NoOpJob;
@@ -442,13 +436,12 @@ pub async fn run_workers(
         }};
     }
 
-    // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out -> recompute
+    // Pipeline workflow: sync -> categorize fan-out -> correlate fan-out
     let pipeline_backend = backend!(Vec<u8>);
     let pipeline_workflow = pipeline::workflow_for(&pipeline_backend)
         .and_then(pipeline::step_sync)
         .and_then(pipeline::step_categorize)
-        .and_then(pipeline::step_correlate)
-        .and_then(pipeline::step_recompute);
+        .and_then(pipeline::step_correlate);
     let pipeline_worker = WorkerBuilder::new("budget-pipeline")
         .backend(pipeline_backend)
         .data(db.clone())
@@ -490,11 +483,6 @@ pub async fn run_workers(
         .data(llm)
         .build(handle_correlate_transaction_job);
 
-    let recompute_worker = WorkerBuilder::new("budget-recompute")
-        .backend(backend!(BudgetRecomputeJob))
-        .data(db.clone())
-        .build(handle_recompute_job);
-
     let noop_worker = WorkerBuilder::new("budget-no-op")
         .backend(backend!(NoOpJob))
         .build(handle_noop_job);
@@ -516,9 +504,6 @@ pub async fn run_workers(
         }
         res = correlate_txn_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
-        }
-        res = recompute_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "recompute worker error"); }
         }
         res = noop_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "noop worker error"); }

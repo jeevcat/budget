@@ -52,12 +52,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sync_storage: JobStorage::new(&apalis_pool),
         categorize_storage: JobStorage::new(&apalis_pool),
         correlate_storage: JobStorage::new(&apalis_pool),
-        recompute_storage: JobStorage::new(&apalis_pool),
         pipeline_storage: PipelineStorage::new(&apalis_pool),
         apalis_pool: apalis_pool.clone(),
         enable_banking_auth,
         // clone() justified: LlmClient wraps an Arc, workers also need their own handle
         llm: llm.clone(),
+        expected_salary_count: config.expected_salary_count,
         host: config
             .host
             .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),

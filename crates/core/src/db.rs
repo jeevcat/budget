@@ -5,9 +5,9 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::models::{
-    Account, AccountId, AccountType, BudgetMode, BudgetMonth, BudgetMonthId, Category, CategoryId,
-    CategoryMethod, Connection, ConnectionId, ConnectionStatus, CorrelationType, Rule,
-    RuleCondition, RuleId, RuleType, Transaction, TransactionId,
+    Account, AccountId, AccountType, BudgetMode, Category, CategoryId, CategoryMethod, Connection,
+    ConnectionId, ConnectionStatus, CorrelationType, Rule, RuleCondition, RuleId, RuleType,
+    Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,6 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         merchant_name: row.try_get("merchant_name")?,
         description: row.try_get("description")?,
         posted_date: row.try_get("posted_date")?,
-        budget_month_id: parse_uuid_opt(row, "budget_month_id")?.map(BudgetMonthId::from_uuid),
         correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
         category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
@@ -136,15 +135,6 @@ fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
         target_category_id: parse_uuid_opt(row, "target_category_id")?.map(CategoryId::from_uuid),
         target_correlation_type: parse_enum_opt::<CorrelationType>(row, "target_correlation_type")?,
         priority: row.try_get("priority")?,
-    })
-}
-
-fn row_to_budget_month(row: &PgRow) -> Result<BudgetMonth, sqlx::Error> {
-    Ok(BudgetMonth {
-        id: BudgetMonthId::from_uuid(parse_uuid(row, "id")?),
-        start_date: row.try_get("start_date")?,
-        end_date: row.try_get("end_date")?,
-        salary_transactions_detected: row.try_get("salary_transactions_detected")?,
     })
 }
 
@@ -326,10 +316,10 @@ impl Db {
         sqlx::query(
             "INSERT INTO transactions
                  (id, account_id, category_id, amount, original_amount, original_currency,
-                  merchant_name, description, posted_date, budget_month_id,
+                  merchant_name, description, posted_date,
                   correlation_id, correlation_type, provider_transaction_id, suggested_category,
                   counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
@@ -351,7 +341,6 @@ impl Db {
         .bind(&txn.merchant_name)
         .bind(&txn.description)
         .bind(txn.posted_date)
-        .bind(txn.budget_month_id.map(|id| id.to_string()))
         .bind(txn.correlation_id.map(|id| id.to_string()))
         .bind(txn.correlation_type.map(|ct| ct.to_string()))
         .bind(provider_transaction_id)
@@ -374,7 +363,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -399,7 +388,7 @@ impl Db {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -424,7 +413,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -444,7 +433,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -467,7 +456,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -494,7 +483,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -684,25 +673,6 @@ impl Db {
         rows.iter().map(|row| row.try_get("name")).collect()
     }
 
-    /// Assign a transaction to a budget month.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn update_transaction_budget_month(
-        &self,
-        id: TransactionId,
-        budget_month_id: BudgetMonthId,
-    ) -> Result<(), sqlx::Error> {
-        let pool = &self.0;
-        sqlx::query("UPDATE transactions SET budget_month_id = $1 WHERE id = $2")
-            .bind(budget_month_id.to_string())
-            .bind(id.to_string())
-            .execute(pool)
-            .await?;
-        Ok(())
-    }
-
     /// List all transactions belonging to a specific account.
     ///
     /// # Errors
@@ -715,7 +685,7 @@ impl Db {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date, budget_month_id,
+                    merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
              FROM transactions
@@ -992,57 +962,6 @@ impl Db {
     }
 
     // ---------------------------------------------------------------------------
-    // Budget Months
-    // ---------------------------------------------------------------------------
-
-    /// Replace all budget months atomically.
-    ///
-    /// Deletes every existing budget month and inserts the provided set within
-    /// a single transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if any query within the transaction fails.
-    pub async fn replace_budget_months(&self, months: &[BudgetMonth]) -> Result<(), sqlx::Error> {
-        let mut tx = self.0.begin().await?;
-
-        sqlx::query("DELETE FROM budget_months")
-            .execute(&mut *tx)
-            .await?;
-
-        for month in months {
-            sqlx::query(
-                "INSERT INTO budget_months (id, start_date, end_date, salary_transactions_detected)
-                 VALUES ($1, $2, $3, $4)",
-            )
-            .bind(month.id.to_string())
-            .bind(month.start_date)
-            .bind(month.end_date)
-            .bind(month.salary_transactions_detected)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// List all budget months.
-    ///
-    /// # Errors
-    ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_budget_months(&self) -> Result<Vec<BudgetMonth>, sqlx::Error> {
-        let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, start_date, end_date, salary_transactions_detected FROM budget_months",
-        )
-        .fetch_all(pool)
-        .await?;
-        rows.iter().map(row_to_budget_month).collect()
-    }
-
-    // ---------------------------------------------------------------------------
     // Connections
     // ---------------------------------------------------------------------------
 
@@ -1213,9 +1132,8 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use crate::models::{
-        Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId,
-        CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
-        Transaction, TransactionId,
+        Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CorrelationType,
+        MatchField, Rule, RuleCondition, RuleId, RuleType, Transaction, TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1262,7 +1180,6 @@ mod tests {
             merchant_name: "Coffee Shop".into(),
             description: "Morning coffee".into(),
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).unwrap(),
-            budget_month_id: None,
             correlation_id: None,
             correlation_type: None,
             category_method: None,
@@ -1285,15 +1202,6 @@ mod tests {
             target_category_id: None,
             target_correlation_type: None,
             priority,
-        }
-    }
-
-    fn make_budget_month(start: NaiveDate, end: Option<NaiveDate>) -> BudgetMonth {
-        BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: start,
-            end_date: end,
-            salary_transactions_detected: 0,
         }
     }
 
@@ -1394,7 +1302,6 @@ mod tests {
             NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()
         );
         assert!(fetched.category_id.is_none());
-        assert!(fetched.budget_month_id.is_none());
         assert!(fetched.correlation_id.is_none());
         assert!(fetched.correlation_type.is_none());
     }
@@ -1434,23 +1341,12 @@ mod tests {
         let cat = make_category("Food & Drink");
         db.insert_category(&cat).await.unwrap();
 
-        let bm = make_budget_month(
-            NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
-            Some(NaiveDate::from_ymd_opt(2025, 3, 31).unwrap()),
-        );
-        db.replace_budget_months(std::slice::from_ref(&bm))
-            .await
-            .unwrap();
-
         let txn = make_transaction(acct.id);
         db.upsert_transaction(&txn, Some("PROV-TXN-002"))
             .await
             .unwrap();
 
         db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
-            .await
-            .unwrap();
-        db.update_transaction_budget_month(txn.id, bm.id)
             .await
             .unwrap();
 
@@ -1468,7 +1364,6 @@ mod tests {
         assert_eq!(fetched.merchant_name, "Coffee Shop (corrected)");
         assert_eq!(fetched.amount, dec!(-43.00));
         assert_eq!(fetched.category_id, Some(cat.id));
-        assert_eq!(fetched.budget_month_id, Some(bm.id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1629,31 +1524,6 @@ mod tests {
         let a = fetched.iter().find(|t| t.id == txn_a.id).unwrap();
         assert_eq!(a.correlation_id, Some(txn_b.id));
         assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_update_transaction_budget_month(pool: PgPool) {
-        let db = wrap(pool);
-        let acct = make_account();
-        db.upsert_account(&acct).await.unwrap();
-
-        let bm = make_budget_month(
-            NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
-            Some(NaiveDate::from_ymd_opt(2025, 3, 31).unwrap()),
-        );
-        db.replace_budget_months(std::slice::from_ref(&bm))
-            .await
-            .unwrap();
-
-        let txn = make_transaction(acct.id);
-        db.upsert_transaction(&txn, None).await.unwrap();
-
-        db.update_transaction_budget_month(txn.id, bm.id)
-            .await
-            .unwrap();
-
-        let all = db.list_transactions().await.unwrap();
-        assert_eq!(all[0].budget_month_id, Some(bm.id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1964,88 +1834,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Budget Month tests
     // -----------------------------------------------------------------------
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_replace_budget_months_inserts_fresh_set(pool: PgPool) {
-        let db = wrap(pool);
-
-        let months = vec![
-            make_budget_month(
-                NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
-                Some(NaiveDate::from_ymd_opt(2025, 1, 31).unwrap()),
-            ),
-            make_budget_month(
-                NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
-                Some(NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()),
-            ),
-        ];
-
-        db.replace_budget_months(&months).await.unwrap();
-
-        let all = db.list_budget_months().await.unwrap();
-        assert_eq!(all.len(), 2);
-
-        let ids: Vec<_> = all.iter().map(|m| m.id).collect();
-        assert!(ids.contains(&months[0].id));
-        assert!(ids.contains(&months[1].id));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_replace_budget_months_replaces_all(pool: PgPool) {
-        let db = wrap(pool);
-
-        let old_months = vec![
-            make_budget_month(
-                NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
-                Some(NaiveDate::from_ymd_opt(2025, 1, 31).unwrap()),
-            ),
-            make_budget_month(
-                NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
-                Some(NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()),
-            ),
-        ];
-        db.replace_budget_months(&old_months).await.unwrap();
-
-        let new_months = vec![make_budget_month(
-            NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(),
-            Some(NaiveDate::from_ymd_opt(2025, 3, 31).unwrap()),
-        )];
-        db.replace_budget_months(&new_months).await.unwrap();
-
-        let all = db.list_budget_months().await.unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].id, new_months[0].id);
-        assert_eq!(
-            all[0].start_date,
-            NaiveDate::from_ymd_opt(2025, 3, 1).unwrap()
-        );
-
-        let ids: Vec<_> = all.iter().map(|m| m.id).collect();
-        assert!(!ids.contains(&old_months[0].id));
-        assert!(!ids.contains(&old_months[1].id));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn test_list_budget_months_roundtrip(pool: PgPool) {
-        let db = wrap(pool);
-
-        let month = make_budget_month(NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(), None);
-        db.replace_budget_months(std::slice::from_ref(&month))
-            .await
-            .unwrap();
-
-        let all = db.list_budget_months().await.unwrap();
-        assert_eq!(all.len(), 1);
-
-        let fetched = &all[0];
-        assert_eq!(fetched.id, month.id);
-        assert_eq!(
-            fetched.start_date,
-            NaiveDate::from_ymd_opt(2025, 4, 1).unwrap()
-        );
-        assert!(fetched.end_date.is_none());
-        assert_eq!(fetched.salary_transactions_detected, 0);
-    }
 
     // -----------------------------------------------------------------------
     // Categorized merchant groups

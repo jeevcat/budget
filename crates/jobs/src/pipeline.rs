@@ -68,7 +68,8 @@ pub async fn step_categorize(
     }
 }
 
-/// Step 3: Apply correlation rules and enqueue per-transaction LLM jobs.
+/// Step 3 (final): Apply correlation rules and enqueue per-transaction LLM jobs.
+/// Marks the schedule run as succeeded when present.
 ///
 /// # Errors
 ///
@@ -77,32 +78,12 @@ pub async fn step_correlate(
     ctx: PipelineContext,
     db: Data<Db>,
     apalis_pool: Data<ApalisPool>,
-) -> Result<PipelineContext, BoxDynError> {
-    match super::correlate::correlate_fan_out(&db, &apalis_pool).await {
-        Ok(()) => Ok(ctx),
-        Err(e) => {
-            fail_schedule_run(&apalis_pool, &ctx, &e).await;
-            Err(e)
-        }
-    }
-}
-
-/// Step 4: Recompute budget month boundaries and assignments.
-/// Marks the schedule run as succeeded when present.
-///
-/// # Errors
-///
-/// Returns an error if budget recomputation fails.
-pub async fn step_recompute(
-    ctx: PipelineContext,
-    db: Data<Db>,
-    pool: Data<ApalisPool>,
 ) -> Result<(), BoxDynError> {
-    match super::recompute::recompute_budgets(&db).await {
+    match super::correlate::correlate_fan_out(&db, &apalis_pool).await {
         Ok(()) => {
             if let Some(ref run_id) = ctx.schedule_run_id {
                 let _ = schedule_queries::complete_schedule_run(
-                    &pool,
+                    &apalis_pool,
                     run_id,
                     RunStatus::Succeeded,
                     None,
@@ -112,7 +93,7 @@ pub async fn step_recompute(
             Ok(())
         }
         Err(e) => {
-            fail_schedule_run(&pool, &ctx, &e).await;
+            fail_schedule_run(&apalis_pool, &ctx, &e).await;
             Err(e)
         }
     }

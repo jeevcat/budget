@@ -490,13 +490,11 @@ function Dashboard() {
   const pTotals = groupTotals(projects);
 
   // Uncategorized count (scoped to selected month)
-  const monthTxns = transactions.filter((t) => {
-    if (t.budget_month_id) return t.budget_month_id === activeMonth.id;
-    return (
+  const monthTxns = transactions.filter(
+    (t) =>
       t.posted_date >= activeMonth.start_date &&
-      (!activeMonth.end_date || t.posted_date < activeMonth.end_date)
-    );
-  });
+      (!activeMonth.end_date || t.posted_date < activeMonth.end_date),
+  );
   const uncategorizedCount = monthTxns.filter(
     (t) => !t.category_id && !t.correlation_type,
   ).length;
@@ -2494,12 +2492,6 @@ const QUEUE_CARDS = [
     title: "Correlate",
     desc: "Link related transactions (transfers, reimbursements)",
     types: ["CorrelateJob", "CorrelateTransactionJob"],
-  },
-  {
-    key: "recompute",
-    title: "Recompute",
-    desc: "Recompute budget month boundaries",
-    types: ["BudgetRecomputeJob"],
   },
 ];
 

@@ -12,8 +12,8 @@ use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, BudgetMonth, BudgetMonthId, Category, CategoryId, Rule,
-    RuleCondition, Transaction, TransactionId,
+    Account, AccountId, AccountType, Category, CategoryId, Rule, RuleCondition, Transaction,
+    TransactionId,
 };
 use budget_jobs::LlmClient;
 use budget_providers::MockLlmProvider;
@@ -40,11 +40,11 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         sync_storage: JobStorage::new(&pool),
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
-        recompute_storage: JobStorage::new(&pool),
         pipeline_storage: PipelineStorage::new(&pool),
         apalis_pool: pool,
         enable_banking_auth: None,
         llm: LlmClient::new(MockLlmProvider::new()),
+        expected_salary_count: 1,
         host: "http://localhost:3000".to_owned(),
     };
 
@@ -149,7 +149,6 @@ fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Tr
         merchant_name: merchant.to_owned(),
         description: String::new(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
-        budget_month_id: None,
         correlation_id: None,
         correlation_type: None,
         category_method: None,
@@ -186,7 +185,6 @@ fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
         merchant_name: merchant.to_owned(),
         description: String::new(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
-        budget_month_id: None,
         correlation_id: None,
         correlation_type: None,
         category_method: None,
@@ -1046,13 +1044,32 @@ async fn budgets_months_empty(pool: PgPool) {
     let (status, body) = send(app, get("/api/budgets/months")).await;
     assert_eq!(status, StatusCode::OK);
 
-    let months: Vec<BudgetMonth> = serde_json::from_slice(&body).expect("parse");
+    let months: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
     assert!(months.is_empty());
 }
 
 #[sqlx::test]
 async fn budgets_status_with_current_month(pool: PgPool) {
     let (app, db) = setup(pool).await;
+
+    // Create an account
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "prov-budget-test".to_owned(),
+        name: "Budget Test".to_owned(),
+        nickname: None,
+        institution: "Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: "USD".to_owned(),
+        connection_id: None,
+    };
+    db.upsert_account(&account).await.expect("account");
+
+    // Create a Salary category so months can be derived
+    let salary_cat = make_category("Salary");
+    db.insert_category(&salary_cat)
+        .await
+        .expect("salary category");
 
     // Create a category with a monthly budget
     let payload = serde_json::json!({
@@ -1064,14 +1081,15 @@ async fn budgets_status_with_current_month(pool: PgPool) {
     assert_eq!(status, StatusCode::CREATED);
     let category: Category = serde_json::from_slice(&body).expect("parse");
 
-    // Insert a budget month with no end_date (current month)
-    let month = BudgetMonth {
-        id: BudgetMonthId::new(),
-        start_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("date"),
-        end_date: None,
-        salary_transactions_detected: 1,
-    };
-    db.replace_budget_months(&[month]).await.expect("months");
+    // Insert a salary transaction so budget months are derived
+    let today = chrono::Utc::now().date_naive();
+    let mut salary_txn = make_txn(account.id, "EMPLOYER INC", 1);
+    salary_txn.category_id = Some(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&salary_txn, Some("salary-1"))
+        .await
+        .expect("insert salary");
 
     let (status, body) = send(app, get("/api/budgets/status")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1111,14 +1129,6 @@ async fn jobs_correlate_returns_202(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let (status, _body) = send(app, post_empty("/api/jobs/correlate")).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-}
-
-#[sqlx::test]
-async fn jobs_recompute_returns_202(pool: PgPool) {
-    let (app, _db) = setup(pool).await;
-
-    let (status, _body) = send(app, post_empty("/api/jobs/recompute")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 

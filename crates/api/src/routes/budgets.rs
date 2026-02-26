@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::budget::compute_budget_status;
+use budget_core::budget::{compute_budget_status, detect_budget_month_boundaries};
 use budget_core::models::{BudgetMode, BudgetMonth, BudgetStatus};
 
 use crate::routes::AppError;
@@ -39,6 +39,31 @@ pub fn router() -> Router<AppState> {
         .route("/months", get(list_months))
 }
 
+/// Derive budget months from transactions and the Salary category.
+///
+/// Returns an empty list when no Salary category exists (instead of erroring),
+/// since the user may not have set one up yet.
+async fn derive_months(state: &AppState) -> Result<Vec<BudgetMonth>, AppError> {
+    let transactions = state.db.list_transactions().await?;
+    let categories = state.db.list_categories().await?;
+
+    let salary_cat_id = state.db.get_category_by_name("Salary").await?.map(|c| c.id);
+
+    match detect_budget_month_boundaries(
+        &transactions,
+        state.expected_salary_count,
+        salary_cat_id,
+        &categories,
+    ) {
+        Ok(mut months) => {
+            months.sort_by_key(|bm| bm.start_date);
+            Ok(months)
+        }
+        Err(budget_core::error::Error::NoSalaryCategory) => Ok(Vec::new()),
+        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+}
+
 /// Compute budget status for every budgeted category in a given month.
 ///
 /// If `month_id` is provided, looks up that specific month; otherwise finds the
@@ -55,9 +80,20 @@ async fn status(
 ) -> Result<Json<StatusResponse>, AppError> {
     let transactions = state.db.list_transactions().await?;
     let categories = state.db.list_categories().await?;
-    let mut budget_months = state.db.list_budget_months().await?;
 
-    // Sort months by start_date for budget_year_months lookups
+    let salary_cat_id = state.db.get_category_by_name("Salary").await?.map(|c| c.id);
+
+    let mut budget_months = match detect_budget_month_boundaries(
+        &transactions,
+        state.expected_salary_count,
+        salary_cat_id,
+        &categories,
+    ) {
+        Ok(months) => months,
+        Err(budget_core::error::Error::NoSalaryCategory) => Vec::new(),
+        Err(e) => return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    };
+
     budget_months.sort_by_key(|bm| bm.start_date);
 
     let month = if let Some(id) = query.month_id {
@@ -117,12 +153,12 @@ async fn status(
     }))
 }
 
-/// List all budget months.
+/// List all budget months, derived on the fly from transactions.
 ///
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
 async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMonth>>, AppError> {
-    let months = state.db.list_budget_months().await?;
+    let months = derive_months(&state).await?;
     Ok(Json(months))
 }

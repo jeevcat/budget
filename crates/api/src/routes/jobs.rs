@@ -5,7 +5,7 @@ use axum::{Json, Router};
 
 use budget_jobs::queries::{JobRecord, QueueCount};
 use budget_jobs::schedule_queries::AccountScheduleStatus;
-use budget_jobs::{BudgetRecomputeJob, CategorizeJob, CorrelateJob, PipelineContext, SyncJob};
+use budget_jobs::{CategorizeJob, CorrelateJob, PipelineContext, SyncJob};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -19,7 +19,6 @@ use crate::state::AppState;
 /// - `POST /sync/{account_id}` -- enqueue a bank sync job
 /// - `POST /categorize` -- enqueue a categorization job
 /// - `POST /correlate` -- enqueue a correlation job
-/// - `POST /recompute` -- enqueue a budget recomputation job
 /// - `POST /pipeline/{account_id}` -- enqueue a full-sync pipeline
 ///
 /// # Errors
@@ -33,7 +32,6 @@ pub fn router() -> Router<AppState> {
         .route("/sync/{account_id}", post(trigger_sync))
         .route("/categorize", post(trigger_categorize))
         .route("/correlate", post(trigger_correlate))
-        .route("/recompute", post(trigger_recompute))
         .route("/pipeline/{account_id}", post(trigger_pipeline))
 }
 
@@ -120,23 +118,7 @@ async fn trigger_correlate(State(state): State<AppState>) -> Result<StatusCode, 
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Enqueue a budget recomputation job.
-///
-/// Returns 202 Accepted when the job is successfully pushed to the queue.
-///
-/// # Errors
-///
-/// Returns `AppError` if the job cannot be enqueued.
-async fn trigger_recompute(State(state): State<AppState>) -> Result<StatusCode, AppError> {
-    state
-        .recompute_storage
-        .push(BudgetRecomputeJob)
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(StatusCode::ACCEPTED)
-}
-
-/// Enqueue a full-sync pipeline (sync, categorize, correlate, recompute)
+/// Enqueue a full-sync pipeline (sync, categorize, correlate)
 /// for the specified account.
 ///
 /// Returns 202 Accepted when the pipeline is successfully started.

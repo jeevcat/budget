@@ -119,7 +119,6 @@ async fn seed_transaction(
         merchant_name: merchant.to_owned(),
         description: String::new(),
         posted_date,
-        budget_month_id: None,
         correlation_id: None,
         correlation_type: None,
         category_method: None,
@@ -893,16 +892,3 @@ async fn correlate_already_paired_not_correlated_again(pool: PgPool) {
         "txn_c has no matching counterpart; should remain uncorrelated"
     );
 }
-
-// ===========================================================================
-// recompute.rs tests
-// ===========================================================================
-
-// Recompute tests are skipped because handle_recompute_job calls
-// `budget_core::load_config()` which reads from a confy config file on
-// disk. The config file path depends on the OS-level user data directory
-// and may not exist in CI or in fresh environments. Mocking confy would
-// require production code changes purely for testability, which is not
-// warranted at this stage. The budget math engine itself
-// (`detect_budget_month_boundaries`) and `find_budget_month_for_date` are
-// tested via unit tests in their respective modules.
