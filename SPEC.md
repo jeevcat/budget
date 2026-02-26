@@ -194,19 +194,29 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 ## Remaining Work
 
-### Backfill & Edge Cases
+### Sync Reliability
 
-- First-time backfill flow: import historical transactions, retroactively build budget months
-- Retroactive project creation (past start date pulls historical transactions)
-- Late/missing salary handling (budget month extension)
-- Inter-month gap transaction assignment
-- Edge case testing: overlapping projects, category re-linking, rule conflicts
-- Provider error retry logic (rate limits, transient failures)
-- Partial failure recovery in sync job (individual transaction errors shouldn't fail the batch)
+- [ ] **Provider error retry with backoff**: Sync job makes a single attempt per provider call. Add exponential backoff with jitter for transient failures (network errors, 429/503 responses). The `ProviderError::RateLimited` variant exists but nothing acts on it.
+- [ ] **Partial failure recovery in sync**: A single failed `upsert_transaction` aborts the entire sync (early `?` return in the for-loop). Isolate per-transaction errors so one bad record doesn't block the rest of the batch. Accumulate errors and report them without losing successfully synced transactions.
 
-### Frontend
+### Retroactive & Backfill Logic
 
-- All backend features are implemented. Frontend is the next major milestone.
+- [ ] **Retroactive project creation**: Creating a project with a past start date should reassign historical transactions in the linked category (and its children) to that project. Currently `insert_project` is a plain INSERT with no retroactive transaction assignment.
+- [ ] **Inter-month gap transaction assignment**: Transactions posted between calendar month start and salary arrival are left unassigned if they don't fall within any budget month's date range. They should be assigned to the previous (still-open) budget month.
+- [ ] **First-time backfill**: Initial sync fetches all provider history (since `latest_transaction_date` is `None`), which works, but there's no verification that retroactive budget month detection and assignment covers the full imported history end-to-end.
+
+### Edge Case Coverage
+
+- [ ] **Overlapping project dates**: Test behavior when two projects cover the same category in overlapping time windows.
+- [ ] **Category re-linking**: Test what happens when a category is unlinked from one project and linked to another — do transactions reassign correctly?
+- [ ] **Rule conflict resolution**: Test priority ordering when multiple rules match the same transaction (merchant regex vs. amount range vs. description pattern).
+- [ ] **Late/missing salary**: Verify the previous budget month stays open indefinitely and that the UX surfaces a clear signal when expected salaries haven't arrived.
+
+### Frontend Polish
+
+- [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month.
+- [ ] **Rollover visualization**: Dashboard doesn't show rollover surplus/deficit carried from prior months.
+- [ ] **Project transaction list**: No UI to browse which transactions are assigned to a project.
 
 ---
 
