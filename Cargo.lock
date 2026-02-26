@@ -139,7 +139,6 @@ dependencies = [
 name = "api"
 version = "0.1.0"
 dependencies = [
- "apalis-postgres",
  "axum",
  "budget-core",
  "budget-jobs",

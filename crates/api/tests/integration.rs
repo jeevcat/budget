@@ -30,7 +30,7 @@ const TEST_SECRET: &str = "test-secret-key";
 /// with apalis tables and domain migrations applied.
 async fn setup(pool: PgPool) -> (Router, Db) {
     let db = Db::from_pool(pool.clone());
-    apalis_postgres::PostgresStorage::setup(&pool)
+    budget_jobs::setup_test_storage(&pool)
         .await
         .expect("apalis setup");
     db.run_migrations().await.expect("domain migrations");

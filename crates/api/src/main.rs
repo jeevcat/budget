@@ -1,13 +1,18 @@
+//! HTTP server binary: configuration, routing, and process orchestration.
+//!
+//! Wires together all crates: loads config, connects to the database, constructs
+//! providers, starts the axum server and apalis workers in parallel. Route handlers
+//! live in the `api` library crate (`src/routes/`).
+
 use std::sync::Arc;
 
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_core::db::Db;
-use budget_jobs::{ApalisPool, BankProviderFactory, JobStorage, LlmClient, PipelineStorage};
+use budget_jobs::{ApalisPool, BankProviderFactory, JobStorage, PipelineStorage};
 use budget_providers::{
-    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, GeminiProvider, MockBankProvider,
-    MockLlmProvider,
+    EnableBankingAuth, EnableBankingClient, EnableBankingConfig, MockBankProvider,
 };
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -40,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (enable_banking_auth, eb_config) = init_enable_banking(&config);
     let bank_factory = BankProviderFactory::new(eb_config)
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
-    let llm = init_llm_provider(&config);
+    let llm = budget_jobs::init_llm_provider(&config);
 
     let state = AppState {
         db: db.clone(),
@@ -75,8 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = workers => {
             if let Err(e) = res { tracing::error!(%e, "worker error"); }
         }
-        // clone() justified: ApalisPool is Arc-based
-        () = reclaim_stale_jobs_loop(apalis_pool.clone()) => {}
+        () = budget_jobs::reclaim_stale_jobs_loop(&apalis_pool) => {}
         () = budget_jobs::scheduler::run_scheduler(&db, &apalis_pool) => {}
     }
 
@@ -130,49 +134,14 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Run domain migrations (via `Db`), apalis migrations, and reset stale jobs.
+/// Run apalis and domain migrations.
 async fn run_migrations(
     db: &Db,
     apalis_pool: &ApalisPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Apalis and domain migrations share `_sqlx_migrations` (sqlx has no
-    // per-migrator table support — see sqlx#1698, apalis#439). Both must
-    // set `ignore_missing` so each tolerates the other's rows.
-    let mut apalis_migrator = apalis_postgres::PostgresStorage::migrations();
-    apalis_migrator.set_ignore_missing(true);
-    apalis_migrator.run(apalis_pool).await?;
-
+    budget_jobs::run_migrations(apalis_pool).await?;
     db.run_migrations().await?;
-
-    // No workers are active yet, so any "Running" jobs are stale locks from
-    // a previous process. Reset them so workers pick them up immediately.
-    let reset = budget_jobs::queries::reset_all_running(apalis_pool).await?;
-    if reset > 0 {
-        tracing::info!(count = reset, "reset stale running jobs");
-    }
-
     Ok(())
-}
-
-/// Periodically reset jobs stuck in `Running` with a stale lock.
-///
-/// A lock older than 5 minutes indicates the worker died without completing.
-/// Resetting to `Pending` lets another worker pick the job up.
-async fn reclaim_stale_jobs_loop(pool: ApalisPool) {
-    const STALE_SECONDS: i64 = 300; // 5 minutes
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-    loop {
-        interval.tick().await;
-        match budget_jobs::queries::reclaim_stale(&pool, STALE_SECONDS).await {
-            Ok(count) if count > 0 => {
-                tracing::info!(count, "reclaimed stale jobs");
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to reclaim stale jobs");
-            }
-            _ => {}
-        }
-    }
 }
 
 /// Health check endpoint (unauthenticated).
@@ -215,24 +184,6 @@ fn init_tracing(config: &budget_core::Config) {
         .with(stderr_layer)
         .with(file_layer)
         .init();
-}
-
-/// Build the LLM provider from config. Uses Gemini when an API key is
-/// configured, otherwise falls back to the mock provider.
-fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
-    match config.gemini_api_key.as_ref() {
-        Some(api_key) if !api_key.is_empty() => {
-            tracing::info!(model = %config.llm_model, "using Gemini LLM provider");
-            LlmClient::new(GeminiProvider::new(
-                api_key.clone(),
-                config.llm_model.clone(),
-            ))
-        }
-        _ => {
-            tracing::info!("no Gemini API key configured, using mock LLM provider");
-            LlmClient::new(MockLlmProvider::new())
-        }
-    }
 }
 
 /// Build the axum router with all API routes, auth middleware, and static file serving.

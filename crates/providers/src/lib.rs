@@ -1,3 +1,9 @@
+//! External service integrations: bank data providers and LLM providers.
+//!
+//! Defines the `BankProvider` and `LlmProvider` traits with concrete implementations
+//! (Enable Banking, Gemini) and test mocks. No knowledge of job queues or HTTP — the
+//! `budget-jobs` crate wraps these in type-erased clients for worker injection.
+
 pub mod bank;
 pub mod enable_banking;
 pub mod error;

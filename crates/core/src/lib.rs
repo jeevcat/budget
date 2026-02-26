@@ -1,3 +1,9 @@
+//! Core domain library: configuration, database access, models, and business rules.
+//!
+//! This crate has no knowledge of HTTP, job queues, or external providers.
+//! It defines the shared vocabulary (models, IDs, enums) and persistence layer
+//! used by all other crates.
+
 use serde::{Deserialize, Serialize};
 
 pub mod budget;

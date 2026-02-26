@@ -1,3 +1,10 @@
+//! Async job queue: worker construction, job handlers, storage wrappers, and migrations.
+//!
+//! Owns all apalis integration: worker lifecycle (`run_workers`), pipeline workflow,
+//! job storage types (`JobStorage`, `PipelineStorage`), queue queries, and migration
+//! management. The `api` crate treats this as a black box — it calls `run_workers()`
+//! and uses the storage wrappers to enqueue jobs.
+
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -7,8 +14,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use budget_providers::{
-    CategorizeResult, CorrelationResult, EnableBankingConfig, EnableBankingProvider, ProposedRule,
-    ProviderError, TransactionSummary,
+    CategorizeResult, CorrelationResult, EnableBankingConfig, EnableBankingProvider,
+    GeminiProvider, MockLlmProvider, ProposedRule, ProviderError, TransactionSummary,
 };
 
 pub mod categorize;
@@ -33,6 +40,86 @@ pub type ApalisPool = sqlx::postgres::PgPool;
 
 /// Apalis jobs table name.
 pub const JOBS_TABLE: &str = "apalis.jobs";
+
+// ---------------------------------------------------------------------------
+// Startup and maintenance helpers
+// ---------------------------------------------------------------------------
+
+/// Run apalis schema migrations and reset stale jobs from a previous process.
+///
+/// Domain migrations (`Db::run_migrations`) are *not* included here — the
+/// caller should run those separately since they belong to `budget-core`.
+///
+/// # Errors
+///
+/// Returns an error if migrations or the reset query fail.
+pub async fn run_migrations(pool: &ApalisPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Apalis and domain migrations share `_sqlx_migrations` (sqlx has no
+    // per-migrator table support — see sqlx#1698, apalis#439). Both must
+    // set `ignore_missing` so each tolerates the other's rows.
+    let mut migrator = apalis_postgres::PostgresStorage::migrations();
+    migrator.set_ignore_missing(true);
+    migrator.run(pool).await?;
+
+    // No workers are active yet, so any "Running" jobs are stale locks from
+    // a previous process. Reset them so workers pick them up immediately.
+    let reset = queries::reset_all_running(pool).await?;
+    if reset > 0 {
+        tracing::info!(count = reset, "reset stale running jobs");
+    }
+    Ok(())
+}
+
+/// Periodically reset jobs stuck in `Running` with a stale lock.
+///
+/// A lock older than 5 minutes indicates the worker died without completing.
+/// Resetting to `Pending` lets another worker pick the job up.
+pub async fn reclaim_stale_jobs_loop(pool: &ApalisPool) {
+    const STALE_SECONDS: i64 = 300;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    loop {
+        interval.tick().await;
+        match queries::reclaim_stale(pool, STALE_SECONDS).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "reclaimed stale jobs");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to reclaim stale jobs");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Build the LLM provider from config.
+///
+/// Uses Gemini when an API key is configured, otherwise falls back to the
+/// mock provider (which returns deterministic placeholder responses).
+#[must_use]
+pub fn init_llm_provider(config: &budget_core::Config) -> LlmClient {
+    match config.gemini_api_key.as_ref() {
+        Some(api_key) if !api_key.is_empty() => {
+            tracing::info!(model = %config.llm_model, "using Gemini LLM provider");
+            LlmClient::new(GeminiProvider::new(
+                api_key.clone(),
+                config.llm_model.clone(),
+            ))
+        }
+        _ => {
+            tracing::info!("no Gemini API key configured, using mock LLM provider");
+            LlmClient::new(MockLlmProvider::new())
+        }
+    }
+}
+
+/// Set up apalis storage tables for integration tests.
+///
+/// # Errors
+///
+/// Returns an error if the storage setup query fails.
+pub async fn setup_test_storage(pool: &ApalisPool) -> Result<(), sqlx::Error> {
+    apalis_postgres::PostgresStorage::setup(pool).await
+}
 
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
