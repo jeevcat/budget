@@ -261,6 +261,7 @@ async fn callback(
                 .clone()
                 .or_else(|| session_account.product.clone())
                 .unwrap_or_else(|| "Unknown Account".to_owned()),
+            nickname: existing.as_ref().and_then(|a| a.nickname.clone()),
             institution: session_account
                 .account_servicer
                 .as_ref()

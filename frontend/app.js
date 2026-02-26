@@ -475,7 +475,7 @@ function CategoryBadge({ catMap, id, suggested }) {
     return html`<span>${label.short}</span>`;
   }
   if (suggested) {
-    return html`<span style="color:#8b5cf6;font-size:0.85em" title="LLM suggestion: ${suggested}">✦ ${suggested}</span>`;
+    return html`<span class="llm-suggestion" title="LLM suggestion: ${suggested}"><span class="llm-suggestion-icon">✦</span> ${suggested}</span>`;
   }
   return html`<span class="chip outline warning">uncategorized</span>`;
 }
@@ -620,7 +620,7 @@ function TxnDetail({
               }
               ${
                 !txn.category_id && txn.suggested_category
-                  ? html`<span style="color:#8b5cf6;font-size:0.85em;margin-left:0.5rem" title="LLM suggestion">✦ ${txn.suggested_category}</span>`
+                  ? html`<span class="llm-suggestion" style="margin-left:0.5rem" title="LLM suggestion"><span class="llm-suggestion-icon">✦</span> ${txn.suggested_category}</span>`
                   : null
               }
             </dd>

@@ -31,6 +31,7 @@ async fn seed_account(db: &Db, name: &str) -> Account {
         id: AccountId::new(),
         provider_account_id: format!("mock-{}", name.to_lowercase().replace(' ', "-")),
         name: name.to_owned(),
+        nickname: None,
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: "USD".to_owned(),

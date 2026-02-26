@@ -13,6 +13,7 @@ pub struct Account {
     pub id: AccountId,
     pub provider_account_id: String,
     pub name: String,
+    pub nickname: Option<String>,
     pub institution: String,
     pub account_type: AccountType,
     pub currency: String,

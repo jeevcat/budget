@@ -131,7 +131,19 @@
   background: var(--success);
 }
 .method-llm {
-  background: #8b5cf6;
+  background: var(--warning);
+}
+
+/* LLM suggestion (uncategorized with AI suggestion) */
+.llm-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.llm-suggestion-icon {
+  color: var(--warning);
 }
 
 .txn-dl {

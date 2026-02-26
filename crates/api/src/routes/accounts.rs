@@ -72,6 +72,7 @@ async fn create(
         id: AccountId::new(),
         provider_account_id: body.provider_account_id,
         name: body.name,
+        nickname: None,
         institution: body.institution,
         account_type,
         currency: body.currency,

@@ -67,6 +67,7 @@ fn row_to_account(row: &PgRow) -> Result<Account, sqlx::Error> {
         id: AccountId::from_uuid(parse_uuid(row, "id")?),
         provider_account_id: row.try_get("provider_account_id")?,
         name: row.try_get("name")?,
+        nickname: row.try_get("nickname")?,
         institution: row.try_get("institution")?,
         account_type: parse_enum::<AccountType>(row, "account_type")?,
         currency: row.try_get("currency")?,
@@ -204,7 +205,8 @@ impl Db {
                  institution = excluded.institution,
                  account_type = excluded.account_type,
                  currency = excluded.currency,
-                 connection_id = excluded.connection_id",
+                 connection_id = excluded.connection_id
+                 -- nickname is intentionally preserved across upserts",
         )
         .bind(account.id.to_string())
         .bind(&account.provider_account_id)
@@ -226,7 +228,7 @@ impl Db {
     pub async fn list_accounts(&self) -> Result<Vec<Account>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts",
+            "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id FROM accounts",
         )
         .fetch_all(pool)
         .await?;
@@ -243,7 +245,7 @@ impl Db {
     pub async fn get_account(&self, id: AccountId) -> Result<Option<Account>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id FROM accounts WHERE id = $1",
+            "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id FROM accounts WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(pool)
@@ -264,13 +266,32 @@ impl Db {
     ) -> Result<Option<Account>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, provider_account_id, name, institution, account_type, currency, connection_id
+            "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id
              FROM accounts WHERE provider_account_id = $1",
         )
         .bind(provider_account_id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_account).transpose()
+    }
+
+    /// Set or clear the user-defined nickname for an account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn update_account_nickname(
+        &self,
+        id: AccountId,
+        nickname: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        let pool = &self.0;
+        sqlx::query("UPDATE accounts SET nickname = $1 WHERE id = $2")
+            .bind(nickname)
+            .bind(id.to_string())
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     // ---------------------------------------------------------------------------
@@ -1143,6 +1164,7 @@ mod tests {
             id: AccountId::new(),
             provider_account_id: "prov-acct-001".into(),
             name: "My Checking".into(),
+            nickname: None,
             institution: "Test Bank".into(),
             account_type: AccountType::Checking,
             currency: "EUR".into(),
