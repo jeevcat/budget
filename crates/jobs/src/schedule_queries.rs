@@ -208,7 +208,7 @@ pub async fn get_all_schedule_status(
     pool: &ApalisPool,
 ) -> Result<Vec<AccountScheduleStatus>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT a.id AS account_id, a.name AS account_name, \
+        "SELECT a.id AS account_id, COALESCE(a.nickname, a.name) AS account_name, \
                 sr.started_at AS last_run_at, sr.status AS last_run_status, \
                 sr.error_message AS last_error, sr.next_run_at, sr.trigger_reason \
          FROM accounts a \

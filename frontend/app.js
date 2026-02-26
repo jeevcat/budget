@@ -32,8 +32,13 @@ const api = {
   get: (path) => api.fetch(path),
   post: (path, body) => api.fetch(path, { method: "POST", body }),
   put: (path, body) => api.fetch(path, { method: "PUT", body }),
+  patch: (path, body) => api.fetch(path, { method: "PATCH", body }),
   del: (path) => api.fetch(path, { method: "DELETE" }),
 };
+
+function accountDisplayName(account) {
+  return account?.nickname || account?.name || "";
+}
 
 // ---------------------------------------------------------------------------
 // Simple hash router
@@ -327,15 +332,15 @@ function Dashboard() {
 
     <div class="dash-totals">
       <article class="card dash-stat-card">
-        <span class="dash-stat-label">Total Budget</span>
+        <span class="dash-stat-label text-light">Total Budget</span>
         <span class="dash-stat-value">${currencyFmt(totalBudget)}</span>
       </article>
       <article class="card dash-stat-card">
-        <span class="dash-stat-label">Spent</span>
+        <span class="dash-stat-label text-light">Spent</span>
         <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
       </article>
       <article class="card dash-stat-card">
-        <span class="dash-stat-label">Remaining</span>
+        <span class="dash-stat-label text-light">Remaining</span>
         <span
           class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
         >
@@ -343,7 +348,7 @@ function Dashboard() {
         </span>
       </article>
       <article class="card dash-stat-card">
-        <span class="dash-stat-label">Categories</span>
+        <span class="dash-stat-label text-light">Categories</span>
         <span class="dash-stat-value">
           ${
             overBudget.length > 0
@@ -375,7 +380,7 @@ function Dashboard() {
         <div class="vstack" style="gap:0">
           ${enriched.map(
             (s) => html`
-              <div class="dash-cat-row" key=${s.category_id}>
+              <div class="hstack dash-cat-row" key=${s.category_id}>
                 <${ProgressRing}
                   spent=${s.spent}
                   budget=${s.budget_amount}
@@ -395,7 +400,7 @@ function Dashboard() {
                     >
                   </div>
                 </div>
-                <div class="dash-cat-end">
+                <div class="vstack dash-cat-end">
                   <span class="badge small ${paceBadge(s.pace)}"
                     >${paceLabel(s.pace)}</span
                   >
@@ -624,7 +629,7 @@ function TxnDetail({
                   : null
               }
             </dd>
-            <dt>Account</dt><dd>${acctMap[txn.account_id]?.name ?? txn.account_id}</dd>
+            <dt>Account</dt><dd>${accountDisplayName(acctMap[txn.account_id]) || txn.account_id}</dd>
             ${
               txn.correlation_type
                 ? html`
@@ -802,8 +807,8 @@ function Transactions() {
         );
         break;
       case "account":
-        cmp = (acctMap[a.account_id]?.name || "").localeCompare(
-          acctMap[b.account_id]?.name || "",
+        cmp = accountDisplayName(acctMap[a.account_id]).localeCompare(
+          accountDisplayName(acctMap[b.account_id]),
         );
         break;
     }
@@ -867,7 +872,8 @@ function Transactions() {
       <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
         <option value="">All accounts</option>
         ${usedAcctIds.map(
-          (id) => html`<option value=${id}>${acctMap[id]?.name ?? id}</option>`,
+          (id) =>
+            html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
         )}
       </select>
       <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
@@ -896,7 +902,7 @@ function Transactions() {
           filterAcct &&
           html`
           <button class="chip" onClick=${() => setFilterAcct("")}>
-            <span>${acctMap[filterAcct]?.name ?? filterAcct}</span>
+            <span>${accountDisplayName(acctMap[filterAcct]) || filterAcct}</span>
             <span class="chip-close" aria-label="Remove filter">\u00d7</span>
           </button>
         `
@@ -944,7 +950,7 @@ function Transactions() {
                       : null
                   }
                 </td>
-                <td class="text-light">${acctMap[t.account_id]?.name ?? ""}</td>
+                <td class="text-light">${accountDisplayName(acctMap[t.account_id])}</td>
               </tr>
             `,
           )}
@@ -1706,6 +1712,69 @@ function Rules() {
 // Connections
 // ---------------------------------------------------------------------------
 
+function AccountNickname({ account, onRenamed }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(account.nickname ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const trimmed = value.trim();
+    const nickname = trimmed || null;
+    if (nickname === (account.nickname ?? null)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await api.patch(`/accounts/${account.id}`, { nickname });
+      onRenamed(updated);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return html`
+      <span class="hstack" style="gap:0.25rem">
+        <input
+          type="text"
+          value=${value}
+          placeholder=${account.name}
+          onInput=${(e) => setValue(e.target.value)}
+          onKeyDown=${(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") {
+              setValue(account.nickname ?? "");
+              setEditing(false);
+            }
+          }}
+          disabled=${saving}
+          style="width:14rem"
+          ref=${(el) => el && el.focus()}
+        />
+        <button class="small" onClick=${save} disabled=${saving}>Save</button>
+        <button class="small" onClick=${() => {
+          setValue(account.nickname ?? "");
+          setEditing(false);
+        }}>Cancel</button>
+      </span>
+    `;
+  }
+
+  const display = account.nickname || account.name;
+  return html`
+    <span
+      style="cursor:pointer;border-bottom:1px dashed var(--border)"
+      title="Click to rename"
+      onClick=${() => setEditing(true)}
+    >
+      ${display}
+    </span>
+    ${account.nickname && html`<span class="text-lighter" style="margin-left:0.5rem;font-size:0.85rem">(${account.name})</span>`}
+  `;
+}
+
 function Connections() {
   const [connections, setConnections] = useState(null);
   const [accounts, setAccounts] = useState(null);
@@ -1854,6 +1923,51 @@ function Connections() {
               </tbody>
             </table>
           `
+    }
+
+    ${
+      accounts &&
+      accounts.length > 0 &&
+      html`
+        <div style="margin-top:2rem">
+          <h3>Accounts</h3>
+          <p class="text-light" style="margin-bottom:0.75rem">
+            Click a name to set a nickname.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Currency</th>
+                <th>Institution</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${accounts.map(
+                (a) => html`
+                  <tr key=${a.id}>
+                    <td>
+                      <${AccountNickname}
+                        account=${a}
+                        onRenamed=${(updated) =>
+                          setAccounts((prev) =>
+                            prev.map((x) =>
+                              x.id === updated.id ? updated : x,
+                            ),
+                          )}
+                      />
+                    </td>
+                    <td>${a.account_type}</td>
+                    <td>${a.currency}</td>
+                    <td class="text-light">${a.institution}</td>
+                  </tr>
+                `,
+              )}
+            </tbody>
+          </table>
+        </div>
+      `
     }
 
     <div style="margin-top:2rem">
@@ -2064,7 +2178,8 @@ function Jobs() {
                 >
                   <option value="">Account...</option>
                   ${(accounts ?? []).map(
-                    (a) => html`<option value=${a.id}>${a.name}</option>`,
+                    (a) =>
+                      html`<option value=${a.id}>${accountDisplayName(a)}</option>`,
                   )}
                 </select>
                 <button

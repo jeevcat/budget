@@ -38,7 +38,7 @@ pub struct CreateAccount {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
-        .route("/{id}", get(get_by_id))
+        .route("/{id}", get(get_by_id).patch(update_nickname))
 }
 
 /// List all accounts.
@@ -104,4 +104,48 @@ async fn get_by_id(
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
 
     Ok(Json(account))
+}
+
+/// Request body for updating an account nickname.
+#[derive(Deserialize)]
+pub struct UpdateNickname {
+    /// New nickname, or null to clear it.
+    pub nickname: Option<String>,
+}
+
+/// Set or clear the user-defined nickname for an account.
+///
+/// # Errors
+///
+/// Returns 400 if the ID is not a valid UUID, or 404 if the account
+/// does not exist.
+async fn update_nickname(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateNickname>,
+) -> Result<Json<Account>, AppError> {
+    let uuid =
+        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let account_id = AccountId::from_uuid(uuid);
+
+    // Verify the account exists
+    state
+        .db
+        .get_account(account_id)
+        .await?
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
+
+    state
+        .db
+        .update_account_nickname(account_id, body.nickname.as_deref())
+        .await?;
+
+    let updated = state.db.get_account(account_id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "account disappeared".to_owned(),
+        )
+    })?;
+
+    Ok(Json(updated))
 }
