@@ -38,6 +38,7 @@
             secret_key = "${cfg.secretKey}"
             enable_banking_app_id = "${cfg.enableBanking.appId}"
             enable_banking_private_key_path = "${cfg.enableBanking.privateKeyFile}"
+            ${lib.optionalString (cfg.logPath != null) ''log_path = "${cfg.logPath}"''}
           '';
 
           startScript = pkgs.writeShellScript "budget-start" ''
@@ -120,6 +121,12 @@
               type = lib.types.int;
               default = 1;
               description = "Expected number of salary transactions per month.";
+            };
+
+            logPath = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Path to a log file. When null, logs go to stderr only (journald).";
             };
           };
 
