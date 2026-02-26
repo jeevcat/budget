@@ -38,23 +38,31 @@ pub(crate) async fn categorize_fan_out(
         })
         .collect();
 
-    // -- Load uncategorized transactions -------------------------------------
-    let uncategorized = db.get_uncategorized_transactions().await?;
-    if uncategorized.is_empty() {
-        tracing::info!("no uncategorized transactions, nothing to do");
+    // -- Load rule-eligible transactions (uncategorized + LLM-categorized) ----
+    let eligible = db.get_rule_eligible_transactions().await?;
+    if eligible.is_empty() {
+        tracing::info!("no rule-eligible transactions, nothing to do");
         return Ok(());
     }
 
     let mut by_rule: u32 = 0;
     let mut enqueued: u32 = 0;
+    let mut skipped: u32 = 0;
 
     let mut storage = apalis_postgres::PostgresStorage::new(apalis_pool);
 
-    for txn in &uncategorized {
+    for txn in &eligible {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
             db.update_transaction_category(txn.id, category_id, CategoryMethod::Rule)
                 .await?;
             by_rule += 1;
+            continue;
+        }
+
+        // Only enqueue truly uncategorized transactions for LLM; already
+        // LLM-categorized ones that didn't match a rule keep their category.
+        if txn.category_id.is_some() {
+            skipped += 1;
             continue;
         }
 
@@ -67,9 +75,10 @@ pub(crate) async fn categorize_fan_out(
     }
 
     tracing::info!(
-        total = uncategorized.len(),
+        total = eligible.len(),
         by_rule,
         enqueued,
+        skipped,
         "categorize fan-out completed"
     );
 

@@ -390,6 +390,29 @@ impl Db {
         row.as_ref().map(row_to_transaction).transpose()
     }
 
+    /// Get transactions eligible for rule evaluation.
+    ///
+    /// Returns transactions that are either uncategorized (`category_id IS NULL`)
+    /// or were categorized by the LLM (`category_method = 'llm'`). Manual and
+    /// rule-categorized transactions are left alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn get_rule_eligible_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                    merchant_name, description, posted_date, budget_month_id,
+                    correlation_id, correlation_type, category_method, suggested_category
+             FROM transactions
+             WHERE category_id IS NULL OR category_method = 'llm'",
+        )
+        .fetch_all(pool)
+        .await?;
+        rows.iter().map(row_to_transaction).collect()
+    }
+
     /// Get transactions that have not yet been categorized.
     ///
     /// # Errors
@@ -1608,6 +1631,50 @@ mod tests {
         let acct2_txns = db.list_transactions_by_account(acct2.id).await.unwrap();
         assert_eq!(acct2_txns.len(), 1);
         assert_eq!(acct2_txns[0].id, txn3.id);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_get_rule_eligible_transactions(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        // Uncategorized — should be included
+        let txn_uncat = make_transaction(acct.id);
+        db.upsert_transaction(&txn_uncat, None).await.unwrap();
+
+        // LLM-categorized — should be included
+        let txn_llm = make_transaction(acct.id);
+        db.upsert_transaction(&txn_llm, None).await.unwrap();
+        db.update_transaction_category(txn_llm.id, cat.id, CategoryMethod::Llm)
+            .await
+            .unwrap();
+
+        // Rule-categorized — should be excluded
+        let txn_rule = make_transaction(acct.id);
+        db.upsert_transaction(&txn_rule, None).await.unwrap();
+        db.update_transaction_category(txn_rule.id, cat.id, CategoryMethod::Rule)
+            .await
+            .unwrap();
+
+        // Manual-categorized — should be excluded
+        let txn_manual = make_transaction(acct.id);
+        db.upsert_transaction(&txn_manual, None).await.unwrap();
+        db.update_transaction_category(txn_manual.id, cat.id, CategoryMethod::Manual)
+            .await
+            .unwrap();
+
+        let eligible = db.get_rule_eligible_transactions().await.unwrap();
+        let ids: Vec<_> = eligible.iter().map(|t| t.id).collect();
+
+        assert_eq!(eligible.len(), 2);
+        assert!(ids.contains(&txn_uncat.id));
+        assert!(ids.contains(&txn_llm.id));
+        assert!(!ids.contains(&txn_rule.id));
+        assert!(!ids.contains(&txn_manual.id));
     }
 
     // -----------------------------------------------------------------------

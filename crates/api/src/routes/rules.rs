@@ -9,6 +9,7 @@ use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleId, RuleType,
 };
 use budget_core::rules::{compile_rule_pattern, evaluate_categorization_rules};
+use budget_jobs::CategorizeJob;
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -116,6 +117,14 @@ async fn create(
 ) -> Result<(StatusCode, Json<Rule>), AppError> {
     let rule = parse_rule_body(&body, RuleId::new())?;
     state.db.insert_rule(&rule).await?;
+
+    // Re-evaluate eligible transactions against the new rule
+    state
+        .categorize_storage
+        .push(CategorizeJob)
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
@@ -186,10 +195,10 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
         })
         .collect();
 
-    let uncategorized = state.db.get_uncategorized_transactions().await?;
+    let eligible = state.db.get_rule_eligible_transactions().await?;
     let mut categorized_count: u32 = 0;
 
-    for txn in &uncategorized {
+    for txn in &eligible {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
             state
                 .db
