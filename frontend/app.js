@@ -395,22 +395,25 @@ function Dashboard() {
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
   const [transactions, setTransactions] = useState(null);
+  const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [selectedMonthId, setSelectedMonthId] = useState(null);
 
-  // Initial load: categories, months, transactions + status for current month
+  // Initial load: categories, months, transactions, accounts + status for current month
   useEffect(() => {
     Promise.all([
       api.get("/budgets/status"),
       api.get("/categories"),
       api.get("/budgets/months"),
       api.get("/transactions"),
+      api.get("/accounts"),
     ])
-      .then(([s, c, m, t]) => {
+      .then(([s, c, m, t, a]) => {
         setStatusResp(s);
         setCategories(c);
         setMonths(m);
         setTransactions(t);
+        setAccounts(a);
       })
       .catch(setError);
   }, []);
@@ -425,7 +428,7 @@ function Dashboard() {
   }, [selectedMonthId]);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!statusResp || !categories || !months || !transactions)
+  if (!statusResp || !categories || !months || !transactions || !accounts)
     return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -777,37 +780,17 @@ function Dashboard() {
           ${displayTxns.length} transaction${displayTxns.length !== 1 ? "s" : ""}
         </span>
       </div>
-      <div class="table" style="max-height:24rem;overflow-y:auto">
-        <table class="dash-txn-table">
-          <tbody>
-            ${displayTxns.map(
-              (t) => html`
-                <tr key=${t.id}>
-                  <td class="mono text-light" style="width:7rem">
-                    ${formatDate(t.posted_date)}
-                  </td>
-                  <td style="font-weight:500">
-                    ${cleanMerchant(t.merchant_name || t.description)}
-                  </td>
-                  <td
-                    class="${amountClass(t.amount)}"
-                    style="text-align:right"
-                  >
-                    ${formatAmount(t.amount, { decimals: 0 })}
-                  </td>
-                  <td>
-                    <${CategoryBadge}
-                      catMap=${catMap}
-                      id=${t.category_id}
-                      suggested=${t.suggested_category}
-                    />
-                  </td>
-                </tr>
-              `,
-            )}
-          </tbody>
-        </table>
-      </div>
+      <${TransactionTable}
+        transactions=${displayTxns}
+        categories=${categories}
+        catMap=${catMap}
+        onTransactionUpdate=${(txnId, patch) => {
+          setTransactions((prev) =>
+            prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
+          );
+        }}
+        compact=${true}
+      />
     </article>
   `;
 }
@@ -1155,11 +1138,14 @@ function TxnDetail({
   `;
 }
 
-function Transactions() {
-  const [txns, setTxns] = useState(null);
-  const [categories, setCategories] = useState(null);
-  const [accounts, setAccounts] = useState(null);
-  const [error, setError] = useState(null);
+function TransactionTable({
+  transactions,
+  categories,
+  catMap,
+  accounts,
+  onTransactionUpdate,
+  compact,
+}) {
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
   const [filterAcct, setFilterAcct] = useState("");
@@ -1168,37 +1154,13 @@ function Transactions() {
   const [sortCol, setSortCol] = useState("date");
   const [sortAsc, setSortAsc] = useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      api.get("/transactions"),
-      api.get("/categories"),
-      api.get("/accounts"),
-    ])
-      .then(([t, c, a]) => {
-        setTxns(t);
-        setCategories(c);
-        setAccounts(a);
-      })
-      .catch(setError);
-  }, []);
-
-  if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!txns) return html`<p class="text-light">Loading...</p>`;
-
-  const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
-  const acctMap = Object.fromEntries((accounts ?? []).map((a) => [a.id, a]));
-
-  if (txns.length === 0)
-    return html`
-      <h2>Transactions</h2>
-      <p class="text-light">
-        No transactions yet. Connect an account and run a sync job to pull in
-        data.
-      </p>
-    `;
+  const acctMap = accounts
+    ? Object.fromEntries(accounts.map((a) => [a.id, a]))
+    : {};
+  const showAccounts = !!accounts;
 
   const q = search.toLowerCase();
-  const filtered = txns.filter((t) => {
+  const filtered = transactions.filter((t) => {
     if (
       q &&
       !(t.merchant_name || "").toLowerCase().includes(q) &&
@@ -1266,23 +1228,28 @@ function Transactions() {
   }
 
   const usedCatIds = [
-    ...new Set(txns.map((t) => t.category_id).filter(Boolean)),
+    ...new Set(transactions.map((t) => t.category_id).filter(Boolean)),
   ];
-  const usedAcctIds = [...new Set(txns.map((t) => t.account_id))];
+  const usedAcctIds = showAccounts
+    ? [...new Set(transactions.map((t) => t.account_id))]
+    : [];
   const hasActiveFilter = filterCat || filterAcct || filterMethod;
 
-  return html`
-    <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
-      <h2 style="margin:0">Transactions</h2>
-      <span class="text-lighter small" style="margin-left:0.75rem">
-        ${
-          filtered.length === txns.length
-            ? `${txns.length}`
-            : `${filtered.length} / ${txns.length}`
+  function handleCategorize(txnId, categoryId) {
+    const patch = categoryId
+      ? {
+          category_id: categoryId,
+          category_method: "manual",
+          suggested_category: null,
         }
-      </span>
-    </div>
+      : { category_id: null, category_method: null };
+    onTransactionUpdate(txnId, patch);
+    setSelected((prev) =>
+      prev && prev.id === txnId ? { ...prev, ...patch } : prev,
+    );
+  }
 
+  return html`
     <div class="hstack txn-filters" style="margin-bottom:0.75rem">
       <input
         type="search"
@@ -1299,13 +1266,18 @@ function Transactions() {
             html`<option value=${id}>${categoryName(catMap, id)}</option>`,
         )}
       </select>
-      <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
-        <option value="">All accounts</option>
-        ${usedAcctIds.map(
-          (id) =>
-            html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
-        )}
-      </select>
+      ${
+        showAccounts &&
+        html`
+        <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
+          <option value="">All accounts</option>
+          ${usedAcctIds.map(
+            (id) =>
+              html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
+          )}
+        </select>
+      `
+      }
       <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
         <option value="">All methods</option>
         <option value="manual">Manual</option>
@@ -1350,7 +1322,7 @@ function Transactions() {
     `
     }
 
-    <div class="table txn-table">
+    <div class="${compact ? "table dash-txn-table" : "table txn-table"}" style="${compact ? "max-height:24rem;overflow-y:auto" : ""}">
       <table>
         <thead>
           <tr>
@@ -1358,7 +1330,7 @@ function Transactions() {
             <${SortTh} col="merchant">Merchant<//>
             <${SortTh} col="amount">Amount<//>
             <${SortTh} col="category">Category<//>
-            <${SortTh} col="account">Account<//>
+            ${showAccounts && html`<${SortTh} col="account">Account<//>`}
           </tr>
         </thead>
         <tbody>
@@ -1367,20 +1339,21 @@ function Transactions() {
               <tr
                 class=${t.correlation_type ? "row-correlated" : ""}
                 onClick=${() => setSelected(t)}
+                style="cursor:pointer"
               >
-                <td class="mono">${formatDate(t.posted_date)}</td>
+                <td class="mono${compact ? " text-light" : ""}" style="${compact ? "width:7rem" : ""}">${formatDate(t.posted_date)}</td>
                 <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
-                <td class="${amountClass(t.amount)}">${formatAmount(t.amount)}</td>
+                <td class="${amountClass(t.amount)}" style="${compact ? "text-align:right" : ""}">${formatAmount(t.amount, compact ? { decimals: 0 } : {})}</td>
                 <td>
-                  <${MethodDot} method=${t.category_method} />
+                  ${!compact && html`<${MethodDot} method=${t.category_method} />`}
                   <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
                   ${
-                    t.correlation_type
+                    !compact && t.correlation_type
                       ? html`<span class="chip outline small">${t.correlation_type}</span>`
                       : null
                   }
                 </td>
-                <td class="text-light">${accountDisplayName(acctMap[t.account_id])}</td>
+                ${showAccounts && html`<td class="text-light">${accountDisplayName(acctMap[t.account_id])}</td>`}
               </tr>
             `,
           )}
@@ -1393,23 +1366,65 @@ function Transactions() {
       catMap=${catMap}
       categories=${categories}
       acctMap=${acctMap}
-      onCategorize=${(txnId, categoryId) => {
-        const patch = categoryId
-          ? {
-              category_id: categoryId,
-              category_method: "manual",
-              suggested_category: null,
-            }
-          : { category_id: null, category_method: null };
+      onCategorize=${handleCategorize}
+      onClose=${() => setSelected(null)}
+      onRuleCreated=${() => {}}
+    />
+  `;
+}
+
+function Transactions() {
+  const [txns, setTxns] = useState(null);
+  const [categories, setCategories] = useState(null);
+  const [accounts, setAccounts] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    Promise.all([
+      api.get("/transactions"),
+      api.get("/categories"),
+      api.get("/accounts"),
+    ])
+      .then(([t, c, a]) => {
+        setTxns(t);
+        setCategories(c);
+        setAccounts(a);
+      })
+      .catch(setError);
+  }, []);
+
+  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (!txns) return html`<p class="text-light">Loading...</p>`;
+
+  const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
+
+  if (txns.length === 0)
+    return html`
+      <h2>Transactions</h2>
+      <p class="text-light">
+        No transactions yet. Connect an account and run a sync job to pull in
+        data.
+      </p>
+    `;
+
+  return html`
+    <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
+      <h2 style="margin:0">Transactions</h2>
+      <span class="text-lighter small" style="margin-left:0.75rem">
+        ${txns.length}
+      </span>
+    </div>
+
+    <${TransactionTable}
+      transactions=${txns}
+      categories=${categories}
+      catMap=${catMap}
+      accounts=${accounts}
+      onTransactionUpdate=${(txnId, patch) => {
         setTxns((prev) =>
           prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
         );
-        setSelected((prev) =>
-          prev && prev.id === txnId ? { ...prev, ...patch } : prev,
-        );
       }}
-      onClose=${() => setSelected(null)}
-      onRuleCreated=${() => {}}
     />
   `;
 }

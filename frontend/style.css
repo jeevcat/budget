@@ -376,9 +376,33 @@ dialog > form > div {
   flex-shrink: 0;
 }
 
-/* Dashboard recent transactions */
+/* Dashboard recent transactions (compact TransactionTable) */
 .dash-txn-table {
   font-size: 0.85rem;
+}
+.dash-txn-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 1;
+  user-select: none;
+  white-space: nowrap;
+}
+.dash-txn-table thead th.sortable {
+  cursor: pointer;
+}
+.dash-txn-table thead th.sortable:hover {
+  color: var(--primary);
+}
+.dash-txn-table thead th .sort-arrow {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+  opacity: 0.35;
+  font-size: 0.75em;
+}
+.dash-txn-table thead th.sort-active .sort-arrow {
+  opacity: 1;
 }
 .dash-txn-table tbody td {
   padding-block: 0.3rem;
