@@ -1,6 +1,12 @@
 import htm from "htm";
 import { h, render } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 
 const html = htm.bind(h);
 
@@ -213,7 +219,6 @@ function CategorySelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [dropStyle, setDropStyle] = useState({});
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -229,17 +234,6 @@ function CategorySelect({
 
   const selectedName = value ? categoryName(catMap, value) || "" : "";
 
-  function updateDropPos() {
-    const trigger = wrapRef.current?.querySelector(".cat-select-trigger");
-    if (!trigger) return;
-    const r = trigger.getBoundingClientRect();
-    setDropStyle({
-      top: `${r.bottom + 4}px`,
-      left: `${r.left}px`,
-      minWidth: `${r.width}px`,
-    });
-  }
-
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
@@ -249,15 +243,11 @@ function CategorySelect({
       }
     };
     document.addEventListener("mousedown", onDown);
-    const scrollParent =
-      wrapRef.current?.closest("dialog > form > div") ||
-      wrapRef.current?.closest("dialog");
-    if (scrollParent)
-      scrollParent.addEventListener("scroll", updateDropPos, { passive: true });
+    const scrollParent = wrapRef.current?.closest("dialog > form > div");
+    if (scrollParent) scrollParent.style.overflow = "visible";
     return () => {
       document.removeEventListener("mousedown", onDown);
-      if (scrollParent)
-        scrollParent.removeEventListener("scroll", updateDropPos);
+      if (scrollParent) scrollParent.style.overflow = "";
     };
   }, [open]);
 
@@ -269,7 +259,6 @@ function CategorySelect({
 
   function handleOpen() {
     if (disabled) return;
-    updateDropPos();
     setOpen(true);
     setQuery("");
     setActiveIdx(-1);
@@ -347,7 +336,7 @@ function CategorySelect({
       ${
         open &&
         html`
-          <div class="cat-select-dropdown" style=${dropStyle}>
+          <div class="cat-select-dropdown">
             <input
               ref=${inputRef}
               type="text"
@@ -668,6 +657,119 @@ function formatMonthRange(month) {
   return `${start} \u2013 ${end}`;
 }
 
+function ProjectDrillDown({
+  project,
+  childBreakdown,
+  totalSpent,
+  selectedCategoryId,
+  onCategoryClick,
+  onBack,
+}) {
+  const remaining = Number(project.budget_amount) - totalSpent;
+
+  return html`
+    <div
+      class="hstack"
+      style="gap:0.5rem;align-items:center;margin-bottom:0.75rem;cursor:pointer"
+      onClick=${onBack}
+    >
+      <span style="font-size:1.1rem">\u2190</span>
+      <span class="text-light">All Projects</span>
+      <span class="text-light">\u203A</span>
+      <span class="cat-project" style="font-weight:600">${project.name}</span>
+    </div>
+
+    <div class="dash-totals">
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Project Budget</span>
+        <span class="dash-stat-value">${currencyFmt(project.budget_amount)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Spent</span>
+        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Remaining</span>
+        <span
+          class="dash-stat-value ${remaining < 0 ? "dash-negative" : ""}"
+        >
+          ${currencyFmt(remaining)}
+        </span>
+      </article>
+      <article class="card dash-stat-card">
+        <span class="dash-stat-label text-light">Status</span>
+        <span class="dash-stat-value">
+          <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace)}</span>
+        </span>
+      </article>
+    </div>
+
+    ${
+      childBreakdown.length === 0
+        ? html`<p class="text-light" style="margin-top:1rem">No spending yet.</p>`
+        : html`
+    <div class="dash-grid">
+      <article class="card" style="padding:var(--space-4)">
+        <h3 style="margin:0 0 0.75rem">Spending Distribution</h3>
+        <div class="vstack gap-2">
+          ${childBreakdown.map(
+            (item) => html`
+              <div
+                class="spend-bar-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
+                key=${item.id}
+                onClick=${() => onCategoryClick?.(item.id)}
+                style="cursor:pointer"
+              >
+                <span class="spend-bar-label">${item.name}</span>
+                <div class="spend-bar-track">
+                  <div
+                    class="spend-bar-fill spend-bar-${project.pace}"
+                    style="width:${totalSpent > 0 ? (item.spent / totalSpent) * 100 : 0}%"
+                  ></div>
+                </div>
+                <span class="spend-bar-amount">${currencyFmt(item.spent)}</span>
+              </div>
+            `,
+          )}
+        </div>
+      </article>
+
+      <article class="card" style="padding:var(--space-4)">
+        <h3 style="margin:0 0 0.75rem">Sub-Category Breakdown</h3>
+        <div class="vstack" style="gap:0">
+          ${childBreakdown.map(
+            (item) => html`
+              <div
+                class="hstack dash-cat-row ${selectedCategoryId === item.id ? "dash-cat-selected" : ""}"
+                key=${item.id}
+                onClick=${() => onCategoryClick?.(item.id)}
+                style="cursor:pointer"
+              >
+                <div
+                  style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:var(--text-light);flex-shrink:0"
+                >
+                  ${totalSpent > 0 ? Math.round((item.spent / totalSpent) * 100) : 0}%
+                </div>
+                <div class="dash-cat-info">
+                  <div class="dash-cat-name">${item.name}</div>
+                  <div class="dash-cat-sub">
+                    <span>${currencyFmt(item.spent)}</span>
+                    <span class="text-light">
+                      ${" "}of ${currencyFmt(totalSpent)} total</span
+                    >
+                  </div>
+                </div>
+              </div>
+            `,
+          )}
+        </div>
+      </article>
+    </div>
+    `
+    }
+  `;
+}
+
 function Dashboard() {
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
@@ -903,9 +1005,95 @@ function Dashboard() {
 
   // Category filter for transaction list (click a category in charts to filter)
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  // Drill into a specific project to see sub-category breakdown
+  const [drilledProjectId, setDrilledProjectId] = useState(null);
   const handleCategoryClick = useCallback((catId) => {
     setSelectedCategoryId((prev) => (prev === catId ? null : catId));
   }, []);
+
+  // Check whether a project category has direct children
+  const projectHasChildren = useCallback(
+    (catId) => categories.some((c) => c.parent_id === catId),
+    [categories],
+  );
+
+  // Handle click on a project row: drill in if it has children, otherwise filter transactions
+  const handleProjectClick = useCallback(
+    (catId) => {
+      if (projectHasChildren(catId)) {
+        setDrilledProjectId(catId);
+        setSelectedCategoryId(null);
+      } else {
+        setSelectedCategoryId((prev) => (prev === catId ? null : catId));
+      }
+    },
+    [projectHasChildren],
+  );
+
+  // Compute sub-category breakdown when drilled into a project
+  const drilledProject = drilledProjectId
+    ? projects.find((p) => p.category_id === drilledProjectId)
+    : null;
+
+  const { childBreakdown, drilledTotalSpent } = useMemo(() => {
+    if (!drilledProjectId || !drilledProject) {
+      return { childBreakdown: [], drilledTotalSpent: 0 };
+    }
+    const directChildren = categories.filter(
+      (c) => c.parent_id === drilledProjectId,
+    );
+    const subtreeIds = collectSubtree(drilledProjectId);
+    const subtreeTxns = projectBudgetTxns.filter(
+      (t) => t.category_id && subtreeIds.has(t.category_id),
+    );
+
+    // Aggregate per direct child (deeper descendants roll up to their direct-child ancestor)
+    const childSpent = new Map();
+    for (const child of directChildren) {
+      childSpent.set(child.id, 0);
+    }
+    let directSpent = 0;
+    for (const t of subtreeTxns) {
+      const amt = Math.abs(Number(t.amount));
+      if (t.category_id === drilledProjectId) {
+        directSpent += amt;
+        continue;
+      }
+      // Find which direct child this transaction belongs to
+      let cid = t.category_id;
+      while (cid) {
+        if (childSpent.has(cid)) {
+          childSpent.set(cid, childSpent.get(cid) + amt);
+          break;
+        }
+        const cat = catMap[cid];
+        cid = cat?.parent_id ?? null;
+      }
+    }
+
+    const rows = directChildren
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        spent: childSpent.get(c.id) || 0,
+      }))
+      .filter((r) => r.spent > 0)
+      .sort((a, b) => b.spent - a.spent);
+
+    if (directSpent > 0) {
+      rows.push({ id: drilledProjectId, name: "(Direct)", spent: directSpent });
+    }
+
+    const total = rows.reduce((sum, r) => sum + r.spent, 0);
+    return { childBreakdown: rows, drilledTotalSpent: total };
+  }, [
+    drilledProjectId,
+    drilledProject,
+    categories,
+    projectBudgetTxns,
+    catMap,
+    collectSubtree,
+  ]);
 
   // Track active tab (0 = Monthly, 1 = Annual, 2 = Projects)
   const [activeTab, setActiveTab] = useState(0);
@@ -922,6 +1110,7 @@ function Dashboard() {
       if (idx >= 0) {
         setActiveTab(idx);
         setSelectedCategoryId(null);
+        setDrilledProjectId(null);
       }
     });
   }, []);
@@ -940,6 +1129,10 @@ function Dashboard() {
   // Apply optional category filter from chart clicks
   const displayTxns = (() => {
     let list = baseTxns;
+    if (drilledProjectId) {
+      const subtree = collectSubtree(drilledProjectId);
+      list = list.filter((t) => t.category_id && subtree.has(t.category_id));
+    }
     if (selectedCategoryId) {
       const subtree = collectSubtree(selectedCategoryId);
       list = list.filter((t) => t.category_id && subtree.has(t.category_id));
@@ -1044,15 +1237,29 @@ function Dashboard() {
         hasProjects &&
         html`
         <div role="tabpanel">
-          <${BudgetSection}
-            items=${projects}
-            totalBudget=${pTotals.budget}
-            totalSpent=${pTotals.spent}
-            totalRemaining=${pTotals.remaining}
-            barMax=${pTotals.barMax}
-            selectedCategoryId=${selectedCategoryId}
-            onCategoryClick=${handleCategoryClick}
-          />
+          ${
+            drilledProject
+              ? html`<${ProjectDrillDown}
+                project=${drilledProject}
+                childBreakdown=${childBreakdown}
+                totalSpent=${drilledTotalSpent}
+                selectedCategoryId=${selectedCategoryId}
+                onCategoryClick=${handleCategoryClick}
+                onBack=${() => {
+                  setDrilledProjectId(null);
+                  setSelectedCategoryId(null);
+                }}
+              />`
+              : html`<${BudgetSection}
+                items=${projects}
+                totalBudget=${pTotals.budget}
+                totalSpent=${pTotals.spent}
+                totalRemaining=${pTotals.remaining}
+                barMax=${pTotals.barMax}
+                selectedCategoryId=${selectedCategoryId}
+                onCategoryClick=${handleProjectClick}
+              />`
+          }
         </div>
       `
       }
@@ -1064,6 +1271,17 @@ function Dashboard() {
         style="align-items:baseline;margin-bottom:0.75rem"
       >
         <h3 style="margin:0">Transactions</h3>
+        ${
+          drilledProject &&
+          html`
+          <span
+            class="chip outline small cat-project"
+            style="margin-left:0.5rem"
+          >
+            ${drilledProject.shortName}
+          </span>
+        `
+        }
         ${
           selectedCategoryId &&
           html`
