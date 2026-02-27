@@ -126,11 +126,14 @@ function NavLink({ href, children }) {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function formatAmount(amount, { decimals = 2 } = {}) {
+function formatAmount(amount, { decimals = 2, sign = false } = {}) {
   const n = Number(amount);
-  const abs = Math.abs(n).toFixed(decimals);
-  if (n > 0) return `+\u202F${abs}\u202F\u20AC`;
-  if (n < 0) return `\u2212\u202F${abs}\u202F\u20AC`;
+  const abs = Math.abs(n).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  if (sign && n > 0) return `+\u202F${abs}\u202F\u20AC`;
+  if (sign && n < 0) return `\u2212\u202F${abs}\u202F\u20AC`;
   return `${abs}\u202F\u20AC`;
 }
 
@@ -215,6 +218,7 @@ function CategorySelect({
   placeholder,
   disabled,
   extraOptions,
+  clearable,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -322,16 +326,28 @@ function CategorySelect({
         >
           ${value ? selectedName : placeholder || "Select category..."}
         </span>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+        ${
+          clearable && value
+            ? html`<span
+              class="cat-select-clear"
+              role="button"
+              tabindex="-1"
+              onClick=${(e) => {
+                e.stopPropagation();
+                onChange(null);
+              }}
+            >×</span>`
+            : html`<svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>`
+        }
       </button>
       ${
         open &&
@@ -442,14 +458,6 @@ function paceBadge(pace) {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-function currencyFmt(amount) {
-  const n = Number(amount);
-  return `${n.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}\u202F\u20AC`;
-}
-
 function paceLabel(pace) {
   if (pace === "under_budget") return "Under";
   if (pace === "on_track") return "On track";
@@ -520,10 +528,10 @@ function SpendBar({ items, maxVal, selectedCategoryId, onCategoryClick }) {
               <div
                 class="spend-bar-budget-mark"
                 style="left:${maxVal > 0 ? (Number(item.budget) / maxVal) * 100 : 0}%"
-                title="Budget: ${currencyFmt(item.budget)}"
+                title="Budget: ${formatAmount(item.budget, { decimals: 0 })}"
               ></div>
             </div>
-            <span class="spend-bar-amount">${currencyFmt(item.spent)}</span>
+            <span class="spend-bar-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
           </div>
         `,
       )}
@@ -546,18 +554,18 @@ function BudgetSection({
     <div class="dash-totals">
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Total Budget</span>
-        <span class="dash-stat-value">${currencyFmt(totalBudget)}</span>
+        <span class="dash-stat-value">${formatAmount(totalBudget, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
+        <span class="dash-stat-value">${formatAmount(totalSpent, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Remaining</span>
         <span
           class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
         >
-          ${currencyFmt(totalRemaining)}
+          ${formatAmount(totalRemaining, { decimals: 0 })}
         </span>
       </article>
       <article class="card dash-stat-card">
@@ -614,13 +622,13 @@ function BudgetSection({
                     }${s.shortName}
                   </div>
                   <div class="dash-cat-sub">
-                    <span>${currencyFmt(s.spent)}</span>
+                    <span>${formatAmount(s.spent, { decimals: 0 })}</span>
                     <span class="text-light">
-                      ${" "}/ ${Number(s.budget_amount) > 0 ? currencyFmt(s.budget_amount) : "no budget"}</span
+                      ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span
                     >
                     ${
                       Number(s.rollover) !== 0 &&
-                      html`<span class="text-light" style="margin-left:0.25rem">(${Number(s.rollover) > 0 ? "+" : ""}${currencyFmt(s.rollover)} rollover)</span>`
+                      html`<span class="text-light" style="margin-left:0.25rem">(${formatAmount(s.rollover, { decimals: 0, sign: true })} rollover)</span>`
                     }
                   </div>
                 </div>
@@ -631,7 +639,7 @@ function BudgetSection({
                   <span
                     class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
                   >
-                    ${formatAmount(s.remaining, { decimals: 0 })}
+                    ${formatAmount(s.remaining, { decimals: 0, sign: true })}
                   </span>
                 </div>
               </div>
@@ -682,18 +690,18 @@ function ProjectDrillDown({
     <div class="dash-totals">
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Project Budget</span>
-        <span class="dash-stat-value">${currencyFmt(project.budget_amount)}</span>
+        <span class="dash-stat-value">${formatAmount(project.budget_amount, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${currencyFmt(totalSpent)}</span>
+        <span class="dash-stat-value">${formatAmount(totalSpent, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Remaining</span>
         <span
           class="dash-stat-value ${remaining < 0 ? "dash-negative" : ""}"
         >
-          ${currencyFmt(remaining)}
+          ${formatAmount(remaining, { decimals: 0 })}
         </span>
       </article>
       <article class="card dash-stat-card">
@@ -727,7 +735,7 @@ function ProjectDrillDown({
                     style="width:${totalSpent > 0 ? (item.spent / totalSpent) * 100 : 0}%"
                   ></div>
                 </div>
-                <span class="spend-bar-amount">${currencyFmt(item.spent)}</span>
+                <span class="spend-bar-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
               </div>
             `,
           )}
@@ -753,9 +761,9 @@ function ProjectDrillDown({
                 <div class="dash-cat-info">
                   <div class="dash-cat-name">${item.name}</div>
                   <div class="dash-cat-sub">
-                    <span>${currencyFmt(item.spent)}</span>
+                    <span>${formatAmount(item.spent, { decimals: 0 })}</span>
                     <span class="text-light">
-                      ${" "}of ${currencyFmt(totalSpent)} total</span
+                      ${" "}of ${formatAmount(totalSpent, { decimals: 0 })} total</span
                     >
                   </div>
                 </div>
@@ -1381,7 +1389,8 @@ function TxnDetail({
   const canGenerateRule = txn.category_id && txn.category_method !== "rule";
 
   async function handleCategorize(categoryId) {
-    if (!categoryId || categoryId === txn.category_id) return;
+    if (categoryId === txn.category_id) return;
+    if (!categoryId) return handleUncategorize();
     setSaving(true);
     try {
       await api.post(`/transactions/${txn.id}/categorize`, {
@@ -1495,7 +1504,7 @@ function TxnDetail({
         <div>
           <dl class="txn-dl">
             <dt>Date</dt><dd>${formatDateFull(txn.posted_date)}</dd>
-            <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount)}</dd>
+            <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount, { sign: true })}</dd>
             ${
               txn.original_amount
                 ? html`
@@ -1512,6 +1521,7 @@ function TxnDetail({
                 catMap=${catMap}
                 placeholder="uncategorized"
                 disabled=${saving}
+                clearable
               />
               ${
                 txn.category_id && txn.category_method
@@ -1775,7 +1785,7 @@ function TransactionTable({
               >
                 <td class="mono${compact ? " text-light" : ""}" style="${compact ? "width:7rem" : ""}">${formatDate(t.posted_date)}</td>
                 <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
-                <td class="${amountClass(t.amount)}" style="${compact ? "text-align:right" : ""}">${formatAmount(t.amount, compact ? { decimals: 0 } : {})}</td>
+                <td class="${amountClass(t.amount)}" style="${compact ? "text-align:right" : ""}">${formatAmount(t.amount, compact ? { decimals: 0, sign: true } : { sign: true })}</td>
                 <td>
                   ${!compact && html`<${MethodDot} method=${t.category_method} />`}
                   <${CategoryBadge} catMap=${catMap} id=${t.category_id} suggested=${t.suggested_category} />
@@ -2207,7 +2217,7 @@ function Categories() {
     }
     const amt =
       cat.budget_amount != null
-        ? `${Number(cat.budget_amount).toFixed(0)}\u202F\u20AC`
+        ? formatAmount(cat.budget_amount, { decimals: 0 })
         : "?";
     return html`<span>${amt}</span>`;
   }
@@ -2665,6 +2675,7 @@ function Rules() {
             categories=${categories}
             catMap=${catMap}
             placeholder="-- Category --"
+            clearable
           />`
           : html`<select
             value=${form.target_correlation_type}

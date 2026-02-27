@@ -455,6 +455,18 @@ dialog > form > div {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.cat-select-clear {
+  flex-shrink: 0;
+  padding: 0 0.15rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: 2px;
+}
+.cat-select-clear:hover {
+  color: var(--foreground);
+}
 .cat-select-placeholder {
   color: var(--muted-foreground);
 }
