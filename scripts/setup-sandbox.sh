@@ -1,8 +1,8 @@
 #!/bin/bash
 # Setup script for Claude Code web/mobile sandbox environments.
 #
-# Detects the gVisor-based cloud sandbox (Linux runsc, no $USER) and
-# bootstraps PostgreSQL, Biome, and environment variables so that
+# Detects the Claude Code web/mobile sandbox (hostname "runsc", no $USER)
+# and bootstraps PostgreSQL, Biome, and environment variables so that
 # `cargo test` and the pre-commit hook work out of the box.
 #
 # Safe to run repeatedly — every step is idempotent.
@@ -10,10 +10,10 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Detection: only run inside the cloud sandbox
+# Detection: only run inside the Claude Code web/mobile sandbox
 # ---------------------------------------------------------------------------
-if [[ "$(uname -r)" != *runsc* ]] || [[ -n "${USER:-}" ]]; then
-  echo "Not a cloud sandbox — skipping setup."
+if [[ "$(hostname)" != "runsc" ]] || [[ -n "${USER:-}" ]]; then
+  echo "Not a Claude Code web/mobile sandbox — skipping setup."
   exit 0
 fi
 
