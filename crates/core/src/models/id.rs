@@ -1,14 +1,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::types::Oid;
-use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};
 use uuid::Uuid;
-
-/// `PostgreSQL` UUID type OID.
-const PG_UUID_OID: Oid = Oid(2950);
-/// `PostgreSQL` UUID array type OID.
-const PG_UUID_ARRAY_OID: Oid = Oid(2951);
 
 macro_rules! define_id {
     ($name:ident) => {
@@ -56,38 +49,38 @@ macro_rules! define_id {
             }
         }
 
-        // sqlx integration: encode/decode as native PostgreSQL UUID (16 bytes)
+        // sqlx: delegate to the inner Uuid (which has Type/Encode/Decode
+        // via the sqlx "uuid" feature).
         impl sqlx::Type<sqlx::Postgres> for $name {
-            fn type_info() -> PgTypeInfo {
-                PgTypeInfo::with_oid(PG_UUID_OID)
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <Uuid as sqlx::Type<sqlx::Postgres>>::type_info()
             }
 
-            fn compatible(ty: &PgTypeInfo) -> bool {
-                *ty == Self::type_info()
+            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+                <Uuid as sqlx::Type<sqlx::Postgres>>::compatible(ty)
             }
         }
 
-        impl PgHasArrayType for $name {
-            fn array_type_info() -> PgTypeInfo {
-                PgTypeInfo::with_oid(PG_UUID_ARRAY_OID)
+        impl sqlx::postgres::PgHasArrayType for $name {
+            fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+                <Uuid as sqlx::postgres::PgHasArrayType>::array_type_info()
             }
         }
 
         impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $name {
-            fn decode(value: PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-                let bytes = <&[u8] as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
-                let uuid = Uuid::from_slice(bytes)?;
-                Ok(Self(uuid))
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'r>,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                <Uuid as sqlx::Decode<'r, sqlx::Postgres>>::decode(value).map(Self)
             }
         }
 
         impl sqlx::Encode<'_, sqlx::Postgres> for $name {
             fn encode_by_ref(
                 &self,
-                buf: &mut PgArgumentBuffer,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
             ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                buf.extend_from_slice(self.0.as_bytes());
-                Ok(sqlx::encode::IsNull::No)
+                <Uuid as sqlx::Encode<'_, sqlx::Postgres>>::encode_by_ref(&self.0, buf)
             }
         }
     };

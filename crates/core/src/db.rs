@@ -2307,6 +2307,140 @@ mod tests {
         assert!(!ids.contains(&txn_b.id));
     }
 
+    /// Verify the TEXT → UUID migration preserves data and FK integrity.
+    ///
+    /// Runs all migrations up to (but not including) the UUID migration,
+    /// seeds rows with TEXT UUIDs, applies the UUID migration, then reads
+    /// back through the typed `Db` layer.
+    #[sqlx::test(migrations = false)]
+    async fn test_text_to_uuid_migration_preserves_data(pool: PgPool) {
+        // The UUID migration has version 20260227400000.
+        const UUID_MIGRATION_VERSION: i64 = 20260227400000;
+
+        let all = sqlx::migrate!("../../migrations");
+
+        // 1. Run every migration BEFORE the UUID one.
+        let pre: Vec<_> = all
+            .migrations
+            .iter()
+            .filter(|m| m.version < UUID_MIGRATION_VERSION)
+            .cloned()
+            .collect();
+
+        let pre_migrator = sqlx::migrate::Migrator {
+            migrations: pre.into(),
+            ignore_missing: true,
+            locking: true,
+            no_tx: false,
+        };
+        pre_migrator.run(&pool).await.unwrap();
+
+        // 2. Seed TEXT UUID data using raw SQL (schema is still TEXT).
+        let cat_id = uuid::Uuid::new_v4().to_string();
+        let child_cat_id = uuid::Uuid::new_v4().to_string();
+        let conn_id = uuid::Uuid::new_v4().to_string();
+        let acct_id = uuid::Uuid::new_v4().to_string();
+        let txn_id = uuid::Uuid::new_v4().to_string();
+        let rule_id = uuid::Uuid::new_v4().to_string();
+
+        sqlx::query("INSERT INTO categories (id, name) VALUES ($1, 'Food')")
+            .bind(&cat_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO categories (id, name, parent_id) VALUES ($1, 'Restaurants', $2)")
+            .bind(&child_cat_id)
+            .bind(&cat_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO connections (id, provider, provider_session_id, institution_name, valid_until, status) \
+             VALUES ($1, 'mock', 'sess-1', 'Test Bank', NOW() + INTERVAL '1 day', 'active')",
+        )
+        .bind(&conn_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO accounts (id, provider_account_id, name, institution, account_type, currency, connection_id) \
+             VALUES ($1, 'prov-1', 'Checking', 'Test Bank', 'checking', 'EUR', $2)",
+        )
+        .bind(&acct_id)
+        .bind(&conn_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO transactions (id, account_id, category_id, amount, merchant_name, description, posted_date) \
+             VALUES ($1, $2, $3, -12.50, 'Cafe', 'Lunch', '2025-06-15')",
+        )
+        .bind(&txn_id)
+        .bind(&acct_id)
+        .bind(&cat_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO rules (id, rule_type, conditions, target_category_id, priority) \
+             VALUES ($1, 'categorization', '[{\"field\":\"merchant\",\"pattern\":\"Cafe.*\"}]'::jsonb, $2, 10)",
+        )
+        .bind(&rule_id)
+        .bind(&cat_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 3. Run the UUID migration (and any after it).
+        let post: Vec<_> = all
+            .migrations
+            .iter()
+            .filter(|m| m.version >= UUID_MIGRATION_VERSION)
+            .cloned()
+            .collect();
+
+        let post_migrator = sqlx::migrate::Migrator {
+            migrations: post.into(),
+            ignore_missing: true,
+            locking: true,
+            no_tx: false,
+        };
+        post_migrator.run(&pool).await.unwrap();
+
+        // 4. Read back through the typed Db layer — proves UUID columns work.
+        let db = wrap(pool);
+
+        let accounts = db.list_accounts().await.unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "Checking");
+        assert_eq!(accounts[0].id.to_string(), acct_id);
+        assert_eq!(accounts[0].connection_id.unwrap().to_string(), conn_id);
+
+        let cats = db.list_categories().await.unwrap();
+        assert_eq!(cats.len(), 2);
+        let child = cats.iter().find(|c| c.name == "Restaurants").unwrap();
+        assert_eq!(child.parent_id.unwrap().to_string(), cat_id);
+
+        let (txns, total) = db
+            .list_transactions_paginated(10, 0, "", "", "", "")
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(txns[0].id.to_string(), txn_id);
+        assert_eq!(txns[0].account_id.to_string(), acct_id);
+        assert_eq!(txns[0].category_id.unwrap().to_string(), cat_id);
+
+        let rules = db.list_rules().await.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id.to_string(), rule_id);
+        assert_eq!(rules[0].target_category_id.unwrap().to_string(), cat_id);
+    }
+
     #[sqlx::test(migrations = "../../migrations")]
     async fn test_date_proximity_window_excludes_distant(pool: PgPool) {
         let db = wrap(pool);
