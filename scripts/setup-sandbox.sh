@@ -50,11 +50,16 @@ fi
 # Export DATABASE_URL for cargo test (sqlx::test needs it)
 export DATABASE_URL="postgresql://budget@localhost:5432/budget"
 
-# Persist for future shell invocations in this session
+# Persist for future shell invocations in this session.
+# .bashrc typically has `[ -z "$PS1" ] && return` near the top, so anything
+# appended at the bottom is invisible to non-interactive shells (hooks, Bash
+# tool).  Insert the export *before* that guard line so every shell sees it.
 ENV_LINE='export DATABASE_URL="postgresql://budget@localhost:5432/budget"'
 for rc in /root/.bashrc /root/.profile; do
   if [ -f "$rc" ] && ! grep -qF 'DATABASE_URL' "$rc" 2>/dev/null; then
-    echo "$ENV_LINE" >> "$rc"
+    # Insert at line 2 (after the shebang / comment header) so it runs
+    # before any early-return guards.
+    sed -i "2i\\$ENV_LINE" "$rc"
   fi
 done
 

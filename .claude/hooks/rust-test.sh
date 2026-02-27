@@ -10,6 +10,12 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
+# Ensure DATABASE_URL is available (non-interactive shells skip .bashrc)
+if [[ -z "${DATABASE_URL:-}" ]] && [[ -f /etc/environment ]]; then
+  eval "$(grep '^DATABASE_URL=' /etc/environment)"
+  export DATABASE_URL
+fi
+
 CLIPPY_RESULT=$(cargo clippy --all-targets -- -D warnings 2>&1)
 CLIPPY_EXIT=$?
 
