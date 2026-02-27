@@ -29,7 +29,7 @@
 - [ ] **Stop leaking DB errors to clients**: `From<sqlx::Error>` in `routes/mod.rs` sends raw `e.to_string()` as response body, exposing schema details. Return generic "Database error" message instead
 - [ ] **Make salary category configurable**: `budget.rs` hardcodes `c.name == "Salary"` for budget month detection. Add a config field so non-English or differently-named categories work
 - [x] **TEXT UUIDs → native UUID type**: Migrated to native PostgreSQL UUID columns with sqlx `uuid` feature. ID newtypes implement `sqlx::Type/Encode/Decode` directly
-- [ ] **Deduplicate budget logic**: Frontend re-implements category subtree traversal, transaction filtering, and month boundary computation. Consider having the frontend rely on the `/api/budgets/status` response instead
+- [x] **Deduplicate budget logic**: Frontend re-implements category subtree traversal, transaction filtering, and month boundary computation. Consider having the frontend rely on the `/api/budgets/status` response instead
 
 ### Low Priority
 - [ ] **Constant-time token comparison**: `auth.rs` uses `==` for bearer token check. Use `subtle::ConstantTimeEq` for timing-attack resistance
