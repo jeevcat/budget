@@ -371,9 +371,7 @@ function CategorySelect({
                   <div
                     key=${opt.value}
                     role="option"
-                    class=${
-                      "cat-select-item" + (activeIdx === i ? " active" : "")
-                    }
+                    class=${`cat-select-item${activeIdx === i ? " active" : ""}`}
                     onMouseEnter=${() => setActiveIdx(i)}
                     onClick=${() => selectItem(opt.value)}
                   >
