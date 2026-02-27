@@ -5,35 +5,54 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Run all checks inside the nix dev shell
-run() {
-    nix develop --command "$@"
-}
+# Detect nix and set up the run wrapper accordingly
+if command -v nix &> /dev/null; then
+    run() { nix develop --command "$@"; }
+    prefix="nix develop --command"
+else
+    run() { "$@"; }
+    prefix=""
+fi
 
 echo "Running pre-commit checks..."
 
 echo -n "Checking formatting... "
-if ! run cargo fmt --check > /dev/null 2>&1; then
+output=$(run cargo fmt --check 2>&1) || {
     echo -e "${RED}FAILED${NC}"
-    echo "Run 'cargo fmt' to fix formatting issues."
+    echo "$output"
+    echo ""
+    echo "To fix, run:"
+    echo "  ${prefix:+$prefix }cargo fmt"
+    echo ""
+    echo "To see errors again, run:"
+    echo "  ${prefix:+$prefix }cargo fmt --check"
     exit 1
-fi
+}
 echo -e "${GREEN}OK${NC}"
 
 echo -n "Running clippy... "
-if ! run cargo clippy --all-targets --all-features -- -D warnings > /dev/null 2>&1; then
+output=$(run cargo clippy --all-targets --all-features -- -D warnings 2>&1) || {
     echo -e "${RED}FAILED${NC}"
-    echo "Run 'cargo clippy --all-targets' to see lint warnings."
+    echo "$output"
+    echo ""
+    echo "To see lint warnings, run:"
+    echo "  ${prefix:+$prefix }cargo clippy --all-targets --all-features -- -D warnings"
     exit 1
-fi
+}
 echo -e "${GREEN}OK${NC}"
 
 echo -n "Checking Biome (frontend)... "
-if ! run biome check frontend/ > /dev/null 2>&1; then
+output=$(run biome check frontend/ 2>&1) || {
     echo -e "${RED}FAILED${NC}"
-    echo "Run 'biome check --write frontend/' to fix issues."
+    echo "$output"
+    echo ""
+    echo "To fix, run:"
+    echo "  ${prefix:+$prefix }biome check --write frontend/"
+    echo ""
+    echo "To see errors again, run:"
+    echo "  ${prefix:+$prefix }biome check frontend/"
     exit 1
-fi
+}
 echo -e "${GREEN}OK${NC}"
 
 echo -e "${GREEN}All pre-commit checks passed!${NC}"
