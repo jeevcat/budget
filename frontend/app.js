@@ -1891,7 +1891,8 @@ function Transactions() {
   const totalPages = Math.max(1, Math.ceil(total / TXN_PAGE_SIZE));
   const rangeStart = page * TXN_PAGE_SIZE + 1;
   const rangeEnd = Math.min((page + 1) * TXN_PAGE_SIZE, total);
-  const hasActiveFilter = filterCat || filterAcct || filterMethod || debouncedSearch;
+  const hasActiveFilter =
+    filterCat || filterAcct || filterMethod || debouncedSearch;
 
   if (total === 0 && !hasActiveFilter)
     return html`
@@ -1988,13 +1989,17 @@ function Transactions() {
       onTransactionUpdate=${(txnId, patch) => {
         setPageData((prev) => ({
           ...prev,
-          items: prev.items.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
+          items: prev.items.map((t) =>
+            t.id === txnId ? { ...t, ...patch } : t,
+          ),
         }));
       }}
       onRuleCreated=${() => setTimeout(() => reload(), 1500)}
     />
 
-    ${total > TXN_PAGE_SIZE && html`
+    ${
+      total > TXN_PAGE_SIZE &&
+      html`
       <div class="hstack" style="justify-content:center;gap:0.75rem;margin-top:1rem">
         <button disabled=${page === 0} onClick=${() => setPage((p) => p - 1)}>
           \u2190 Prev
@@ -2006,7 +2011,8 @@ function Transactions() {
           Next \u2192
         </button>
       </div>
-    `}
+    `
+    }
   `;
 }
 

@@ -23,7 +23,7 @@
 
 ### High Priority
 - [x] **Pagination on transaction list**: `GET /api/transactions` returns all transactions. Add cursor/offset pagination to avoid multi-MB responses as history grows
-- [ ] **Budget status endpoint optimization**: `/api/budgets/status` loads all transactions into memory then filters. Query only current period's transactions in SQL
+- [x] **Budget status endpoint optimization**: `/api/budgets/status` loads all transactions into memory then filters. Query only current period's transactions in SQL
 
 ### Medium Priority
 - [ ] **Stop leaking DB errors to clients**: `From<sqlx::Error>` in `routes/mod.rs` sends raw `e.to_string()` as response body, exposing schema details. Return generic "Database error" message instead

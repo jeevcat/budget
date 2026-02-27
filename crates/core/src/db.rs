@@ -372,7 +372,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              ORDER BY posted_date DESC, merchant_name ASC",
         )
@@ -425,7 +425,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              {where_clause}
              ORDER BY posted_date DESC, merchant_name ASC
@@ -448,6 +448,65 @@ impl Db {
         Ok((transactions, total))
     }
 
+    /// List transactions belonging to any of the given category IDs.
+    ///
+    /// Used for targeted fetches such as salary-category transactions needed
+    /// for budget month boundary detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn list_transactions_by_category_ids(
+        &self,
+        category_ids: &[CategoryId],
+    ) -> Result<Vec<Transaction>, sqlx::Error> {
+        let pool = &self.0;
+        let ids: Vec<String> = category_ids.iter().map(ToString::to_string).collect();
+        let rows = sqlx::query(
+            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                    merchant_name, description, posted_date,
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    llm_justification, skip_correlation
+             FROM transactions
+             WHERE category_id = ANY($1)
+             ORDER BY posted_date DESC, merchant_name ASC",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await?;
+        rows.iter().map(row_to_transaction).collect()
+    }
+
+    /// List transactions with `posted_date >= since`.
+    ///
+    /// Used to fetch only the relevant time period for budget status
+    /// computation instead of loading all historical transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn list_transactions_since(
+        &self,
+        since: NaiveDate,
+    ) -> Result<Vec<Transaction>, sqlx::Error> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                    merchant_name, description, posted_date,
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    llm_justification, skip_correlation
+             FROM transactions
+             WHERE posted_date >= $1
+             ORDER BY posted_date DESC, merchant_name ASC",
+        )
+        .bind(since)
+        .fetch_all(pool)
+        .await?;
+        rows.iter().map(row_to_transaction).collect()
+    }
+
     /// Get a single transaction by its ID.
     ///
     /// Returns `None` if no transaction exists with the given ID.
@@ -465,7 +524,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE id = $1",
         )
@@ -491,7 +550,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE category_id IS NULL OR category_method = 'llm'",
         )
@@ -512,7 +571,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE category_id IS NULL",
         )
@@ -536,7 +595,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL
                AND skip_correlation = FALSE",
@@ -566,7 +625,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
@@ -856,7 +915,7 @@ impl Db {
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
                     counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    skip_correlation
+                    llm_justification, skip_correlation
              FROM transactions
              WHERE account_id = $1",
         )

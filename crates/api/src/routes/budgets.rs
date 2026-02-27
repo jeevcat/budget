@@ -6,7 +6,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::budget::{compute_budget_status, detect_budget_month_boundaries};
+use budget_core::budget::{
+    budget_year_months, collect_category_subtree, compute_budget_status,
+    detect_budget_month_boundaries,
+};
 use budget_core::models::{BudgetMode, BudgetMonth, BudgetStatus};
 
 use crate::routes::AppError;
@@ -39,21 +42,29 @@ pub fn router() -> Router<AppState> {
         .route("/months", get(list_months))
 }
 
-/// Derive budget months from transactions and the Salary category.
+/// Derive budget months by fetching only salary-category transactions.
 ///
 /// Returns an empty list when no Salary category exists (instead of erroring),
 /// since the user may not have set one up yet.
-async fn derive_months(state: &AppState) -> Result<Vec<BudgetMonth>, AppError> {
-    let transactions = state.db.list_transactions().await?;
-    let categories = state.db.list_categories().await?;
-
+async fn derive_months(
+    state: &AppState,
+    categories: &[budget_core::models::Category],
+) -> Result<Vec<BudgetMonth>, AppError> {
     let salary_cat_id = state.db.get_category_by_name("Salary").await?.map(|c| c.id);
 
+    let salary_txns = match salary_cat_id {
+        Some(sid) => {
+            let subtree = collect_category_subtree(sid, categories);
+            state.db.list_transactions_by_category_ids(&subtree).await?
+        }
+        None => Vec::new(),
+    };
+
     match detect_budget_month_boundaries(
-        &transactions,
+        &salary_txns,
         state.expected_salary_count,
         salary_cat_id,
-        &categories,
+        categories,
     ) {
         Ok(mut months) => {
             months.sort_by_key(|bm| bm.start_date);
@@ -78,22 +89,10 @@ async fn status(
     State(state): State<AppState>,
     Query(query): Query<StatusQuery>,
 ) -> Result<Json<StatusResponse>, AppError> {
-    let transactions = state.db.list_transactions().await?;
     let categories = state.db.list_categories().await?;
 
-    let salary_cat_id = state.db.get_category_by_name("Salary").await?.map(|c| c.id);
-
-    let mut budget_months = match detect_budget_month_boundaries(
-        &transactions,
-        state.expected_salary_count,
-        salary_cat_id,
-        &categories,
-    ) {
-        Ok(months) => months,
-        Err(budget_core::error::Error::NoSalaryCategory) => Vec::new(),
-        Err(e) => return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
-    };
-
+    // Phase 1: Detect budget month boundaries using only salary transactions
+    let mut budget_months = derive_months(&state, &categories).await?;
     budget_months.sort_by_key(|bm| bm.start_date);
 
     let month = if let Some(id) = query.month_id {
@@ -107,6 +106,24 @@ async fn status(
             .find(|bm| bm.end_date.is_none())
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no current budget month".to_owned()))?
     };
+
+    // Phase 2: Determine the earliest date needed and fetch only that range.
+    // Budget year months cover rollover (monthly) and annual spending.
+    let year_months = budget_year_months(&budget_months, month);
+    let mut earliest = month.start_date;
+    if let Some(first) = year_months.first() {
+        earliest = earliest.min(first.start_date);
+    }
+    // Include project date ranges so project spending is accurate
+    for cat in &categories {
+        if cat.budget_mode == Some(BudgetMode::Project)
+            && let Some(start) = cat.project_start_date
+        {
+            earliest = earliest.min(start);
+        }
+    }
+
+    let transactions = state.db.list_transactions_since(earliest).await?;
 
     // For historical months use end_date as the reference; for the current month use today
     let reference_date = month.end_date.unwrap_or_else(|| Utc::now().date_naive());
@@ -159,6 +176,7 @@ async fn status(
 ///
 /// Returns `AppError` if the database query fails.
 async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMonth>>, AppError> {
-    let months = derive_months(&state).await?;
+    let categories = state.db.list_categories().await?;
+    let months = derive_months(&state, &categories).await?;
     Ok(Json(months))
 }

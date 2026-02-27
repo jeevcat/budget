@@ -26,7 +26,11 @@ fn deterministic_month_id(start_date: NaiveDate) -> BudgetMonthId {
 }
 
 /// Collect all descendant category IDs for a given category (including itself).
-fn collect_category_subtree(category_id: CategoryId, categories: &[Category]) -> Vec<CategoryId> {
+#[must_use]
+pub fn collect_category_subtree(
+    category_id: CategoryId,
+    categories: &[Category],
+) -> Vec<CategoryId> {
     let mut result = vec![category_id];
     let mut stack = vec![category_id];
 
