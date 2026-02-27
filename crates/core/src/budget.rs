@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::error::Error;
 use crate::models::{
     BudgetMode, BudgetMonth, BudgetMonthId, BudgetStatus, Category, CategoryId, PaceIndicator,
-    Transaction,
+    ProjectChildSpending, Transaction,
 };
 
 /// Derive a deterministic UUID from a start date so the same budget month
@@ -72,7 +72,8 @@ fn project_category_ids(categories: &[Category]) -> std::collections::HashSet<Ca
 /// - Correlated transfers (net to zero, not an expense)
 /// - Correlated reimbursements on the reimbursing side (the original expense
 ///   is also excluded since the reimbursement nets it out)
-fn filter_for_budget<'a>(
+#[must_use]
+pub fn filter_for_budget<'a>(
     transactions: &'a [Transaction],
     categories: &[Category],
 ) -> Vec<&'a Transaction> {
@@ -218,7 +219,8 @@ pub fn compute_category_spending(
 }
 
 /// Check if a date falls within a budget month's boundaries.
-fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
+#[must_use]
+pub fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
     if date < budget_month.start_date {
         return false;
     }
@@ -524,6 +526,136 @@ pub fn compute_rollover(
             let surplus = budget_amount - spent;
             rollover + surplus
         })
+}
+
+/// Filter transactions relevant to project budget math.
+///
+/// Includes only expenses in project-mode category subtrees, excluding
+/// transfers, reimbursements, and reimbursed originals.
+#[must_use]
+pub fn filter_for_project<'a>(
+    transactions: &'a [Transaction],
+    categories: &[Category],
+) -> Vec<&'a Transaction> {
+    let project_cats = project_category_ids(categories);
+
+    let reimbursed_ids: std::collections::HashSet<_> = transactions
+        .iter()
+        .filter(|t| {
+            t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
+        })
+        .filter_map(|t| t.correlation_id)
+        .collect();
+
+    transactions
+        .iter()
+        .filter(|t| {
+            // Must be in a project-mode category
+            let in_project = t.category_id.is_some_and(|cid| project_cats.contains(&cid));
+            if !in_project {
+                return false;
+            }
+            // Exclude transfers
+            if t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Transfer)
+            {
+                return false;
+            }
+            // Exclude reimbursements themselves
+            if t.correlation_type
+                .as_ref()
+                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
+            {
+                return false;
+            }
+            // Exclude reimbursed originals
+            if reimbursed_ids.contains(&t.id) {
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
+/// Compute per-child spending breakdown for a project category.
+///
+/// For each direct child of the project, sums spending in that child's subtree.
+/// Transactions directly on the project root are collected under its own ID
+/// with the name "(Direct)".
+#[must_use]
+pub fn compute_project_child_breakdowns(
+    project_category: &Category,
+    project_transactions: &[&Transaction],
+    categories: &[Category],
+) -> Vec<ProjectChildSpending> {
+    let direct_children: Vec<&Category> = categories
+        .iter()
+        .filter(|c| c.parent_id == Some(project_category.id))
+        .collect();
+
+    // Build subtree for each direct child
+    let child_subtrees: Vec<(CategoryId, &str, std::collections::HashSet<CategoryId>)> =
+        direct_children
+            .iter()
+            .map(|c| {
+                let subtree = collect_category_subtree(c.id, categories)
+                    .into_iter()
+                    .collect();
+                (c.id, c.name.as_str(), subtree)
+            })
+            .collect();
+
+    let mut child_spent: std::collections::HashMap<CategoryId, Decimal> =
+        std::collections::HashMap::new();
+    let mut direct_spent = Decimal::ZERO;
+
+    for t in project_transactions {
+        let Some(cid) = t.category_id else {
+            continue;
+        };
+        let amt = -t.amount; // expenses are negative, flip to positive
+        if cid == project_category.id {
+            direct_spent += amt;
+            continue;
+        }
+        // Find which direct child subtree this transaction belongs to
+        for (child_id, _, subtree) in &child_subtrees {
+            if subtree.contains(&cid) {
+                *child_spent.entry(*child_id).or_insert(Decimal::ZERO) += amt;
+                break;
+            }
+        }
+    }
+
+    let mut rows: Vec<ProjectChildSpending> = child_subtrees
+        .iter()
+        .filter_map(|(child_id, name, _)| {
+            let spent = child_spent.get(child_id).copied().unwrap_or(Decimal::ZERO);
+            if spent > Decimal::ZERO {
+                Some(ProjectChildSpending {
+                    category_id: *child_id,
+                    category_name: (*name).to_owned(),
+                    spent,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if direct_spent > Decimal::ZERO {
+        rows.push(ProjectChildSpending {
+            category_id: project_category.id,
+            category_name: "(Direct)".to_owned(),
+            spent: direct_spent,
+        });
+    }
+
+    rows.sort_by(|a, b| b.spent.cmp(&a.spent));
+    rows
 }
 
 #[cfg(test)]
