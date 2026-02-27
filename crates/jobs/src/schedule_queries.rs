@@ -4,43 +4,9 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::Row;
-use sqlx::postgres::types::Oid;
-use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef};
 use uuid::Uuid;
 
 use super::ApalisPool;
-
-// ---------------------------------------------------------------------------
-// PgUuid: thin wrapper so `uuid::Uuid` can be used with sqlx without the
-// `uuid` feature (which conflicts with apalis-postgres).
-// ---------------------------------------------------------------------------
-
-const PG_UUID_OID: Oid = Oid(2950);
-
-struct PgUuid(Uuid);
-
-impl sqlx::Type<sqlx::Postgres> for PgUuid {
-    fn type_info() -> PgTypeInfo {
-        PgTypeInfo::with_oid(PG_UUID_OID)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for PgUuid {
-    fn encode_by_ref(
-        &self,
-        buf: &mut PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        buf.extend_from_slice(self.0.as_bytes());
-        Ok(sqlx::encode::IsNull::No)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for PgUuid {
-    fn decode(value: PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let bytes = <&[u8] as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
-        Ok(Self(Uuid::from_slice(bytes)?))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,8 +116,8 @@ pub async fn insert_schedule_run(pool: &ApalisPool, run: &ScheduleRun) -> Result
         "INSERT INTO schedule_runs (id, account_id, status, trigger_reason, attempt, started_at, finished_at, next_run_at, error_message, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
-    .bind(PgUuid(run.id))
-    .bind(PgUuid(run.account_id))
+    .bind(run.id)
+    .bind(run.account_id)
     .bind(run.status.to_string())
     .bind(run.trigger_reason.to_string())
     .bind(run.attempt)
@@ -182,7 +148,7 @@ pub async fn complete_schedule_run(
     .bind(status.to_string())
     .bind(Utc::now())
     .bind(error_msg)
-    .bind(PgUuid(run_id))
+    .bind(run_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -202,7 +168,7 @@ pub async fn get_latest_run_for_account(
                 next_run_at, error_message, created_at \
          FROM schedule_runs WHERE account_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(PgUuid(account_id))
+    .bind(account_id)
     .fetch_optional(pool)
     .await?;
 
@@ -221,7 +187,7 @@ pub async fn update_next_run_at(
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE schedule_runs SET next_run_at = $1 WHERE id = $2")
         .bind(next_run_at)
-        .bind(PgUuid(run_id))
+        .bind(run_id)
         .execute(pool)
         .await?;
     Ok(())
@@ -255,9 +221,8 @@ pub async fn get_all_schedule_status(
         .map(|r| {
             let status_str: Option<String> = r.try_get("last_run_status")?;
             let reason_str: Option<String> = r.try_get("trigger_reason")?;
-            let PgUuid(account_id) = r.try_get("account_id")?;
             Ok(AccountScheduleStatus {
-                account_id,
+                account_id: r.try_get("account_id")?,
                 account_name: r.try_get("account_name")?,
                 last_run_at: r.try_get("last_run_at")?,
                 last_run_status: status_str
@@ -281,11 +246,9 @@ pub async fn get_all_schedule_status(
 fn parse_schedule_run(row: &sqlx::postgres::PgRow) -> Result<ScheduleRun, sqlx::Error> {
     let status_str: String = row.try_get("status")?;
     let reason_str: String = row.try_get("trigger_reason")?;
-    let PgUuid(id) = row.try_get("id")?;
-    let PgUuid(account_id) = row.try_get("account_id")?;
     Ok(ScheduleRun {
-        id,
-        account_id,
+        id: row.try_get("id")?,
+        account_id: row.try_get("account_id")?,
         status: RunStatus::from_str(&status_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
         trigger_reason: TriggerReason::from_str(&reason_str)
             .map_err(|e| sqlx::Error::Decode(e.into()))?,
