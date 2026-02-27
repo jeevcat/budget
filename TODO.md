@@ -16,8 +16,8 @@
 
 ## From Spec — Deviations
 
-- [ ] **Auth: HttpOnly cookie**: Spec says token should be in an HttpOnly cookie; implementation uses localStorage (XSS-vulnerable)
-- [ ] **Database: SQLite → PostgreSQL**: Spec says SQLite; implementation uses PostgreSQL. Update spec or revert. Config struct still has a stale SQLite default for `database_url`
+- [x] **Auth: HttpOnly cookie**: Token is now stored in an HttpOnly cookie. Login via `POST /api/login`, logout via `POST /api/logout`. Bearer header still accepted for API clients
+- [x] **Database: SQLite → PostgreSQL**: Config default updated to PostgreSQL. SPEC updated accordingly
 
 ## Architecture Review Findings
 
@@ -28,7 +28,7 @@
 ### Medium Priority
 - [ ] **Stop leaking DB errors to clients**: `From<sqlx::Error>` in `routes/mod.rs` sends raw `e.to_string()` as response body, exposing schema details. Return generic "Database error" message instead
 - [ ] **Make salary category configurable**: `budget.rs` hardcodes `c.name == "Salary"` for budget month detection. Add a config field so non-English or differently-named categories work
-- [ ] **TEXT UUIDs → native UUID type**: All tables use `TEXT PRIMARY KEY` instead of PostgreSQL's `UUID` type. Requires migration + updating `db.rs` to stop `parse_str().unwrap()` / `.to_string()` round-tripping
+- [x] **TEXT UUIDs → native UUID type**: Migrated to native PostgreSQL UUID columns with sqlx `uuid` feature. ID newtypes implement `sqlx::Type/Encode/Decode` directly
 - [ ] **Deduplicate budget logic**: Frontend re-implements category subtree traversal, transaction filtering, and month boundary computation. Consider having the frontend rely on the `/api/budgets/status` response instead
 
 ### Low Priority

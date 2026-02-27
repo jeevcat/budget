@@ -1,24 +1,53 @@
-//! Queries for the `schedule_runs` table.
-//!
-//! Tracks automatic pipeline executions per account — status, retry attempts,
-//! and next-run timing for the scheduler and UI.
-
 use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::Row;
+use sqlx::postgres::types::Oid;
+use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef};
+use uuid::Uuid;
 
 use super::ApalisPool;
+
+// ---------------------------------------------------------------------------
+// PgUuid: thin wrapper so `uuid::Uuid` can be used with sqlx without the
+// `uuid` feature (which conflicts with apalis-postgres).
+// ---------------------------------------------------------------------------
+
+const PG_UUID_OID: Oid = Oid(2950);
+
+struct PgUuid(Uuid);
+
+impl sqlx::Type<sqlx::Postgres> for PgUuid {
+    fn type_info() -> PgTypeInfo {
+        PgTypeInfo::with_oid(PG_UUID_OID)
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for PgUuid {
+    fn encode_by_ref(
+        &self,
+        buf: &mut PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        buf.extend_from_slice(self.0.as_bytes());
+        Ok(sqlx::encode::IsNull::No)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for PgUuid {
+    fn decode(value: PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let bytes = <&[u8] as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        Ok(Self(Uuid::from_slice(bytes)?))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/// Current state of a schedule run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// Status of a schedule run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum RunStatus {
     Pending,
     Running,
@@ -29,31 +58,29 @@ pub enum RunStatus {
 impl fmt::Display for RunStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pending => f.write_str("pending"),
-            Self::Running => f.write_str("running"),
-            Self::Succeeded => f.write_str("succeeded"),
-            Self::Failed => f.write_str("failed"),
+            Self::Pending => write!(f, "pending"),
+            Self::Running => write!(f, "running"),
+            Self::Succeeded => write!(f, "succeeded"),
+            Self::Failed => write!(f, "failed"),
         }
     }
 }
 
 impl FromStr for RunStatus {
     type Err = String;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "pending" => Ok(Self::Pending),
             "running" => Ok(Self::Running),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
-            other => Err(format!("unknown run status: {other}")),
+            other => Err(format!("unknown RunStatus: {other}")),
         }
     }
 }
 
-/// Why this pipeline run was triggered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// Reason a schedule run was triggered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum TriggerReason {
     Scheduled,
     Retry,
@@ -63,22 +90,21 @@ pub enum TriggerReason {
 impl fmt::Display for TriggerReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Scheduled => f.write_str("scheduled"),
-            Self::Retry => f.write_str("retry"),
-            Self::Manual => f.write_str("manual"),
+            Self::Scheduled => write!(f, "scheduled"),
+            Self::Retry => write!(f, "retry"),
+            Self::Manual => write!(f, "manual"),
         }
     }
 }
 
 impl FromStr for TriggerReason {
     type Err = String;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "scheduled" => Ok(Self::Scheduled),
             "retry" => Ok(Self::Retry),
             "manual" => Ok(Self::Manual),
-            other => Err(format!("unknown trigger reason: {other}")),
+            other => Err(format!("unknown TriggerReason: {other}")),
         }
     }
 }
@@ -86,8 +112,8 @@ impl FromStr for TriggerReason {
 /// A single row from `schedule_runs`.
 #[derive(Debug, Clone)]
 pub struct ScheduleRun {
-    pub id: String,
-    pub account_id: String,
+    pub id: Uuid,
+    pub account_id: Uuid,
     pub status: RunStatus,
     pub trigger_reason: TriggerReason,
     pub attempt: i32,
@@ -101,7 +127,7 @@ pub struct ScheduleRun {
 /// Per-account schedule summary for the API response.
 #[derive(Debug, Serialize)]
 pub struct AccountScheduleStatus {
-    pub account_id: String,
+    pub account_id: Uuid,
     pub account_name: String,
     pub last_run_at: Option<DateTime<Utc>>,
     pub last_run_status: Option<RunStatus>,
@@ -121,16 +147,18 @@ pub struct AccountScheduleStatus {
 /// Returns `sqlx::Error` on database failure.
 pub async fn insert_schedule_run(pool: &ApalisPool, run: &ScheduleRun) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO schedule_runs (id, account_id, status, trigger_reason, attempt, started_at, next_run_at, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO schedule_runs (id, account_id, status, trigger_reason, attempt, started_at, finished_at, next_run_at, error_message, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
-    .bind(&run.id)
-    .bind(&run.account_id)
+    .bind(PgUuid(run.id))
+    .bind(PgUuid(run.account_id))
     .bind(run.status.to_string())
     .bind(run.trigger_reason.to_string())
     .bind(run.attempt)
     .bind(run.started_at)
+    .bind(run.finished_at)
     .bind(run.next_run_at)
+    .bind(run.error_message.as_deref())
     .bind(run.created_at)
     .execute(pool)
     .await?;
@@ -144,7 +172,7 @@ pub async fn insert_schedule_run(pool: &ApalisPool, run: &ScheduleRun) -> Result
 /// Returns `sqlx::Error` on database failure.
 pub async fn complete_schedule_run(
     pool: &ApalisPool,
-    run_id: &str,
+    run_id: Uuid,
     status: RunStatus,
     error_msg: Option<&str>,
 ) -> Result<(), sqlx::Error> {
@@ -154,7 +182,7 @@ pub async fn complete_schedule_run(
     .bind(status.to_string())
     .bind(Utc::now())
     .bind(error_msg)
-    .bind(run_id)
+    .bind(PgUuid(run_id))
     .execute(pool)
     .await?;
     Ok(())
@@ -167,39 +195,39 @@ pub async fn complete_schedule_run(
 /// Returns `sqlx::Error` on database failure.
 pub async fn get_latest_run_for_account(
     pool: &ApalisPool,
-    account_id: &str,
+    account_id: Uuid,
 ) -> Result<Option<ScheduleRun>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT id, account_id, status, trigger_reason, attempt, started_at, finished_at, \
                 next_run_at, error_message, created_at \
          FROM schedule_runs WHERE account_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(account_id)
+    .bind(PgUuid(account_id))
     .fetch_optional(pool)
     .await?;
 
     row.map(|r| parse_schedule_run(&r)).transpose()
 }
 
-/// Update the `next_run_at` field on a schedule run.
+/// Update the `next_run_at` field for a schedule run.
 ///
 /// # Errors
 ///
 /// Returns `sqlx::Error` on database failure.
 pub async fn update_next_run_at(
     pool: &ApalisPool,
-    run_id: &str,
+    run_id: Uuid,
     next_run_at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE schedule_runs SET next_run_at = $1 WHERE id = $2")
         .bind(next_run_at)
-        .bind(run_id)
+        .bind(PgUuid(run_id))
         .execute(pool)
         .await?;
     Ok(())
 }
 
-/// Per-account schedule status summary, joining accounts with their latest run.
+/// Return schedule status for every account (latest run per account).
 ///
 /// # Errors
 ///
@@ -227,8 +255,9 @@ pub async fn get_all_schedule_status(
         .map(|r| {
             let status_str: Option<String> = r.try_get("last_run_status")?;
             let reason_str: Option<String> = r.try_get("trigger_reason")?;
+            let PgUuid(account_id) = r.try_get("account_id")?;
             Ok(AccountScheduleStatus {
-                account_id: r.try_get("account_id")?,
+                account_id,
                 account_name: r.try_get("account_name")?,
                 last_run_at: r.try_get("last_run_at")?,
                 last_run_status: status_str
@@ -252,9 +281,11 @@ pub async fn get_all_schedule_status(
 fn parse_schedule_run(row: &sqlx::postgres::PgRow) -> Result<ScheduleRun, sqlx::Error> {
     let status_str: String = row.try_get("status")?;
     let reason_str: String = row.try_get("trigger_reason")?;
+    let PgUuid(id) = row.try_get("id")?;
+    let PgUuid(account_id) = row.try_get("account_id")?;
     Ok(ScheduleRun {
-        id: row.try_get("id")?,
-        account_id: row.try_get("account_id")?,
+        id,
+        account_id,
         status: RunStatus::from_str(&status_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
         trigger_reason: TriggerReason::from_str(&reason_str)
             .map_err(|e| sqlx::Error::Decode(e.into()))?,

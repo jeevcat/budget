@@ -15,14 +15,12 @@ const html = htm.bind(h);
 // ---------------------------------------------------------------------------
 
 const api = {
-  token: localStorage.getItem("budget_token") ?? "",
-
   async fetch(path, opts = {}) {
     const res = await fetch(`/api${path}`, {
       ...opts,
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${api.token}`,
         ...opts.headers,
       },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -3443,12 +3441,9 @@ function Login({ onLogin }) {
   const submit = async (e) => {
     e.preventDefault();
     try {
-      api.token = token;
-      await api.get("/accounts");
-      localStorage.setItem("budget_token", token);
+      await api.post("/login", { token });
       onLogin();
     } catch {
-      api.token = "";
       setError("Invalid token");
     }
   };
@@ -3465,7 +3460,7 @@ function Login({ onLogin }) {
           type="password"
           value=${token}
           onInput=${(e) => setToken(e.target.value)}
-          placeholder="Bearer token"
+          placeholder="API token"
           style="width:100%;margin-bottom:0.5rem"
         />
         <button data-variant="primary" style="width:100%">Sign in</button>
@@ -3479,9 +3474,18 @@ function Login({ onLogin }) {
 // ---------------------------------------------------------------------------
 
 function App() {
-  const [authed, setAuthed] = useState(!!api.token);
+  const [authed, setAuthed] = useState(null); // null = checking
   const route = useRoute();
 
+  // On mount, probe an authenticated endpoint to check if the cookie is valid
+  useEffect(() => {
+    api
+      .get("/accounts")
+      .then(() => setAuthed(true))
+      .catch(() => setAuthed(false));
+  }, []);
+
+  if (authed === null) return null; // loading
   if (!authed) return html`<${Login} onLogin=${() => setAuthed(true)} />`;
 
   const page = () => {
@@ -3511,9 +3515,7 @@ function App() {
           style="margin-top:auto;opacity:0.5"
           onClick=${(e) => {
             e.preventDefault();
-            localStorage.removeItem("budget_token");
-            api.token = "";
-            setAuthed(false);
+            api.post("/logout").then(() => setAuthed(false));
           }}
           >Sign out</a
         >

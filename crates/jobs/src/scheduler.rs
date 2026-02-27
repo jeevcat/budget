@@ -51,8 +51,8 @@ pub async fn scheduler_tick(
     let accounts = db.list_accounts().await?;
 
     for account in &accounts {
-        let account_id = account.id.to_string();
-        let latest = schedule_queries::get_latest_run_for_account(pool, &account_id).await?;
+        let account_uuid: uuid::Uuid = account.id.into();
+        let latest = schedule_queries::get_latest_run_for_account(pool, account_uuid).await?;
 
         match evaluate_account(latest.as_ref(), now) {
             Action::Skip => {}
@@ -60,7 +60,7 @@ pub async fn scheduler_tick(
                 run_id,
                 next_run_at,
             } => {
-                schedule_queries::update_next_run_at(pool, &run_id, next_run_at).await?;
+                schedule_queries::update_next_run_at(pool, run_id, next_run_at).await?;
             }
             Action::Enqueue {
                 reason,
@@ -70,7 +70,7 @@ pub async fn scheduler_tick(
                 enqueue_pipeline(
                     pool,
                     pipeline_storage,
-                    &account_id,
+                    account_uuid,
                     reason,
                     attempt,
                     next_run_at,
@@ -90,7 +90,7 @@ enum Action {
     Skip,
     /// Update the `next_run_at` on an existing run (for UI display only).
     UpdateNextRun {
-        run_id: String,
+        run_id: uuid::Uuid,
         next_run_at: DateTime<Utc>,
     },
     /// Enqueue a new pipeline run.
@@ -128,7 +128,7 @@ fn evaluate_account(latest: Option<&ScheduleRun>, now: DateTime<Utc>) -> Action 
                 let next = finished + chrono::Duration::seconds(SYNC_INTERVAL_SECS);
                 if run.next_run_at.is_none() {
                     Action::UpdateNextRun {
-                        run_id: run.id.clone(),
+                        run_id: run.id,
                         next_run_at: next,
                     }
                 } else {
@@ -146,7 +146,7 @@ fn evaluate_account(latest: Option<&ScheduleRun>, now: DateTime<Utc>) -> Action 
                 let next = finished + chrono::Duration::seconds(SYNC_INTERVAL_SECS);
                 if run.next_run_at.is_none() {
                     return Action::UpdateNextRun {
-                        run_id: run.id.clone(),
+                        run_id: run.id,
                         next_run_at: next,
                     };
                 }
@@ -166,7 +166,7 @@ fn evaluate_account(latest: Option<&ScheduleRun>, now: DateTime<Utc>) -> Action 
                 let next = finished + chrono::Duration::seconds(SYNC_INTERVAL_SECS);
                 if run.next_run_at.is_none() {
                     return Action::UpdateNextRun {
-                        run_id: run.id.clone(),
+                        run_id: run.id,
                         next_run_at: next,
                     };
                 }
@@ -194,7 +194,7 @@ fn evaluate_account(latest: Option<&ScheduleRun>, now: DateTime<Utc>) -> Action 
                 let next = finished + chrono::Duration::seconds(backoff);
                 if run.next_run_at.is_none() {
                     Action::UpdateNextRun {
-                        run_id: run.id.clone(),
+                        run_id: run.id,
                         next_run_at: next,
                     }
                 } else {
@@ -209,17 +209,17 @@ fn evaluate_account(latest: Option<&ScheduleRun>, now: DateTime<Utc>) -> Action 
 async fn enqueue_pipeline(
     pool: &ApalisPool,
     pipeline_storage: &PipelineStorage,
-    account_id: &str,
+    account_id: uuid::Uuid,
     reason: TriggerReason,
     attempt: i32,
     next_run_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let run_id = uuid::Uuid::new_v4().to_string();
+    let run_id = uuid::Uuid::new_v4();
 
     let run = ScheduleRun {
-        id: run_id.clone(),
-        account_id: account_id.to_owned(),
+        id: run_id,
+        account_id,
         status: RunStatus::Running,
         trigger_reason: reason,
         attempt,
@@ -233,20 +233,20 @@ async fn enqueue_pipeline(
     schedule_queries::insert_schedule_run(pool, &run).await?;
 
     let ctx = PipelineContext {
-        account_id: account_id.to_owned(),
-        schedule_run_id: Some(run_id.clone()),
+        account_id: account_id.to_string(),
+        schedule_run_id: Some(run_id.to_string()),
     };
 
     if let Err(e) = pipeline_storage.push_start(ctx).await {
         // Pipeline enqueue failed — mark the run as failed immediately
-        let _ = schedule_queries::complete_schedule_run(pool, &run_id, RunStatus::Failed, Some(&e))
+        let _ = schedule_queries::complete_schedule_run(pool, run_id, RunStatus::Failed, Some(&e))
             .await;
         return Err(e.into());
     }
 
     tracing::info!(
-        account_id,
-        run_id,
+        %account_id,
+        %run_id,
         reason = %reason,
         attempt,
         "scheduled pipeline"
@@ -317,8 +317,8 @@ mod tests {
     fn running_run_is_skipped() {
         let now = Utc::now();
         let run = ScheduleRun {
-            id: "r1".to_owned(),
-            account_id: "a1".to_owned(),
+            id: uuid::Uuid::new_v4(),
+            account_id: uuid::Uuid::new_v4(),
             status: RunStatus::Running,
             trigger_reason: TriggerReason::Scheduled,
             attempt: 1,

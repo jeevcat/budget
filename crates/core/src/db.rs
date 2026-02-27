@@ -4,7 +4,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
-use uuid::Uuid;
 
 use crate::models::{
     Account, AccountId, AccountType, BudgetMode, Category, CategoryId, CategoryMethod, Connection,
@@ -15,25 +14,6 @@ use crate::models::{
 // ---------------------------------------------------------------------------
 // Private parse helpers
 // ---------------------------------------------------------------------------
-
-fn parse_uuid(row: &PgRow, col: &str) -> Result<Uuid, sqlx::Error> {
-    let s: String = row.try_get(col)?;
-    s.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
-        index: col.to_owned(),
-        source: Box::new(e),
-    })
-}
-
-fn parse_uuid_opt(row: &PgRow, col: &str) -> Result<Option<Uuid>, sqlx::Error> {
-    let s: Option<String> = row.try_get(col)?;
-    s.map(|v| {
-        v.parse::<Uuid>().map_err(|e| sqlx::Error::ColumnDecode {
-            index: col.to_owned(),
-            source: Box::new(e),
-        })
-    })
-    .transpose()
-}
 
 fn parse_enum<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<T, sqlx::Error>
 where
@@ -66,20 +46,20 @@ where
 
 fn row_to_account(row: &PgRow) -> Result<Account, sqlx::Error> {
     Ok(Account {
-        id: AccountId::from_uuid(parse_uuid(row, "id")?),
+        id: row.try_get("id")?,
         provider_account_id: row.try_get("provider_account_id")?,
         name: row.try_get("name")?,
         nickname: row.try_get("nickname")?,
         institution: row.try_get("institution")?,
         account_type: parse_enum::<AccountType>(row, "account_type")?,
         currency: row.try_get("currency")?,
-        connection_id: parse_uuid_opt(row, "connection_id")?.map(ConnectionId::from_uuid),
+        connection_id: row.try_get("connection_id")?,
     })
 }
 
 fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
     Ok(Connection {
-        id: ConnectionId::from_uuid(parse_uuid(row, "id")?),
+        id: row.try_get("id")?,
         provider: row.try_get("provider")?,
         provider_session_id: row.try_get("provider_session_id")?,
         institution_name: row.try_get("institution_name")?,
@@ -90,9 +70,9 @@ fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
 
 fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
     Ok(Category {
-        id: CategoryId::from_uuid(parse_uuid(row, "id")?),
+        id: row.try_get("id")?,
         name: row.try_get("name")?,
-        parent_id: parse_uuid_opt(row, "parent_id")?.map(CategoryId::from_uuid),
+        parent_id: row.try_get("parent_id")?,
         budget_mode: parse_enum_opt::<BudgetMode>(row, "budget_mode")?,
         budget_amount: row.try_get("budget_amount")?,
         project_start_date: row.try_get("project_start_date")?,
@@ -102,16 +82,16 @@ fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
 
 fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
     Ok(Transaction {
-        id: TransactionId::from_uuid(parse_uuid(row, "id")?),
-        account_id: AccountId::from_uuid(parse_uuid(row, "account_id")?),
-        category_id: parse_uuid_opt(row, "category_id")?.map(CategoryId::from_uuid),
+        id: row.try_get("id")?,
+        account_id: row.try_get("account_id")?,
+        category_id: row.try_get("category_id")?,
         amount: row.try_get("amount")?,
         original_amount: row.try_get("original_amount")?,
         original_currency: row.try_get("original_currency")?,
         merchant_name: row.try_get("merchant_name")?,
         description: row.try_get("description")?,
         posted_date: row.try_get("posted_date")?,
-        correlation_id: parse_uuid_opt(row, "correlation_id")?.map(TransactionId::from_uuid),
+        correlation_id: row.try_get("correlation_id")?,
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
         category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
         suggested_category: row.try_get("suggested_category")?,
@@ -133,10 +113,10 @@ fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
         })?;
 
     Ok(Rule {
-        id: RuleId::from_uuid(parse_uuid(row, "id")?),
+        id: row.try_get("id")?,
         rule_type: parse_enum::<RuleType>(row, "rule_type")?,
         conditions,
-        target_category_id: parse_uuid_opt(row, "target_category_id")?.map(CategoryId::from_uuid),
+        target_category_id: row.try_get("target_category_id")?,
         target_correlation_type: parse_enum_opt::<CorrelationType>(row, "target_correlation_type")?,
         priority: row.try_get("priority")?,
     })
@@ -212,13 +192,13 @@ impl Db {
                  connection_id = excluded.connection_id
                  -- nickname is intentionally preserved across upserts",
         )
-        .bind(account.id.to_string())
+        .bind(account.id)
         .bind(&account.provider_account_id)
         .bind(&account.name)
         .bind(&account.institution)
         .bind(account.account_type.to_string())
         .bind(&account.currency)
-        .bind(account.connection_id.map(|id| id.to_string()))
+        .bind(account.connection_id)
         .execute(pool)
         .await?;
         Ok(())
@@ -251,7 +231,7 @@ impl Db {
         let row = sqlx::query(
             "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id FROM accounts WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_account).transpose()
@@ -292,7 +272,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query("UPDATE accounts SET nickname = $1 WHERE id = $2")
             .bind(nickname)
-            .bind(id.to_string())
+            .bind(id)
             .execute(pool)
             .await?;
         Ok(())
@@ -337,16 +317,16 @@ impl Db {
                  counterparty_bic = excluded.counterparty_bic,
                  bank_transaction_code = excluded.bank_transaction_code",
         )
-        .bind(txn.id.to_string())
-        .bind(txn.account_id.to_string())
-        .bind(txn.category_id.map(|id| id.to_string()))
+        .bind(txn.id)
+        .bind(txn.account_id)
+        .bind(txn.category_id)
         .bind(txn.amount)
         .bind(txn.original_amount)
         .bind(txn.original_currency.as_deref())
         .bind(&txn.merchant_name)
         .bind(&txn.description)
         .bind(txn.posted_date)
-        .bind(txn.correlation_id.map(|id| id.to_string()))
+        .bind(txn.correlation_id)
         .bind(txn.correlation_type.map(|ct| ct.to_string()))
         .bind(provider_transaction_id)
         .bind(txn.suggested_category.as_deref())
@@ -406,8 +386,8 @@ impl Db {
         let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
                             OR LOWER(description) LIKE '%' || LOWER($1) || '%')
                AND ($2 = '' OR ($2 = '__none' AND category_id IS NULL)
-                            OR ($2 != '__none' AND category_id = $2))
-               AND ($3 = '' OR account_id = $3)
+                            OR ($2 != '__none' AND category_id = $2::uuid))
+               AND ($3 = '' OR account_id = $3::uuid)
                AND ($4 = '' OR ($4 = '__none' AND category_method IS NULL)
                             OR ($4 != '__none' AND category_method = $4))";
 
@@ -461,7 +441,7 @@ impl Db {
         category_ids: &[CategoryId],
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let ids: Vec<String> = category_ids.iter().map(ToString::to_string).collect();
+        let ids: Vec<CategoryId> = category_ids.to_vec();
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
@@ -528,7 +508,7 @@ impl Db {
              FROM transactions
              WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_transaction).transpose()
@@ -635,7 +615,7 @@ impl Db {
                AND posted_date BETWEEN ($3 - INTERVAL '45 days')::date AND ($3 + INTERVAL '45 days')::date",
         )
         .bind(opposite_amount)
-        .bind(exclude_id.to_string())
+        .bind(exclude_id)
         .bind(reference_date)
         .fetch_all(pool)
         .await?;
@@ -658,10 +638,10 @@ impl Db {
         sqlx::query(
             "UPDATE transactions SET category_id = $1, category_method = $2, llm_justification = $3 WHERE id = $4",
         )
-        .bind(category_id.to_string())
+        .bind(category_id)
         .bind(method.to_string())
         .bind(justification)
-        .bind(id.to_string())
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -677,7 +657,7 @@ impl Db {
         sqlx::query(
             "UPDATE transactions SET category_id = NULL, category_method = NULL, llm_justification = NULL WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -698,9 +678,9 @@ impl Db {
         sqlx::query(
             "UPDATE transactions SET correlation_id = $1, correlation_type = $2 WHERE id = $3",
         )
-        .bind(correlation_id.to_string())
+        .bind(correlation_id)
         .bind(correlation_type.to_string())
-        .bind(id.to_string())
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -723,7 +703,7 @@ impl Db {
         )
         .bind(suggested_category)
         .bind(justification)
-        .bind(id.to_string())
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -749,16 +729,14 @@ impl Db {
         let mut tx = pool.begin().await?;
 
         let corr_type_str = correlation_type.to_string();
-        let str_a = id_a.to_string();
-        let str_b = id_b.to_string();
 
         let result_a = sqlx::query(
             "UPDATE transactions SET correlation_id = $1, correlation_type = $2
              WHERE id = $3 AND correlation_id IS NULL",
         )
-        .bind(&str_b)
+        .bind(id_b)
         .bind(&corr_type_str)
-        .bind(&str_a)
+        .bind(id_a)
         .execute(&mut *tx)
         .await?;
 
@@ -771,9 +749,9 @@ impl Db {
             "UPDATE transactions SET correlation_id = $1, correlation_type = $2
              WHERE id = $3 AND correlation_id IS NULL",
         )
-        .bind(&str_a)
+        .bind(id_a)
         .bind(&corr_type_str)
-        .bind(&str_b)
+        .bind(id_b)
         .execute(&mut *tx)
         .await?;
 
@@ -799,7 +777,7 @@ impl Db {
         let pool = &self.0;
         sqlx::query("UPDATE transactions SET skip_correlation = $1 WHERE id = $2")
             .bind(skip)
-            .bind(id.to_string())
+            .bind(id)
             .execute(pool)
             .await?;
         Ok(())
@@ -857,7 +835,7 @@ impl Db {
         .await?;
         rows.iter()
             .map(|row| {
-                let category_id = CategoryId::from_uuid(parse_uuid(row, "category_id")?);
+                let category_id: CategoryId = row.try_get("category_id")?;
                 let merchant_name: String = row.try_get("merchant_name")?;
                 let count: i64 = row.try_get("cnt")?;
                 Ok((category_id, merchant_name, count))
@@ -877,7 +855,7 @@ impl Db {
         let pool = &self.0;
         let rows =
             sqlx::query("SELECT DISTINCT merchant_name FROM transactions WHERE category_id = $1")
-                .bind(category_id.to_string())
+                .bind(category_id)
                 .fetch_all(pool)
                 .await?;
         rows.iter()
@@ -919,7 +897,7 @@ impl Db {
              FROM transactions
              WHERE account_id = $1",
         )
-        .bind(account_id.to_string())
+        .bind(account_id)
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -939,7 +917,7 @@ impl Db {
         let row = sqlx::query(
             "SELECT MAX(posted_date) as max_date FROM transactions WHERE account_id = $1",
         )
-        .bind(account_id.to_string())
+        .bind(account_id)
         .fetch_optional(pool)
         .await?;
         match row {
@@ -963,9 +941,9 @@ impl Db {
             "INSERT INTO categories (id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
-        .bind(category.id.to_string())
+        .bind(category.id)
         .bind(&category.name)
-        .bind(category.parent_id.map(|id| id.to_string()))
+        .bind(category.parent_id)
         .bind(category.budget_mode.map(|m| m.to_string()))
         .bind(category.budget_amount)
         .bind(category.project_start_date)
@@ -988,12 +966,12 @@ impl Db {
              WHERE id = $7",
         )
         .bind(&category.name)
-        .bind(category.parent_id.map(|id| id.to_string()))
+        .bind(category.parent_id)
         .bind(category.budget_mode.map(|m| m.to_string()))
         .bind(category.budget_amount)
         .bind(category.project_start_date)
         .bind(category.project_end_date)
-        .bind(category.id.to_string())
+        .bind(category.id)
         .execute(pool)
         .await?;
         Ok(())
@@ -1030,7 +1008,7 @@ impl Db {
         .await?;
         let mut map = HashMap::new();
         for row in &rows {
-            let id = CategoryId::from_uuid(parse_uuid(row, "category_id")?);
+            let id: CategoryId = row.try_get("category_id")?;
             let count: i64 = row.try_get("cnt")?;
             map.insert(id, count);
         }
@@ -1050,7 +1028,7 @@ impl Db {
             "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date
              FROM categories WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_category).transpose()
@@ -1085,23 +1063,22 @@ impl Db {
     /// Returns `sqlx::Error` if any query fails.
     pub async fn delete_category(&self, id: CategoryId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        let id_str = id.to_string();
         let mut tx = pool.begin().await?;
 
         sqlx::query("UPDATE transactions SET category_id = NULL WHERE category_id = $1")
-            .bind(&id_str)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE rules SET target_category_id = NULL WHERE target_category_id = $1")
-            .bind(&id_str)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE categories SET parent_id = NULL WHERE parent_id = $1")
-            .bind(&id_str)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
         sqlx::query("DELETE FROM categories WHERE id = $1")
-            .bind(&id_str)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
 
@@ -1126,10 +1103,10 @@ impl Db {
             "INSERT INTO rules (id, rule_type, conditions, target_category_id, target_correlation_type, priority)
              VALUES ($1, $2, $3::jsonb, $4, $5, $6)",
         )
-        .bind(rule.id.to_string())
+        .bind(rule.id)
         .bind(rule.rule_type.to_string())
         .bind(&conditions_json)
-        .bind(rule.target_category_id.map(|id| id.to_string()))
+        .bind(rule.target_category_id)
         .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
         .bind(rule.priority)
         .execute(pool)
@@ -1187,7 +1164,7 @@ impl Db {
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
              FROM rules WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_rule).transpose()
@@ -1209,10 +1186,10 @@ impl Db {
         )
         .bind(rule.rule_type.to_string())
         .bind(&conditions_json)
-        .bind(rule.target_category_id.map(|id| id.to_string()))
+        .bind(rule.target_category_id)
         .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
         .bind(rule.priority)
-        .bind(rule.id.to_string())
+        .bind(rule.id)
         .execute(pool)
         .await?;
         Ok(())
@@ -1226,7 +1203,7 @@ impl Db {
     pub async fn delete_rule(&self, id: RuleId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query("DELETE FROM rules WHERE id = $1")
-            .bind(id.to_string())
+            .bind(id)
             .execute(pool)
             .await?;
         Ok(())
@@ -1247,7 +1224,7 @@ impl Db {
             "INSERT INTO connections (id, provider, provider_session_id, institution_name, valid_until, status)
              VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(connection.id.to_string())
+        .bind(connection.id)
         .bind(&connection.provider)
         .bind(&connection.provider_session_id)
         .bind(&connection.institution_name)
@@ -1290,7 +1267,7 @@ impl Db {
             "SELECT id, provider, provider_session_id, institution_name, valid_until, status
              FROM connections WHERE id = $1",
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(pool)
         .await?;
         row.as_ref().map(row_to_connection).transpose()
@@ -1311,7 +1288,7 @@ impl Db {
             "UPDATE connections SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
         )
         .bind(status.to_string())
-        .bind(id.to_string())
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -1325,7 +1302,7 @@ impl Db {
     pub async fn delete_connection(&self, id: ConnectionId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query("DELETE FROM connections WHERE id = $1")
-            .bind(id.to_string())
+            .bind(id)
             .execute(pool)
             .await?;
         Ok(())

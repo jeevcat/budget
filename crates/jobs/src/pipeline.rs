@@ -81,10 +81,10 @@ pub async fn step_correlate(
 ) -> Result<(), BoxDynError> {
     match super::correlate::correlate_fan_out(&db, &apalis_pool).await {
         Ok(()) => {
-            if let Some(ref run_id) = ctx.schedule_run_id {
+            if let Some(run_uuid) = parse_run_id(ctx.schedule_run_id.as_deref()) {
                 let _ = schedule_queries::complete_schedule_run(
                     &apalis_pool,
-                    run_id,
+                    run_uuid,
                     RunStatus::Succeeded,
                     None,
                 )
@@ -99,12 +99,17 @@ pub async fn step_correlate(
     }
 }
 
+/// Parse the optional schedule run ID string to a UUID.
+fn parse_run_id(run_id: Option<&str>) -> Option<uuid::Uuid> {
+    run_id?.parse().ok()
+}
+
 /// Mark the schedule run as failed if one is associated with this pipeline.
 async fn fail_schedule_run(pool: &ApalisPool, ctx: &PipelineContext, error: &BoxDynError) {
-    if let Some(ref run_id) = ctx.schedule_run_id {
+    if let Some(run_uuid) = parse_run_id(ctx.schedule_run_id.as_deref()) {
         let _ = schedule_queries::complete_schedule_run(
             pool,
-            run_id,
+            run_uuid,
             RunStatus::Failed,
             Some(&error.to_string()),
         )

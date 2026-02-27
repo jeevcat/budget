@@ -35,7 +35,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            database_url: "sqlite:budget.db?mode=rwc".to_owned(),
+            database_url: "postgresql://budget@localhost:5432/budget".to_owned(),
             llm_model: "gemini-2.5-flash-lite".to_owned(),
             gemini_api_key: None,
             bank_provider: "mock".to_owned(),
