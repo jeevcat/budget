@@ -2298,6 +2298,7 @@ function Categories() {
                       ${c.name}
                     </span>
                   </td>
+                  <td class="text-light" style="text-align:right;font-size:0.85rem">${c.transaction_count || ""}</td>
                   <td style="text-align:right">${budgetBadge(c)}</td>
                 </tr>
               `,

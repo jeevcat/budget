@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgRow;
@@ -875,6 +877,29 @@ impl Db {
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_category).collect()
+    }
+
+    /// Count transactions per category.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn category_transaction_counts(
+        &self,
+    ) -> Result<HashMap<CategoryId, i64>, sqlx::Error> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT category_id, COUNT(*) as cnt FROM transactions WHERE category_id IS NOT NULL GROUP BY category_id",
+        )
+        .fetch_all(pool)
+        .await?;
+        let mut map = HashMap::new();
+        for row in &rows {
+            let id = CategoryId::from_uuid(parse_uuid(row, "category_id")?);
+            let count: i64 = row.try_get("cnt")?;
+            map.insert(id, count);
+        }
+        Ok(map)
     }
 
     /// Get a single category by its ID.

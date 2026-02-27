@@ -55,14 +55,35 @@ pub fn router() -> Router<AppState> {
         .route("/{id}", axum::routing::put(update).delete(remove))
 }
 
-/// List all categories.
+/// A category with its transaction count.
+#[derive(Serialize)]
+struct CategoryWithCount {
+    #[serde(flatten)]
+    category: Category,
+    transaction_count: i64,
+}
+
+/// List all categories with transaction counts.
 ///
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
-async fn list(State(state): State<AppState>) -> Result<Json<Vec<Category>>, AppError> {
-    let categories = state.db.list_categories().await?;
-    Ok(Json(categories))
+async fn list(State(state): State<AppState>) -> Result<Json<Vec<CategoryWithCount>>, AppError> {
+    let (categories, counts) = tokio::try_join!(
+        state.db.list_categories(),
+        state.db.category_transaction_counts(),
+    )?;
+    let result = categories
+        .into_iter()
+        .map(|c| {
+            let transaction_count = counts.get(&c.id).copied().unwrap_or(0);
+            CategoryWithCount {
+                category: c,
+                transaction_count,
+            }
+        })
+        .collect();
+    Ok(Json(result))
 }
 
 /// Histogram of LLM-suggested category names for uncategorized transactions.
