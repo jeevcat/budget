@@ -280,12 +280,14 @@ mod tests {
             amount: dec!(-1500.00),
             description: Some("Credit card payment".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).unwrap(),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT RECEIVED".to_owned(),
             amount: dec!(1500.00),
             description: Some("Thank you for your payment".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).unwrap(),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();
@@ -301,12 +303,14 @@ mod tests {
             amount: dec!(-45.99),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 22).unwrap(),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "TARGET".to_owned(),
             amount: dec!(-65.00),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 21).unwrap(),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();
@@ -321,12 +325,14 @@ mod tests {
             amount: dec!(-500.00),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "DEPOSIT".to_owned(),
             amount: dec!(500.00),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();

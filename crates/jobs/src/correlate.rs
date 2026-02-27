@@ -4,10 +4,12 @@
 //! The fan-out handler applies cheap deterministic rules in-line, then enqueues
 //! one `CorrelateTransactionJob` per remaining transaction for LLM processing.
 
+use std::collections::HashMap;
+
 use apalis::prelude::*;
 
 use budget_core::db::Db;
-use budget_core::models::{CorrelationType, RuleType, TransactionId};
+use budget_core::models::{CategoryId, CorrelationType, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule, evaluate_correlation_rules};
 use budget_providers::TransactionSummary;
 
@@ -28,7 +30,10 @@ fn to_domain_correlation_type(
 }
 
 /// Build a [`TransactionSummary`] from a domain transaction for LLM input.
-fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
+fn to_summary(
+    txn: &budget_core::models::Transaction,
+    categories: &HashMap<CategoryId, String>,
+) -> TransactionSummary {
     TransactionSummary {
         merchant_name: txn.merchant_name.clone(),
         amount: txn.amount,
@@ -38,6 +43,9 @@ fn to_summary(txn: &budget_core::models::Transaction) -> TransactionSummary {
             Some(txn.description.clone())
         },
         posted_date: txn.posted_date,
+        category: txn
+            .category_id
+            .and_then(|cid| categories.get(&cid).cloned()),
     }
 }
 
@@ -101,10 +109,11 @@ pub(crate) async fn correlate_fan_out(
         if let Some((matched_id, corr_type)) =
             evaluate_correlation_rules(txn, &candidates, &compiled_rules)
         {
-            link_pair(db, txn.id, matched_id, corr_type).await?;
-            paired.insert(txn.id);
-            paired.insert(matched_id);
-            by_rule += 1;
+            if link_pair(db, txn.id, matched_id, corr_type).await? {
+                paired.insert(txn.id);
+                paired.insert(matched_id);
+                by_rule += 1;
+            }
             continue;
         }
 
@@ -158,12 +167,19 @@ pub async fn handle_correlate_transaction_job(
         return Ok(());
     }
 
-    // Find candidates: uncorrelated transactions with opposite amount
-    let candidates = db.get_correlation_candidates(-txn.amount, txn_id).await?;
+    // Build category lookup for LLM summaries
+    let all_categories = db.list_categories().await?;
+    let category_map: HashMap<CategoryId, String> =
+        all_categories.into_iter().map(|c| (c.id, c.name)).collect();
+
+    // Find candidates: uncorrelated transactions with opposite amount within date window
+    let candidates = db
+        .get_correlation_candidates(-txn.amount, txn_id, txn.posted_date)
+        .await?;
 
     for candidate in &candidates {
-        let summary_a = to_summary(&txn);
-        let summary_b = to_summary(candidate);
+        let summary_a = to_summary(&txn, &category_map);
+        let summary_b = to_summary(candidate, &category_map);
 
         let result = llm.propose_correlation(&summary_a, &summary_b).await?;
 
@@ -171,13 +187,20 @@ pub async fn handle_correlate_transaction_job(
             && let Some(ref provider_corr_type) = result.correlation_type
         {
             let domain_type = to_domain_correlation_type(provider_corr_type);
-            link_pair(&db, txn_id, candidate.id, domain_type).await?;
+            if link_pair(&db, txn_id, candidate.id, domain_type).await? {
+                tracing::debug!(
+                    txn_id = %txn_id,
+                    correlated_with = %candidate.id,
+                    "correlated by LLM"
+                );
+                return Ok(());
+            }
+            // Atomic link failed (race): try the next candidate
             tracing::debug!(
                 txn_id = %txn_id,
-                correlated_with = %candidate.id,
-                "correlated by LLM"
+                candidate = %candidate.id,
+                "atomic link failed, trying next candidate"
             );
-            return Ok(());
         }
     }
 
@@ -198,16 +221,15 @@ pub async fn handle_correlate_job(
     correlate_fan_out(&db, &apalis_pool).await
 }
 
-/// Persist a bidirectional correlation link between two transactions.
+/// Atomically persist a bidirectional correlation link between two transactions.
+///
+/// Returns `true` if both sides were successfully linked, `false` if either
+/// side was already claimed by a concurrent job.
 async fn link_pair(
     db: &Db,
     id_a: TransactionId,
     id_b: TransactionId,
     corr_type: CorrelationType,
-) -> Result<(), BoxDynError> {
-    db.update_transaction_correlation(id_a, id_b, corr_type)
-        .await?;
-    db.update_transaction_correlation(id_b, id_a, corr_type)
-        .await?;
-    Ok(())
+) -> Result<bool, BoxDynError> {
+    Ok(db.link_correlation_pair(id_a, id_b, corr_type).await?)
 }

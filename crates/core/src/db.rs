@@ -117,6 +117,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         counterparty_iban: row.try_get("counterparty_iban")?,
         counterparty_bic: row.try_get("counterparty_bic")?,
         bank_transaction_code: row.try_get("bank_transaction_code")?,
+        skip_correlation: row.try_get("skip_correlation")?,
     })
 }
 
@@ -318,8 +319,9 @@ impl Db {
                  (id, account_id, category_id, amount, original_amount, original_currency,
                   merchant_name, description, posted_date,
                   correlation_id, correlation_type, provider_transaction_id, suggested_category,
-                  counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                  counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                  skip_correlation)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
@@ -349,6 +351,7 @@ impl Db {
         .bind(txn.counterparty_iban.as_deref())
         .bind(txn.counterparty_bic.as_deref())
         .bind(txn.bank_transaction_code.as_deref())
+        .bind(txn.skip_correlation)
         .execute(pool)
         .await?;
         Ok(())
@@ -365,7 +368,8 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              ORDER BY posted_date DESC, merchant_name ASC",
         )
@@ -390,7 +394,8 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              WHERE id = $1",
         )
@@ -415,7 +420,8 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              WHERE category_id IS NULL OR category_method = 'llm'",
         )
@@ -435,7 +441,8 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              WHERE category_id IS NULL",
         )
@@ -458,9 +465,11 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
-             WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL",
+             WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL
+               AND skip_correlation = FALSE",
         )
         .fetch_all(pool)
         .await?;
@@ -479,21 +488,26 @@ impl Db {
         &self,
         opposite_amount: Decimal,
         exclude_id: TransactionId,
+        reference_date: NaiveDate,
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
+               AND skip_correlation = FALSE
                AND amount = $1
-               AND id != $2",
+               AND id != $2
+               AND posted_date BETWEEN ($3 - INTERVAL '45 days')::date AND ($3 + INTERVAL '45 days')::date",
         )
         .bind(opposite_amount)
         .bind(exclude_id.to_string())
+        .bind(reference_date)
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -572,6 +586,82 @@ impl Db {
         let pool = &self.0;
         sqlx::query("UPDATE transactions SET suggested_category = $1 WHERE id = $2")
             .bind(suggested_category)
+            .bind(id.to_string())
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Atomically link two transactions as a correlation pair.
+    ///
+    /// Uses a transaction with `WHERE correlation_id IS NULL` guards on both
+    /// UPDATEs, so if either side was already claimed by a concurrent job the
+    /// whole operation is rolled back. Returns `true` if the pair was
+    /// successfully linked, `false` if either side was already correlated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query or transaction management fails.
+    pub async fn link_correlation_pair(
+        &self,
+        id_a: TransactionId,
+        id_b: TransactionId,
+        correlation_type: CorrelationType,
+    ) -> Result<bool, sqlx::Error> {
+        let pool = &self.0;
+        let mut tx = pool.begin().await?;
+
+        let corr_type_str = correlation_type.to_string();
+        let str_a = id_a.to_string();
+        let str_b = id_b.to_string();
+
+        let result_a = sqlx::query(
+            "UPDATE transactions SET correlation_id = $1, correlation_type = $2
+             WHERE id = $3 AND correlation_id IS NULL",
+        )
+        .bind(&str_b)
+        .bind(&corr_type_str)
+        .bind(&str_a)
+        .execute(&mut *tx)
+        .await?;
+
+        if result_a.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        let result_b = sqlx::query(
+            "UPDATE transactions SET correlation_id = $1, correlation_type = $2
+             WHERE id = $3 AND correlation_id IS NULL",
+        )
+        .bind(&str_a)
+        .bind(&corr_type_str)
+        .bind(&str_b)
+        .execute(&mut *tx)
+        .await?;
+
+        if result_b.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Set or clear the `skip_correlation` flag on a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn set_skip_correlation(
+        &self,
+        id: TransactionId,
+        skip: bool,
+    ) -> Result<(), sqlx::Error> {
+        let pool = &self.0;
+        sqlx::query("UPDATE transactions SET skip_correlation = $1 WHERE id = $2")
+            .bind(skip)
             .bind(id.to_string())
             .execute(pool)
             .await?;
@@ -687,7 +777,8 @@ impl Db {
             "SELECT id, account_id, category_id, amount, original_amount, original_currency,
                     merchant_name, description, posted_date,
                     correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
              FROM transactions
              WHERE account_id = $1",
         )
@@ -1208,6 +1299,7 @@ mod tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            skip_correlation: false,
         }
     }
 
@@ -1952,5 +2044,170 @@ mod tests {
         assert_eq!(groups[0].2, 4);
         assert_eq!(groups[1].1, "ALDI");
         assert_eq!(groups[1].2, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Correlation system tests
+    // -----------------------------------------------------------------------
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_link_correlation_pair_atomic(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Transfers");
+        db.insert_category(&cat).await.unwrap();
+
+        let mut txn_a = make_transaction(acct.id);
+        txn_a.category_id = Some(cat.id);
+        txn_a.amount = dec!(-500.00);
+        db.upsert_transaction(&txn_a, None).await.unwrap();
+
+        let mut txn_b = make_transaction(acct.id);
+        txn_b.category_id = Some(cat.id);
+        txn_b.amount = dec!(500.00);
+        db.upsert_transaction(&txn_b, None).await.unwrap();
+
+        let linked = db
+            .link_correlation_pair(txn_a.id, txn_b.id, CorrelationType::Transfer)
+            .await
+            .unwrap();
+        assert!(linked, "first link should succeed");
+
+        let a = db.get_transaction_by_id(txn_a.id).await.unwrap().unwrap();
+        let b = db.get_transaction_by_id(txn_b.id).await.unwrap().unwrap();
+
+        assert_eq!(a.correlation_id, Some(txn_b.id));
+        assert_eq!(b.correlation_id, Some(txn_a.id));
+        assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
+        assert_eq!(b.correlation_type, Some(CorrelationType::Transfer));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_link_correlation_pair_rejects_already_linked(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Transfers");
+        db.insert_category(&cat).await.unwrap();
+
+        let mut txn_a = make_transaction(acct.id);
+        txn_a.category_id = Some(cat.id);
+        txn_a.amount = dec!(-500.00);
+        db.upsert_transaction(&txn_a, None).await.unwrap();
+
+        let mut txn_b = make_transaction(acct.id);
+        txn_b.category_id = Some(cat.id);
+        txn_b.amount = dec!(500.00);
+        db.upsert_transaction(&txn_b, None).await.unwrap();
+
+        let mut txn_c = make_transaction(acct.id);
+        txn_c.category_id = Some(cat.id);
+        txn_c.amount = dec!(500.00);
+        db.upsert_transaction(&txn_c, None).await.unwrap();
+
+        // First pair succeeds
+        let linked = db
+            .link_correlation_pair(txn_a.id, txn_b.id, CorrelationType::Transfer)
+            .await
+            .unwrap();
+        assert!(linked);
+
+        // Second pair trying to re-link txn_a should fail
+        let rejected = db
+            .link_correlation_pair(txn_a.id, txn_c.id, CorrelationType::Transfer)
+            .await
+            .unwrap();
+        assert!(!rejected, "should reject when side A is already linked");
+
+        // txn_c should remain uncorrelated
+        let c = db.get_transaction_by_id(txn_c.id).await.unwrap().unwrap();
+        assert!(c.correlation_id.is_none());
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_skip_correlation_excludes_from_candidates(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Transfers");
+        db.insert_category(&cat).await.unwrap();
+
+        let mut txn_a = make_transaction(acct.id);
+        txn_a.category_id = Some(cat.id);
+        txn_a.amount = dec!(-100.00);
+        db.upsert_transaction(&txn_a, None).await.unwrap();
+
+        let mut txn_b = make_transaction(acct.id);
+        txn_b.category_id = Some(cat.id);
+        txn_b.amount = dec!(100.00);
+        db.upsert_transaction(&txn_b, None).await.unwrap();
+
+        // Before skip: txn_b appears as a candidate
+        let candidates = db
+            .get_correlation_candidates(dec!(100.00), txn_a.id, txn_a.posted_date)
+            .await
+            .unwrap();
+        assert_eq!(candidates.len(), 1);
+
+        // Set skip on txn_b
+        db.set_skip_correlation(txn_b.id, true).await.unwrap();
+
+        // After skip: txn_b no longer appears
+        let candidates = db
+            .get_correlation_candidates(dec!(100.00), txn_a.id, txn_a.posted_date)
+            .await
+            .unwrap();
+        assert!(candidates.is_empty());
+
+        // Also excluded from get_uncorrelated_transactions
+        let uncorr = db.get_uncorrelated_transactions().await.unwrap();
+        let ids: Vec<_> = uncorr.iter().map(|t| t.id).collect();
+        assert!(!ids.contains(&txn_b.id));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_date_proximity_window_excludes_distant(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let cat = make_category("Transfers");
+        db.insert_category(&cat).await.unwrap();
+
+        let reference_date = NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+
+        // Near candidate: within 45 days
+        let mut txn_near = make_transaction(acct.id);
+        txn_near.category_id = Some(cat.id);
+        txn_near.amount = dec!(100.00);
+        txn_near.posted_date = NaiveDate::from_ymd_opt(2025, 6, 20).unwrap();
+        db.upsert_transaction(&txn_near, None).await.unwrap();
+
+        // Far candidate: outside 45 days
+        let mut txn_far = make_transaction(acct.id);
+        txn_far.category_id = Some(cat.id);
+        txn_far.amount = dec!(100.00);
+        txn_far.posted_date = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
+        db.upsert_transaction(&txn_far, None).await.unwrap();
+
+        let anchor = TransactionId::new();
+        let candidates = db
+            .get_correlation_candidates(dec!(100.00), anchor, reference_date)
+            .await
+            .unwrap();
+
+        let ids: Vec<_> = candidates.iter().map(|t| t.id).collect();
+        assert!(
+            ids.contains(&txn_near.id),
+            "near transaction should be included"
+        );
+        assert!(
+            !ids.contains(&txn_far.id),
+            "far transaction should be excluded"
+        );
     }
 }

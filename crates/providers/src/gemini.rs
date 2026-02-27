@@ -196,6 +196,8 @@ JSON response:"#
     ) -> Result<CorrelationResult, ProviderError> {
         let desc_a = txn_a.description.as_deref().unwrap_or("(none)");
         let desc_b = txn_b.description.as_deref().unwrap_or("(none)");
+        let cat_a = txn_a.category.as_deref().unwrap_or("(none)");
+        let cat_b = txn_b.category.as_deref().unwrap_or("(none)");
 
         let prompt = format!(
             r#"You analyze pairs of financial transactions to determine if they represent the same money movement across accounts.
@@ -215,22 +217,26 @@ Merchant: {}
 Amount: {}
 Description: {}
 Date: {}
+Category: {}
 
 Transaction B:
 Merchant: {}
 Amount: {}
 Description: {}
 Date: {}
+Category: {}
 
 JSON response:"#,
             txn_a.merchant_name,
             txn_a.amount,
             desc_a,
             txn_a.posted_date,
+            cat_a,
             txn_b.merchant_name,
             txn_b.amount,
             desc_b,
             txn_b.posted_date,
+            cat_b,
         );
 
         let text = self.generate(&prompt).await?;
@@ -551,12 +557,14 @@ mod tests {
             amount: dec!(-1500.00),
             description: Some("Credit card payment".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).expect("valid date"),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT RECEIVED".to_owned(),
             amount: dec!(1500.00),
             description: Some("Thank you".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).expect("valid date"),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();
@@ -583,12 +591,14 @@ mod tests {
             amount: dec!(-45.99),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 22).expect("valid date"),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "TARGET".to_owned(),
             amount: dec!(-65.00),
             description: None,
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 21).expect("valid date"),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();
@@ -847,12 +857,14 @@ mod live_tests {
             amount: dec!(-1500.00),
             description: Some("Automatic payment to credit card".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
+            category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT THANK YOU".to_owned(),
             amount: dec!(1500.00),
             description: Some("Payment received".to_owned()),
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
+            category: None,
         };
 
         let result = provider.propose_correlation(&txn_a, &txn_b).await.unwrap();

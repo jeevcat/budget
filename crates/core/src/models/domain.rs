@@ -60,6 +60,7 @@ pub struct Transaction {
     pub counterparty_iban: Option<String>,
     pub counterparty_bic: Option<String>,
     pub bank_transaction_code: Option<String>,
+    pub skip_correlation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

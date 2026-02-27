@@ -39,6 +39,7 @@ pub fn router() -> Router<AppState> {
         .route("/{id}", get(get_one))
         .route("/{id}/categorize", post(categorize).delete(uncategorize))
         .route("/{id}/generate-rule", post(generate_rule))
+        .route("/{id}/skip-correlation", post(skip_correlation))
 }
 
 /// List all transactions across all accounts.
@@ -127,6 +128,35 @@ async fn uncategorize(
         .push(CategorizeJob)
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Skip Correlation
+// ---------------------------------------------------------------------------
+
+/// Request body for the skip-correlation endpoint.
+#[derive(Deserialize)]
+pub struct SkipCorrelationRequest {
+    pub skip: bool,
+}
+
+/// Set or clear the `skip_correlation` flag on a transaction.
+///
+/// # Errors
+///
+/// Returns 400 if the ID is not a valid UUID.
+/// Returns `AppError` if the database update fails.
+async fn skip_correlation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SkipCorrelationRequest>,
+) -> Result<StatusCode, AppError> {
+    let txn_uuid =
+        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let txn_id = TransactionId::from_uuid(txn_uuid);
+
+    state.db.set_skip_correlation(txn_id, body.skip).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

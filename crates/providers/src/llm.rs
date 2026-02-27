@@ -18,6 +18,7 @@ pub struct TransactionSummary {
     pub amount: Decimal,
     pub description: Option<String>,
     pub posted_date: NaiveDate,
+    pub category: Option<String>,
 }
 
 /// The type of correlation between two transactions.
