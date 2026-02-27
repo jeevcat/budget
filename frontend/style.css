@@ -425,3 +425,91 @@ dialog > form > div {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Searchable category select */
+.cat-select {
+  position: relative;
+  display: inline-block;
+  min-width: 10rem;
+}
+.cat-select-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: left;
+  background: var(--secondary);
+  border: 1px solid var(--input);
+  border-radius: var(--radius, 6px);
+  padding: 0.4rem 0.6rem;
+  color: var(--foreground);
+  font-size: inherit;
+  cursor: pointer;
+}
+.cat-select-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cat-select-placeholder {
+  color: var(--muted-foreground);
+}
+.cat-select-dropdown {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 14rem);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.cat-select-search {
+  margin: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  background: var(--muted);
+  border: 1px solid var(--input);
+  border-radius: 4px;
+  color: var(--foreground);
+  outline: none;
+}
+.cat-select-search:focus {
+  border-color: var(--ring);
+}
+.cat-select-list {
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+.cat-select-item {
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat-select-item.child {
+  padding-left: 1.4rem;
+}
+.cat-select-item.active {
+  background: var(--accent);
+}
+.cat-select-item.selected {
+  font-weight: 600;
+}
+.cat-select-empty {
+  padding: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.txn-filters .cat-select-trigger {
+  padding-block: 0.25rem;
+  font-size: 0.85rem;
+}

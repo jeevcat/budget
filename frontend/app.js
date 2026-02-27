@@ -161,6 +161,230 @@ function budgetModeColor(mode) {
   return "";
 }
 
+// ---------------------------------------------------------------------------
+// Searchable category select (combobox)
+// ---------------------------------------------------------------------------
+
+function buildCategoryTree(categories) {
+  const roots = [];
+  const childrenOf = {};
+  for (const c of categories) {
+    if (c.parent_id) {
+      if (!childrenOf[c.parent_id]) childrenOf[c.parent_id] = [];
+      childrenOf[c.parent_id].push(c);
+    } else {
+      roots.push(c);
+    }
+  }
+  const sorted = (arr) =>
+    arr.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const result = [];
+  for (const root of sorted(roots)) {
+    result.push({ ...root, depth: 0 });
+    for (const child of sorted(childrenOf[root.id] ?? [])) {
+      result.push({ ...child, depth: 1 });
+    }
+  }
+  return result;
+}
+
+function CategorySelect({
+  value,
+  onChange,
+  categories,
+  catMap,
+  placeholder,
+  disabled,
+  extraOptions,
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  const tree = buildCategoryTree(categories ?? []);
+
+  const filtered = query
+    ? tree.filter((c) => {
+        const name = categoryName(catMap, c.id) || c.name;
+        return name.toLowerCase().includes(query.toLowerCase());
+      })
+    : tree;
+
+  const selectedName = value ? categoryName(catMap, value) || "" : "";
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || activeIdx < 0 || !listRef.current) return;
+    const item = listRef.current.children[activeIdx];
+    if (item) item.scrollIntoView({ block: "nearest" });
+  }, [activeIdx, open]);
+
+  function handleOpen() {
+    if (disabled) return;
+    setOpen(true);
+    setQuery("");
+    setActiveIdx(-1);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function selectItem(id) {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  }
+
+  const extraCount = extraOptions ? extraOptions.length : 0;
+
+  function onKeyDown(e) {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handleOpen();
+      }
+      return;
+    }
+    const totalItems = extraCount + filtered.length;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((prev) => (prev + 1) % totalItems);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((prev) => (prev <= 0 ? totalItems - 1 : prev - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIdx >= 0 && activeIdx < extraCount) {
+        selectItem(extraOptions[activeIdx].value);
+      } else if (activeIdx >= extraCount) {
+        const cat = filtered[activeIdx - extraCount];
+        if (cat) selectItem(cat.id);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      setQuery("");
+    }
+  }
+
+  return html`
+    <div class="cat-select" ref=${wrapRef}>
+      <button
+        type="button"
+        class="cat-select-trigger"
+        disabled=${disabled}
+        onClick=${handleOpen}
+        onKeyDown=${onKeyDown}
+      >
+        <span
+          class=${
+            value
+              ? budgetModeColor(categoryBudgetMode(catMap, value))
+              : "cat-select-placeholder"
+          }
+        >
+          ${value ? selectedName : placeholder || "Select category..."}
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      ${
+        open &&
+        html`
+          <div class="cat-select-dropdown">
+            <input
+              ref=${inputRef}
+              type="text"
+              class="cat-select-search"
+              placeholder="Search categories..."
+              value=${query}
+              onInput=${(e) => {
+                setQuery(e.target.value);
+                setActiveIdx(-1);
+              }}
+              onKeyDown=${onKeyDown}
+            />
+            <div class="cat-select-list" ref=${listRef} role="listbox">
+              ${extraOptions?.map(
+                (opt, i) => html`
+                  <div
+                    key=${opt.value}
+                    role="option"
+                    class=${
+                      "cat-select-item" + (activeIdx === i ? " active" : "")
+                    }
+                    onMouseEnter=${() => setActiveIdx(i)}
+                    onClick=${() => selectItem(opt.value)}
+                  >
+                    ${opt.label}
+                  </div>
+                `,
+              )}
+              ${filtered.map((c, i) => {
+                const idx = extraCount + i;
+                const mode = categoryBudgetMode(catMap, c.id);
+                const label = categoryLabel(catMap, c.id);
+                const isActive = activeIdx === idx;
+                const isSelected = c.id === value;
+                return html`
+                  <div
+                    key=${c.id}
+                    role="option"
+                    aria-selected=${isSelected}
+                    class=${
+                      "cat-select-item" +
+                      (c.depth ? " child" : "") +
+                      (isActive ? " active" : "") +
+                      (isSelected ? " selected" : "")
+                    }
+                    onMouseEnter=${() => setActiveIdx(idx)}
+                    onClick=${() => selectItem(c.id)}
+                  >
+                    <span class=${budgetModeColor(mode)}>
+                      ${
+                        c.depth && label?.parent
+                          ? html`<span class="cat-parent">${label.parent}</span>`
+                          : ""
+                      }${label?.short || c.name}
+                    </span>
+                  </div>
+                `;
+              })}
+              ${
+                filtered.length === 0 &&
+                html`
+                  <div class="cat-select-empty">No matching categories</div>
+                `
+              }
+            </div>
+          </div>
+        `
+      }
+    </div>
+  `;
+}
+
 function titleCase(s) {
   return s.toLowerCase().replace(/(?:^|\s|[-./])\S/g, (ch) => ch.toUpperCase());
 }
@@ -1011,18 +1235,14 @@ function TxnDetail({
             }
             <dt>Category</dt>
             <dd>
-              <select
+              <${CategorySelect}
                 value=${txn.category_id ?? suggestedCategoryId ?? ""}
+                onChange=${handleCategorize}
+                categories=${categories}
+                catMap=${catMap}
+                placeholder="uncategorized"
                 disabled=${saving}
-                onChange=${(e) => handleCategorize(e.target.value)}
-              >
-                ${!txn.category_id && html`<option value="" disabled>uncategorized</option>`}
-                ${(categories ?? []).map((c) => {
-                  const mode = categoryBudgetMode(catMap, c.id);
-                  const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
-                  return html`<option value=${c.id} class=${budgetModeColor(mode)}>${categoryName(catMap, c.id)}${tag}</option>`;
-                })}
-              </select>
+              />
               ${
                 txn.category_id && txn.category_method
                   ? html`<span class="chip outline small" style="margin-left:0.5rem">${{ manual: "Manual", rule: "Rule", llm: "LLM" }[txn.category_method] ?? txn.category_method}</span>`
@@ -1057,7 +1277,7 @@ function TxnDetail({
             ${
               desc
                 ? html`
-              <dt>Note</dt><dd>${desc}</dd>
+              <dt>Description</dt><dd>${desc}</dd>
             `
                 : null
             }
@@ -1394,15 +1614,17 @@ function Transactions() {
         value=${search}
         onInput=${(e) => setSearch(e.target.value)}
       />
-      <select value=${filterCat} onChange=${(e) => setFilterCat(e.target.value)}>
-        <option value="">All categories</option>
-        <option value="__none">Uncategorized</option>
-        ${usedCatIds.map((id) => {
-          const mode = categoryBudgetMode(catMap, id);
-          const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
-          return html`<option value=${id} class=${budgetModeColor(mode)}>${categoryName(catMap, id)}${tag}</option>`;
-        })}
-      </select>
+      <${CategorySelect}
+        value=${filterCat}
+        onChange=${setFilterCat}
+        categories=${(categories ?? []).filter((c) => usedCatIds.includes(c.id))}
+        catMap=${catMap}
+        placeholder="All categories"
+        extraOptions=${[
+          { value: "", label: "All categories" },
+          { value: "__none", label: "Uncategorized" },
+        ]}
+      />
       <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
         <option value="">All accounts</option>
         ${usedAcctIds.map(
@@ -2152,17 +2374,13 @@ function Rules() {
       </div>
       ${
         form.rule_type === "categorization"
-          ? html`<select
+          ? html`<${CategorySelect}
             value=${form.target_category_id}
-            onInput=${(e) => setField("target_category_id", e.target.value)}
-          >
-            <option value="">-- Category --</option>
-            ${(categories ?? []).map((c) => {
-              const mode = categoryBudgetMode(catMap, c.id);
-              const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
-              return html`<option value=${c.id} class=${budgetModeColor(mode)}>${categoryName(catMap, c.id)}${tag}</option>`;
-            })}
-          </select>`
+            onChange=${(id) => setField("target_category_id", id)}
+            categories=${categories}
+            catMap=${catMap}
+            placeholder="-- Category --"
+          />`
           : html`<select
             value=${form.target_correlation_type}
             onInput=${(e) =>
