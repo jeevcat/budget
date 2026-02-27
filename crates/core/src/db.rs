@@ -824,17 +824,37 @@ impl Db {
         row.as_ref().map(row_to_category).transpose()
     }
 
-    /// Delete a category by its ID.
+    /// Delete a category by its ID, clearing all foreign-key references first.
+    ///
+    /// Nullifies `category_id` on transactions, `target_category_id` on rules,
+    /// and `parent_id` on child categories before removing the row.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails (e.g. foreign key violation).
+    /// Returns `sqlx::Error` if any query fails.
     pub async fn delete_category(&self, id: CategoryId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("DELETE FROM categories WHERE id = $1")
-            .bind(id.to_string())
-            .execute(pool)
+        let id_str = id.to_string();
+        let mut tx = pool.begin().await?;
+
+        sqlx::query("UPDATE transactions SET category_id = NULL WHERE category_id = $1")
+            .bind(&id_str)
+            .execute(&mut *tx)
             .await?;
+        sqlx::query("UPDATE rules SET target_category_id = NULL WHERE target_category_id = $1")
+            .bind(&id_str)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE categories SET parent_id = NULL WHERE parent_id = $1")
+            .bind(&id_str)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM categories WHERE id = $1")
+            .bind(&id_str)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

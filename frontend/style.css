@@ -455,9 +455,11 @@ dialog > form > div {
   color: var(--muted-foreground);
 }
 .cat-select-dropdown {
-  position: fixed;
+  position: absolute;
   z-index: 50;
-  min-width: 14rem;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 14rem);
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius, 6px);
