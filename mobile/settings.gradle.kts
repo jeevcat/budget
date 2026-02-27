@@ -26,4 +26,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "budget"
-include(":app")
+include(":androidApp", ":shared")
