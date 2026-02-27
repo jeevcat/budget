@@ -86,9 +86,10 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - **LLM configuration**: The model is a config parameter (e.g., Gemini 2.5 Flash-Lite). Calls are made per-transaction. Cost is negligible (~$0.01–0.10/month for typical usage). No batching or caching required.
 
 ### 4. Daily Overspend Monitoring
-- Per-category budget amounts set by the user, with support for two budget periods:
+- Per-category budget amounts set by the user, with support for three budget modes:
   - **Monthly**: base budget amount is the same each month, but surplus/deficit rolls over (see Rollover below).
   - **Annual**: cumulative spend tracked across 12 budget months. The budget year starts with the first budget month that aligns with January (i.e., after January salaries post). Consistent with the salary-anchored month logic.
+  - **Project**: see Section 5.
 - The daily overspend view shows per category: **amount spent**, **amount remaining**, and **days left in budget period** (for monthly budgets: days until next budget month starts; for annual budgets: months remaining in the budget year, since days would be too granular to be useful).
 - A subtle pace indicator (visual only, not an alert) shows whether spend is ahead of or behind the linear pro-rata line — but the primary mental model is "remaining budget," not daily allowance.
 - **Uncategorized transactions**: Transactions in the uncategorized queue are included in the **overall total** as unallocated spend (so the total is never artificially low), but they do not count toward any specific category budget until categorized.
@@ -98,13 +99,14 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - **Overall total**: An aggregate spent/remaining across all active categories is shown for informational purposes, but overspend signals are per-category only.
 
 ### 5. Project Budgets
-- A **project** is a time-bound budget that operates outside the monthly/annual cycle. It has a user-defined start date, **optional** end date, and optional total budget. Projects with no end date remain active indefinitely (useful for open-ended efforts like ongoing renovations). The pace indicator only displays when both an end date and a budget are set.
-- Transactions are assigned to a project by **linking a category (or subtree) to a project**. E.g., linking "Home > Renovation" to a "Kitchen Reno" project captures all transactions in that category and its children for the project's duration. A category can only be linked to one project at a time, but can be linked to different projects sequentially.
-- Project spend is tracked against its own budget and timeline, with the same spent/remaining/days-left model. The pace indicator pro-rates across the project's full timeline (start to end date). No rollover — projects are finite.
-- **Projects are excluded from monthly/annual budgets by default.** Project transactions are visible but do not count toward regular category budgets or the overall monthly total. The "overall total" in Section 4 covers regular-budget categories only; projects have their own separate summary.
-- When the project ends (or the category is unlinked), transactions in that category resume flowing into regular budgets going forward.
-- **Retroactive project categories**: Because the system is always-live/functional, setting a category to project mode retroactively excludes its historical transactions from regular budget months — no reassignment needed, project membership is derived from category + date range at query time.
-- Use cases: home renovations, weddings, one-time medical expenses, relocation costs, etc.
+- A **project** is not a separate entity — it is a category (or subtree) with `budget_mode` set to `project`. The category itself carries the project's start date, optional end date, and optional budget amount. There are no project tables or linking operations; the category *is* the project.
+- A project-mode category has a user-defined **start date** and an **optional end date**. Projects with no end date remain active indefinitely (useful for open-ended efforts like ongoing renovations). The budget amount is also optional. The pace indicator only displays when both an end date and a budget are set.
+- Transactions are assigned to a project by being categorized into a project-mode category (or any of its children). E.g., setting "Home > Renovation" to project mode with a start date and budget captures all transactions in that category and its subtree for the project's duration.
+- Project spend is tracked against its own budget and timeline, with the same spent/remaining/days-left model. `time_left` is days until the end date (or -1 for open-ended projects). The pace indicator pro-rates across the project's full timeline (start to end date). No rollover — projects are finite.
+- **Projects are excluded from monthly/annual budgets.** When computing regular budget status, transactions in project-mode categories (and their subtrees) are filtered out entirely. The "overall total" in Section 4 covers regular-budget categories only; projects have their own separate summary in the API response and a dedicated tab in the UI.
+- **Ending a project**: To end a project, the user changes the category's `budget_mode` back to monthly or annual. Transactions in that category then resume flowing into regular budgets going forward. The category can later be set to project mode again for a different project (sequentially, not simultaneously).
+- **Retroactive exclusion**: Because the system is always-live/functional, setting a category to project mode retroactively excludes its historical transactions from regular budget months — no reassignment needed, project membership is derived from category budget mode + date range at query time.
+- Use cases: home renovations, weddings, one-time medical expenses, relocation costs, car purchases, etc.
 
 ### 6. Cross-Account Transaction Correlation
 - Correlation uses the **same architecture as categorization** (Section 3): deterministic rules first, LLM fallback with confidence scores, uncategorized queue for unresolved cases, and rule generation from user corrections. However, categorization and correlation are distinct operations — categorization maps transactions to categories, while correlation links two transactions together and nets them financially.
@@ -213,7 +215,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 - [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month.
 - [ ] **Rollover visualization**: Dashboard doesn't show rollover surplus/deficit carried from prior months.
-- [ ] **Project category transaction list**: No UI to browse which transactions belong to a project-mode category.
+- [x] **Project category transaction list**: The Projects tab in the budget dashboard shows transactions belonging to project-mode categories.
 
 ---
 

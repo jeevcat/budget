@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use budget_core::models::{CategoryId, CategoryMethod, RuleType, Transaction, TransactionId};
 use budget_core::rules::compile_rule;
+use budget_jobs::CategorizeJob;
 use budget_providers::{MatchField, RuleContext};
 
 use crate::routes::AppError;
@@ -24,6 +25,7 @@ pub struct CategorizeRequest {
 /// Mounts:
 /// - `GET /` -- list all transactions
 /// - `GET /uncategorized` -- list uncategorized transactions
+/// - `GET /{id}` -- fetch a single transaction
 /// - `POST /{id}/categorize` -- assign a category to a transaction
 /// - `POST /{id}/generate-rule` -- generate rule proposals for a transaction
 ///
@@ -34,6 +36,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
         .route("/uncategorized", get(uncategorized))
+        .route("/{id}", get(get_one))
         .route("/{id}/categorize", post(categorize).delete(uncategorize))
         .route("/{id}/generate-rule", post(generate_rule))
 }
@@ -56,6 +59,26 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, A
 async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
     let transactions = state.db.get_uncategorized_transactions().await?;
     Ok(Json(transactions))
+}
+
+/// Fetch a single transaction by ID.
+///
+/// # Errors
+///
+/// Returns 400 if the ID is not a valid UUID.
+/// Returns 404 if no transaction exists with the given ID.
+async fn get_one(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Transaction>, AppError> {
+    let uuid =
+        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let txn = state
+        .db
+        .get_transaction_by_id(TransactionId::from_uuid(uuid))
+        .await?
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "transaction not found".to_owned()))?;
+    Ok(Json(txn))
 }
 
 /// Assign a category to a single transaction.
@@ -99,6 +122,11 @@ async fn uncategorize(
     let txn_id = TransactionId::from_uuid(txn_uuid);
 
     state.db.clear_transaction_category(txn_id).await?;
+    state
+        .categorize_storage
+        .push(CategorizeJob)
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 

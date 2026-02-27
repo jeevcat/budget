@@ -85,10 +85,23 @@ function formatDateShort(iso) {
 // Simple hash router
 // ---------------------------------------------------------------------------
 
+function hashPath() {
+  const raw = location.hash.slice(1) || "/";
+  const i = raw.indexOf("?");
+  return i < 0 ? raw : raw.slice(0, i);
+}
+
+function hashParams() {
+  const i = location.hash.indexOf("?");
+  return i < 0
+    ? new URLSearchParams()
+    : new URLSearchParams(location.hash.slice(i + 1));
+}
+
 function useRoute() {
-  const [route, setRoute] = useState(location.hash.slice(1) || "/");
+  const [route, setRoute] = useState(hashPath());
   useEffect(() => {
-    const onHash = () => setRoute(location.hash.slice(1) || "/");
+    const onHash = () => setRoute(hashPath());
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
@@ -96,7 +109,7 @@ function useRoute() {
 }
 
 function NavLink({ href, children }) {
-  const route = location.hash.slice(1) || "/";
+  const route = hashPath();
   const current = route === href || route.startsWith(`${href}/`);
   return html`<a href="#${href}" aria-current=${current ? "page" : undefined}
     >${children}</a
@@ -200,6 +213,7 @@ function CategorySelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [dropStyle, setDropStyle] = useState({});
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -215,6 +229,17 @@ function CategorySelect({
 
   const selectedName = value ? categoryName(catMap, value) || "" : "";
 
+  function updateDropPos() {
+    const trigger = wrapRef.current?.querySelector(".cat-select-trigger");
+    if (!trigger) return;
+    const r = trigger.getBoundingClientRect();
+    setDropStyle({
+      top: `${r.bottom + 4}px`,
+      left: `${r.left}px`,
+      minWidth: `${r.width}px`,
+    });
+  }
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
@@ -224,7 +249,16 @@ function CategorySelect({
       }
     };
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    const scrollParent =
+      wrapRef.current?.closest("dialog > form > div") ||
+      wrapRef.current?.closest("dialog");
+    if (scrollParent)
+      scrollParent.addEventListener("scroll", updateDropPos, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      if (scrollParent)
+        scrollParent.removeEventListener("scroll", updateDropPos);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -235,6 +269,7 @@ function CategorySelect({
 
   function handleOpen() {
     if (disabled) return;
+    updateDropPos();
     setOpen(true);
     setQuery("");
     setActiveIdx(-1);
@@ -312,7 +347,7 @@ function CategorySelect({
       ${
         open &&
         html`
-          <div class="cat-select-dropdown">
+          <div class="cat-select-dropdown" style=${dropStyle}>
             <input
               ref=${inputRef}
               type="text"
@@ -642,8 +677,7 @@ function Dashboard() {
   const [error, setError] = useState(null);
   const [selectedMonthId, setSelectedMonthId] = useState(null);
 
-  // Initial load: categories, months, transactions, accounts + status for current month
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([
       api.get("/budgets/status"),
       api.get("/categories"),
@@ -659,6 +693,10 @@ function Dashboard() {
         setAccounts(a);
       })
       .catch(setError);
+  }, []);
+
+  useEffect(() => {
+    load();
   }, []);
 
   // Re-fetch status when selectedMonthId changes (skip the initial null)
@@ -956,7 +994,7 @@ function Dashboard() {
         uncategorizedCount > 0 &&
         html`
           <a
-            href="#/transactions"
+            href="#/transactions?cat=__none"
             class="badge warning"
             style="margin-left:auto;text-decoration:none"
           >
@@ -1051,6 +1089,7 @@ function Dashboard() {
             prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
           );
         }}
+        onRuleCreated=${() => setTimeout(() => load(), 1500)}
         compact=${true}
       />
     </article>
@@ -1101,6 +1140,7 @@ function TxnDetail({
   const [creatingRule, setCreatingRule] = useState(false);
   const [proposalPreview, setProposalPreview] = useState(null);
   const [proposalPreviewing, setProposalPreviewing] = useState(false);
+  const debounceRef = useRef(null);
   if (!txn) return null;
 
   // Pre-select LLM suggestion when no manual category is set
@@ -1147,6 +1187,15 @@ function TxnDetail({
     try {
       await api.del(`/transactions/${txn.id}/categorize`);
       onCategorize(txn.id, null);
+
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const updated = await api.get(`/transactions/${txn.id}`);
+        if (updated.category_id) {
+          onCategorize(txn.id, updated.category_id);
+          break;
+        }
+      }
     } finally {
       setSaving(false);
     }
@@ -1208,6 +1257,15 @@ function TxnDetail({
         target_correlation_type: null,
         priority: 0,
       });
+      if (proposalPreview) {
+        ot.toast(
+          `Rule created — matches ${proposalPreview.match_count} transaction${proposalPreview.match_count !== 1 ? "s" : ""}`,
+          "",
+          { variant: "success" },
+        );
+      } else {
+        ot.toast("Rule created", "", { variant: "success" });
+      }
       setRuleProposals(null);
       setSelectedProposal(null);
       if (onRuleCreated) onRuleCreated();
@@ -1339,8 +1397,16 @@ function TxnDetail({
                               type="text"
                               value=${editPattern}
                               onInput=${(e) => {
-                                setEditPattern(e.target.value);
-                                setProposalPreview(null);
+                                const val = e.target.value;
+                                setEditPattern(val);
+                                clearTimeout(debounceRef.current);
+                                debounceRef.current = setTimeout(() => {
+                                  fetchProposalPreview(
+                                    ruleProposals.proposals[selectedProposal]
+                                      .match_field,
+                                    val,
+                                  );
+                                }, 400);
                               }}
                               style="width:100%;margin-bottom:0.5rem;font-family:monospace"
                             />
@@ -1359,7 +1425,7 @@ function TxnDetail({
                                 proposalPreview &&
                                 html`
                                 <span class="text-light" style="font-size:0.85rem">
-                                  Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}
+                                  Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}${proposalPreview.sample.length > 0 ? ` — ${proposalPreview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
                                 </span>
                               `
                               }
@@ -1404,6 +1470,7 @@ function TransactionTable({
   catMap,
   accounts,
   onTransactionUpdate,
+  onRuleCreated,
   compact,
 }) {
   const [selected, setSelected] = useState(null);
@@ -1522,7 +1589,7 @@ function TransactionTable({
       acctMap=${acctMap}
       onCategorize=${handleCategorize}
       onClose=${() => setSelected(null)}
-      onRuleCreated=${() => {}}
+      onRuleCreated=${onRuleCreated}
     />
   `;
 }
@@ -1533,11 +1600,13 @@ function Transactions() {
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
-  const [filterCat, setFilterCat] = useState("");
+  const [filterCat, setFilterCat] = useState(
+    () => hashParams().get("cat") || "",
+  );
   const [filterAcct, setFilterAcct] = useState("");
   const [filterMethod, setFilterMethod] = useState("");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([
       api.get("/transactions"),
       api.get("/categories"),
@@ -1549,6 +1618,10 @@ function Transactions() {
         setAccounts(a);
       })
       .catch(setError);
+  }, []);
+
+  useEffect(() => {
+    load();
   }, []);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
@@ -1686,6 +1759,7 @@ function Transactions() {
           prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
         );
       }}
+      onRuleCreated=${() => setTimeout(() => load(), 1500)}
     />
   `;
 }
