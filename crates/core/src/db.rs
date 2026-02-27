@@ -381,6 +381,73 @@ impl Db {
         rows.iter().map(row_to_transaction).collect()
     }
 
+    /// List transactions with offset/limit pagination and optional filters.
+    ///
+    /// Returns `(transactions, total_matching_count)`.
+    ///
+    /// Filter parameters use empty strings to indicate "no filter". The special
+    /// value `"__none"` for `category_id` and `category_method` matches rows
+    /// where those columns are NULL.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if either query fails.
+    pub async fn list_transactions_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+        search: &str,
+        category_id: &str,
+        account_id: &str,
+        category_method: &str,
+    ) -> Result<(Vec<Transaction>, i64), sqlx::Error> {
+        let pool = &self.0;
+
+        let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
+                            OR LOWER(description) LIKE '%' || LOWER($1) || '%')
+               AND ($2 = '' OR ($2 = '__none' AND category_id IS NULL)
+                            OR ($2 != '__none' AND category_id = $2))
+               AND ($3 = '' OR account_id = $3)
+               AND ($4 = '' OR ($4 = '__none' AND category_method IS NULL)
+                            OR ($4 != '__none' AND category_method = $4))";
+
+        let count_sql = format!("SELECT COUNT(*) as cnt FROM transactions {where_clause}");
+        let total: i64 = sqlx::query_scalar(&count_sql)
+            .bind(search)
+            .bind(category_id)
+            .bind(account_id)
+            .bind(category_method)
+            .fetch_one(pool)
+            .await?;
+
+        let data_sql = format!(
+            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
+                    merchant_name, description, posted_date,
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    skip_correlation
+             FROM transactions
+             {where_clause}
+             ORDER BY posted_date DESC, merchant_name ASC
+             LIMIT $5 OFFSET $6"
+        );
+        let rows = sqlx::query(&data_sql)
+            .bind(search)
+            .bind(category_id)
+            .bind(account_id)
+            .bind(category_method)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+        let transactions = rows
+            .iter()
+            .map(row_to_transaction)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((transactions, total))
+    }
+
     /// Get a single transaction by its ID.
     ///
     /// Returns `None` if no transaction exists with the given ID.

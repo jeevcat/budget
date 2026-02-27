@@ -15,6 +15,13 @@ use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, Rule, RuleCondition, Transaction,
     TransactionId,
 };
+
+/// Mirror of the paginated response from `GET /api/transactions`.
+#[derive(serde::Deserialize)]
+struct TransactionPage {
+    items: Vec<Transaction>,
+    total: i64,
+}
 use budget_jobs::LlmClient;
 use budget_providers::MockLlmProvider;
 
@@ -317,8 +324,9 @@ async fn transactions_list_empty(pool: PgPool) {
     let (status, body) = send(app, get("/api/transactions")).await;
     assert_eq!(status, StatusCode::OK);
 
-    let txns: Vec<Transaction> = serde_json::from_slice(&body).expect("parse");
-    assert!(txns.is_empty());
+    let page: TransactionPage = serde_json::from_slice(&body).expect("parse");
+    assert!(page.items.is_empty());
+    assert_eq!(page.total, 0);
 }
 
 #[sqlx::test]
@@ -369,8 +377,9 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
     let (status, body) = send(app, get("/api/transactions")).await;
     assert_eq!(status, StatusCode::OK);
 
-    let all_txns: Vec<Transaction> = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(all_txns.len(), 2);
+    let page: TransactionPage = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.total, 2);
 }
 
 #[sqlx::test]

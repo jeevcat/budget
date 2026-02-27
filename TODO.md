@@ -22,7 +22,7 @@
 ## Architecture Review Findings
 
 ### High Priority
-- [ ] **Pagination on transaction list**: `GET /api/transactions` returns all transactions. Add cursor/offset pagination to avoid multi-MB responses as history grows
+- [x] **Pagination on transaction list**: `GET /api/transactions` returns all transactions. Add cursor/offset pagination to avoid multi-MB responses as history grows
 - [ ] **Budget status endpoint optimization**: `/api/budgets/status` loads all transactions into memory then filters. Query only current period's transactions in SQL
 
 ### Medium Priority

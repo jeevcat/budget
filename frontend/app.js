@@ -790,14 +790,14 @@ function Dashboard() {
       api.get("/budgets/status"),
       api.get("/categories"),
       api.get("/budgets/months"),
-      api.get("/transactions"),
+      api.get("/transactions?limit=10000"),
       api.get("/accounts"),
     ])
       .then(([s, c, m, t, a]) => {
         setStatusResp(s);
         setCategories(c);
         setMonths(m);
-        setTransactions(t);
+        setTransactions(t.items);
         setAccounts(a);
       })
       .catch(setError);
@@ -1818,43 +1818,82 @@ function TransactionTable({
   `;
 }
 
+const TXN_PAGE_SIZE = 50;
+
 function Transactions() {
-  const [txns, setTxns] = useState(null);
+  const [pageData, setPageData] = useState(null);
   const [categories, setCategories] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterCat, setFilterCat] = useState(
     () => hashParams().get("cat") || "",
   );
   const [filterAcct, setFilterAcct] = useState("");
   const [filterMethod, setFilterMethod] = useState("");
+  const [page, setPage] = useState(0);
+  const searchTimer = useRef(null);
 
-  const load = useCallback(() => {
-    Promise.all([
-      api.get("/transactions"),
-      api.get("/categories"),
-      api.get("/accounts"),
-    ])
-      .then(([t, c, a]) => {
-        setTxns(t);
+  // Debounce search input (300ms)
+  useEffect(() => {
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(searchTimer.current);
+  }, [search]);
+
+  // Reset to first page when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [filterCat, filterAcct, filterMethod]);
+
+  // Build query string and fetch transactions
+  const fetchTransactions = useCallback(() => {
+    const params = new URLSearchParams();
+    params.set("limit", String(TXN_PAGE_SIZE));
+    params.set("offset", String(page * TXN_PAGE_SIZE));
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (filterCat) params.set("category_id", filterCat);
+    if (filterAcct) params.set("account_id", filterAcct);
+    if (filterMethod) params.set("category_method", filterMethod);
+    return api.get(`/transactions?${params}`);
+  }, [page, debouncedSearch, filterCat, filterAcct, filterMethod]);
+
+  // Load categories + accounts once
+  useEffect(() => {
+    Promise.all([api.get("/categories"), api.get("/accounts")])
+      .then(([c, a]) => {
         setCategories(c);
         setAccounts(a);
       })
       .catch(setError);
   }, []);
 
+  // Fetch transaction page whenever filters/page change
   useEffect(() => {
-    load();
-  }, []);
+    fetchTransactions().then(setPageData).catch(setError);
+  }, [fetchTransactions]);
+
+  const reload = useCallback(() => {
+    fetchTransactions().then(setPageData).catch(setError);
+  }, [fetchTransactions]);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!txns) return html`<p class="text-light">Loading...</p>`;
+  if (!pageData) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
   const acctMap = Object.fromEntries((accounts ?? []).map((a) => [a.id, a]));
 
-  if (txns.length === 0)
+  const { items: txns, total } = pageData;
+  const totalPages = Math.max(1, Math.ceil(total / TXN_PAGE_SIZE));
+  const rangeStart = page * TXN_PAGE_SIZE + 1;
+  const rangeEnd = Math.min((page + 1) * TXN_PAGE_SIZE, total);
+  const hasActiveFilter = filterCat || filterAcct || filterMethod || debouncedSearch;
+
+  if (total === 0 && !hasActiveFilter)
     return html`
       <h2>Transactions</h2>
       <p class="text-light">
@@ -1863,43 +1902,11 @@ function Transactions() {
       </p>
     `;
 
-  const q = search.toLowerCase();
-  const filtered = txns.filter((t) => {
-    if (
-      q &&
-      !(t.merchant_name || "").toLowerCase().includes(q) &&
-      !(t.description || "").toLowerCase().includes(q)
-    )
-      return false;
-    if (filterCat === "__none" && t.category_id) return false;
-    if (filterCat && filterCat !== "__none" && t.category_id !== filterCat)
-      return false;
-    if (filterAcct && t.account_id !== filterAcct) return false;
-    if (filterMethod === "__none" && t.category_method) return false;
-    if (
-      filterMethod &&
-      filterMethod !== "__none" &&
-      t.category_method !== filterMethod
-    )
-      return false;
-    return true;
-  });
-
-  const usedCatIds = [
-    ...new Set(txns.map((t) => t.category_id).filter(Boolean)),
-  ];
-  const usedAcctIds = [...new Set(txns.map((t) => t.account_id))];
-  const hasActiveFilter = filterCat || filterAcct || filterMethod;
-
   return html`
     <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
       <h2 style="margin:0">Transactions</h2>
       <span class="text-lighter small" style="margin-left:0.75rem">
-        ${
-          filtered.length === txns.length
-            ? `${txns.length}`
-            : `${filtered.length} / ${txns.length}`
-        }
+        ${total === 0 ? "0" : `${rangeStart}\u2013${rangeEnd} of ${total}`}
       </span>
     </div>
 
@@ -1914,7 +1921,7 @@ function Transactions() {
       <${CategorySelect}
         value=${filterCat}
         onChange=${setFilterCat}
-        categories=${(categories ?? []).filter((c) => usedCatIds.includes(c.id))}
+        categories=${categories ?? []}
         catMap=${catMap}
         placeholder="All categories"
         extraOptions=${[
@@ -1924,9 +1931,9 @@ function Transactions() {
       />
       <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
         <option value="">All accounts</option>
-        ${usedAcctIds.map(
-          (id) =>
-            html`<option value=${id}>${accountDisplayName(acctMap[id]) || id}</option>`,
+        ${(accounts ?? []).map(
+          (a) =>
+            html`<option value=${a.id}>${accountDisplayName(a) || a.id}</option>`,
         )}
       </select>
       <select value=${filterMethod} onChange=${(e) => setFilterMethod(e.target.value)}>
@@ -1939,7 +1946,7 @@ function Transactions() {
     </div>
 
     ${
-      hasActiveFilter &&
+      (filterCat || filterAcct || filterMethod) &&
       html`
       <div class="hstack gap-2" style="margin-bottom:0.75rem">
         ${
@@ -1974,17 +1981,32 @@ function Transactions() {
     }
 
     <${TransactionTable}
-      transactions=${filtered}
+      transactions=${txns}
       categories=${categories}
       catMap=${catMap}
       accounts=${accounts}
       onTransactionUpdate=${(txnId, patch) => {
-        setTxns((prev) =>
-          prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
-        );
+        setPageData((prev) => ({
+          ...prev,
+          items: prev.items.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
+        }));
       }}
-      onRuleCreated=${() => setTimeout(() => load(), 1500)}
+      onRuleCreated=${() => setTimeout(() => reload(), 1500)}
     />
+
+    ${total > TXN_PAGE_SIZE && html`
+      <div class="hstack" style="justify-content:center;gap:0.75rem;margin-top:1rem">
+        <button disabled=${page === 0} onClick=${() => setPage((p) => p - 1)}>
+          \u2190 Prev
+        </button>
+        <span class="text-light small">
+          Page ${page + 1} of ${totalPages}
+        </span>
+        <button disabled=${page >= totalPages - 1} onClick=${() => setPage((p) => p + 1)}>
+          Next \u2192
+        </button>
+      </div>
+    `}
   `;
 }
 

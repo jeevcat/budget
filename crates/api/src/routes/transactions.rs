@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -42,14 +42,70 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/skip-correlation", post(skip_correlation))
 }
 
-/// List all transactions across all accounts.
+const DEFAULT_PAGE_LIMIT: i64 = 50;
+
+/// Query parameters for paginated transaction listing.
+#[derive(Deserialize)]
+struct ListQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<String>,
+    category_id: Option<String>,
+    account_id: Option<String>,
+    category_method: Option<String>,
+}
+
+/// Paginated response wrapper for transaction listings.
+#[derive(Serialize)]
+struct TransactionPage {
+    items: Vec<Transaction>,
+    total: i64,
+    limit: i64,
+    offset: i64,
+}
+
+/// List transactions with pagination and optional filters.
+///
+/// Query parameters:
+/// - `limit` — page size (default 50, max 200)
+/// - `offset` — number of rows to skip (default 0)
+/// - `search` — case-insensitive substring match on merchant or description
+/// - `category_id` — filter by category UUID, or `__none` for uncategorized
+/// - `account_id` — filter by account UUID
+/// - `category_method` — filter by method (`manual`, `rule`, `llm`), or `__none`
 ///
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
-async fn list(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
-    let transactions = state.db.list_transactions().await?;
-    Ok(Json(transactions))
+async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<TransactionPage>, AppError> {
+    let limit = query.limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let search = query.search.as_deref().unwrap_or("");
+    let category_id = query.category_id.as_deref().unwrap_or("");
+    let account_id = query.account_id.as_deref().unwrap_or("");
+    let category_method = query.category_method.as_deref().unwrap_or("");
+
+    let (items, total) = state
+        .db
+        .list_transactions_paginated(
+            limit,
+            offset,
+            search,
+            category_id,
+            account_id,
+            category_method,
+        )
+        .await?;
+
+    Ok(Json(TransactionPage {
+        items,
+        total,
+        limit,
+        offset,
+    }))
 }
 
 /// List transactions that have not been assigned a category.
