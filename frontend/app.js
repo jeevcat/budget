@@ -1537,6 +1537,11 @@ function TxnDetail({
                   : null
               }
             </dd>
+            ${
+              txn.llm_justification
+                ? html`<dt></dt><dd class="text-light" style="font-style:italic;font-size:0.85em">✦ ${txn.llm_justification}</dd>`
+                : null
+            }
             <dt>Account</dt><dd>${accountDisplayName(acctMap[txn.account_id]) || txn.account_id}</dd>
             ${
               txn.correlation_type
@@ -2284,38 +2289,49 @@ function Categories() {
     ${
       categories.length === 0
         ? html`<p class="text-light">No categories yet. Add one above.</p>`
-        : groups
-            .filter((g) => grouped[g.key].length > 0)
-            .map(
-              (g) => html`
-        <div key=${g.key} style="margin-bottom:1rem">
-          <h4 class="${budgetModeColor(g.key)}" style="margin-bottom:0.15rem">${g.label}</h4>
-          ${g.desc && html`<p class="text-light" style="margin-bottom:0.25rem;font-size:0.85rem">${g.desc}</p>`}
+        : html`
           <table class="cat-table">
-            <tbody>
-              ${grouped[g.key].map(
-                (c) => html`
-                <tr key=${c.id} class="clickable-row" onClick=${() => startEdit(c)}>
-                  <td>
-                    <span style="padding-left:${c.depth * 1.5}rem">
-                      ${
-                        c.depth > 0
-                          ? html`<span class="cat-parent">${catMap[c.parent_id]?.name}</span> `
-                          : null
-                      }
-                      ${c.name}
-                    </span>
-                  </td>
-                  <td class="text-light" style="text-align:right;font-size:0.85rem">${c.transaction_count || ""}</td>
-                  <td style="text-align:right">${budgetBadge(c)}</td>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th style="text-align:right;width:4rem">Txns</th>
+                <th style="text-align:right;width:6rem">Budget</th>
+              </tr>
+            </thead>
+            ${groups
+              .filter((g) => grouped[g.key].length > 0)
+              .map(
+                (g) => html`
+              <tbody key=${g.key}>
+                <tr class="cat-group-header">
+                  <th colspan="3" class="${budgetModeColor(g.key)}">
+                    ${g.label}
+                    ${g.desc ? html`<span class="text-light" style="font-weight:normal;font-size:0.85rem;margin-left:0.5rem">${g.desc}</span>` : null}
+                  </th>
                 </tr>
-              `,
+                ${grouped[g.key].map(
+                  (c) => html`
+                  <tr key=${c.id} class="clickable-row" onClick=${() => startEdit(c)}>
+                    <td>
+                      <span style="padding-left:${c.depth * 1.5}rem">
+                        ${
+                          c.depth > 0
+                            ? html`<span class="cat-parent">${catMap[c.parent_id]?.name}</span> `
+                            : null
+                        }
+                        ${c.name}
+                      </span>
+                    </td>
+                    <td class="text-light" style="text-align:right;font-size:0.85rem">${c.transaction_count || ""}</td>
+                    <td style="text-align:right">${budgetBadge(c)}</td>
+                  </tr>
+                `,
+                )}
+              </tbody>
+            `,
               )}
-            </tbody>
           </table>
-        </div>
-      `,
-            )
+        `
     }
 
     ${

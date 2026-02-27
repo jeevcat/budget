@@ -9,6 +9,8 @@ use crate::error::ProviderError;
 pub struct CategorizeResult {
     pub category_name: String,
     pub confidence: f64,
+    /// One-sentence explanation of why this category was chosen
+    pub justification: String,
 }
 
 /// Summary of a transaction, used as input for correlation proposals.

@@ -243,7 +243,7 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
             );
             state
                 .db
-                .update_transaction_category(txn.id, category_id, CategoryMethod::Rule)
+                .update_transaction_category(txn.id, category_id, CategoryMethod::Rule, None)
                 .await?;
             categorized_count += 1;
         }

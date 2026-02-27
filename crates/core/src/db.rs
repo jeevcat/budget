@@ -119,6 +119,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         counterparty_iban: row.try_get("counterparty_iban")?,
         counterparty_bic: row.try_get("counterparty_bic")?,
         bank_transaction_code: row.try_get("bank_transaction_code")?,
+        llm_justification: row.try_get("llm_justification")?,
         skip_correlation: row.try_get("skip_correlation")?,
     })
 }
@@ -525,14 +526,18 @@ impl Db {
         id: TransactionId,
         category_id: CategoryId,
         method: CategoryMethod,
+        justification: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET category_id = $1, category_method = $2 WHERE id = $3")
-            .bind(category_id.to_string())
-            .bind(method.to_string())
-            .bind(id.to_string())
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE transactions SET category_id = $1, category_method = $2, llm_justification = $3 WHERE id = $4",
+        )
+        .bind(category_id.to_string())
+        .bind(method.to_string())
+        .bind(justification)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -544,7 +549,7 @@ impl Db {
     pub async fn clear_transaction_category(&self, id: TransactionId) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE transactions SET category_id = NULL, category_method = NULL WHERE id = $1",
+            "UPDATE transactions SET category_id = NULL, category_method = NULL, llm_justification = NULL WHERE id = $1",
         )
         .bind(id.to_string())
         .execute(pool)
@@ -584,13 +589,17 @@ impl Db {
         &self,
         id: TransactionId,
         suggested_category: &str,
+        justification: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let pool = &self.0;
-        sqlx::query("UPDATE transactions SET suggested_category = $1 WHERE id = $2")
-            .bind(suggested_category)
-            .bind(id.to_string())
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE transactions SET suggested_category = $1, llm_justification = $2 WHERE id = $3",
+        )
+        .bind(suggested_category)
+        .bind(justification)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -1324,6 +1333,7 @@ mod tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            llm_justification: None,
             skip_correlation: false,
         }
     }
@@ -1483,7 +1493,7 @@ mod tests {
             .await
             .unwrap();
 
-        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual, None)
             .await
             .unwrap();
 
@@ -1563,7 +1573,7 @@ mod tests {
         let txn = make_transaction(acct.id);
         db.upsert_transaction(&txn, None).await.unwrap();
 
-        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual)
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Manual, None)
             .await
             .unwrap();
 
@@ -1589,7 +1599,7 @@ mod tests {
             let txn = make_transaction(acct.id);
             db.upsert_transaction(&txn, None).await.unwrap();
 
-            db.update_transaction_category(txn.id, cat.id, method)
+            db.update_transaction_category(txn.id, cat.id, method, None)
                 .await
                 .unwrap();
 
@@ -1625,7 +1635,7 @@ mod tests {
             .await
             .unwrap();
 
-        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Rule)
+        db.update_transaction_category(txn.id, cat.id, CategoryMethod::Rule, None)
             .await
             .unwrap();
 
@@ -1706,21 +1716,21 @@ mod tests {
         // LLM-categorized — should be included
         let txn_llm = make_transaction(acct.id);
         db.upsert_transaction(&txn_llm, None).await.unwrap();
-        db.update_transaction_category(txn_llm.id, cat.id, CategoryMethod::Llm)
+        db.update_transaction_category(txn_llm.id, cat.id, CategoryMethod::Llm, None)
             .await
             .unwrap();
 
         // Rule-categorized — should be excluded
         let txn_rule = make_transaction(acct.id);
         db.upsert_transaction(&txn_rule, None).await.unwrap();
-        db.update_transaction_category(txn_rule.id, cat.id, CategoryMethod::Rule)
+        db.update_transaction_category(txn_rule.id, cat.id, CategoryMethod::Rule, None)
             .await
             .unwrap();
 
         // Manual-categorized — should be excluded
         let txn_manual = make_transaction(acct.id);
         db.upsert_transaction(&txn_manual, None).await.unwrap();
-        db.update_transaction_category(txn_manual.id, cat.id, CategoryMethod::Manual)
+        db.update_transaction_category(txn_manual.id, cat.id, CategoryMethod::Manual, None)
             .await
             .unwrap();
 

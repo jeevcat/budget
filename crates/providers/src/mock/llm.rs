@@ -125,6 +125,7 @@ impl LlmProvider for MockLlmProvider {
         Ok(CategorizeResult {
             category_name: category.to_owned(),
             confidence,
+            justification: format!("Matched merchant \"{merchant_upper}\" to {category}"),
         })
     }
 

@@ -166,6 +166,7 @@ Given a bank transaction, classify it into exactly one category.
 Respond with a JSON object containing:
 - "category_name": string — the category (use ":" for hierarchy)
 - "confidence": number — your confidence from 0.0 to 1.0
+- "justification": string — one brief sentence explaining why this category fits
 
 If you are unsure, use a low confidence score. Do not guess wildly.
 
@@ -186,6 +187,7 @@ JSON response:"#
         Ok(CategorizeResult {
             category_name: result.category_name,
             confidence: result.confidence.clamp(0.0, 1.0),
+            justification: result.justification,
         })
     }
 
@@ -435,6 +437,8 @@ struct CandidateContent {
 struct CategorizeResponse {
     category_name: String,
     confidence: f64,
+    #[serde(default)]
+    justification: String,
 }
 
 #[derive(Deserialize)]

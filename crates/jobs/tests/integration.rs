@@ -127,6 +127,7 @@ async fn seed_transaction(
         counterparty_iban: None,
         counterparty_bic: None,
         bank_transaction_code: None,
+        llm_justification: None,
         skip_correlation: false,
     };
     db.upsert_transaction(&txn, None)

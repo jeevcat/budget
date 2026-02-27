@@ -556,6 +556,7 @@ mod tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            llm_justification: None,
             skip_correlation: false,
         }
     }

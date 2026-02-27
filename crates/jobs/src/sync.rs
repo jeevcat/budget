@@ -108,6 +108,7 @@ pub(crate) async fn sync_account(
             counterparty_iban: ptxn.counterparty_iban.clone(),
             counterparty_bic: ptxn.counterparty_bic.clone(),
             bank_transaction_code: ptxn.bank_transaction_code.clone(),
+            llm_justification: None,
             skip_correlation: false,
         };
 

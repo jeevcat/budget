@@ -53,7 +53,7 @@ pub(crate) async fn categorize_fan_out(
 
     for txn in &eligible {
         if let Some(category_id) = evaluate_categorization_rules(txn, &compiled_rules) {
-            db.update_transaction_category(txn.id, category_id, CategoryMethod::Rule)
+            db.update_transaction_category(txn.id, category_id, CategoryMethod::Rule, None)
                 .await?;
             by_rule += 1;
             continue;
@@ -136,6 +136,8 @@ pub async fn handle_categorize_transaction_job(
 
     let result = llm.categorize(&input).await?;
 
+    let justification = Some(result.justification.as_str());
+
     if result.confidence < LLM_CONFIDENCE_THRESHOLD {
         tracing::debug!(
             txn_id = %txn_id,
@@ -144,13 +146,13 @@ pub async fn handle_categorize_transaction_job(
             suggested = %result.category_name,
             "LLM confidence below threshold, saving suggestion"
         );
-        db.update_transaction_suggested_category(txn_id, &result.category_name)
+        db.update_transaction_suggested_category(txn_id, &result.category_name, justification)
             .await?;
         return Ok(());
     }
 
     if let Some(category) = db.get_category_by_name(&result.category_name).await? {
-        db.update_transaction_category(txn_id, category.id, CategoryMethod::Llm)
+        db.update_transaction_category(txn_id, category.id, CategoryMethod::Llm, justification)
             .await?;
         tracing::debug!(txn_id = %txn_id, category = %result.category_name, "categorized by LLM");
     } else {
@@ -159,7 +161,7 @@ pub async fn handle_categorize_transaction_job(
             category_name = %result.category_name,
             "LLM proposed unknown category, saving suggestion"
         );
-        db.update_transaction_suggested_category(txn_id, &result.category_name)
+        db.update_transaction_suggested_category(txn_id, &result.category_name, justification)
             .await?;
     }
 

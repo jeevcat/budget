@@ -157,6 +157,7 @@ fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Tr
         counterparty_iban: None,
         counterparty_bic: None,
         bank_transaction_code: None,
+        llm_justification: None,
         skip_correlation: false,
     }
 }
@@ -194,6 +195,7 @@ fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
         counterparty_iban: None,
         counterparty_bic: None,
         bank_transaction_code: None,
+        llm_justification: None,
         skip_correlation: false,
     }
 }
@@ -771,6 +773,7 @@ async fn generate_rule_for_categorized_transaction(pool: PgPool) {
         txn.id,
         category.id,
         budget_core::models::CategoryMethod::Manual,
+        None,
     )
     .await
     .expect("categorize");
@@ -823,6 +826,7 @@ async fn generate_rule_rejects_rule_categorized_transaction(pool: PgPool) {
         txn.id,
         category.id,
         budget_core::models::CategoryMethod::Rule,
+        None,
     )
     .await
     .expect("categorize");
