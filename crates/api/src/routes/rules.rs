@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
+    TransactionId,
 };
 use budget_core::rules::{compile_rule, evaluate_categorization_rules, matches_rule};
 use budget_jobs::CategorizeJob;
@@ -31,6 +32,16 @@ pub struct CreateRule {
     pub target_category_id: Option<String>,
     pub target_correlation_type: Option<String>,
     pub priority: i32,
+}
+
+/// Request body for previewing a rule, extending `CreateRule` with an optional
+/// transaction ID to always include in the match set (even if it is no longer
+/// rule-eligible, e.g. because the user just manually categorized it).
+#[derive(Deserialize)]
+pub struct PreviewRule {
+    #[serde(flatten)]
+    pub rule: CreateRule,
+    pub include_transaction_id: Option<String>,
 }
 
 /// Build the rules sub-router.
@@ -269,16 +280,29 @@ struct PreviewResponse {
 /// Returns `AppError` on database failures.
 async fn preview(
     State(state): State<AppState>,
-    Json(body): Json<CreateRule>,
+    Json(body): Json<PreviewRule>,
 ) -> Result<Json<PreviewResponse>, AppError> {
-    let rule = parse_rule_body(&body, RuleId::new())?;
+    let rule = parse_rule_body(&body.rule, RuleId::new())?;
     let compiled =
         compile_rule(&rule).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let transactions = match rule.rule_type {
+    let mut transactions = match rule.rule_type {
         RuleType::Categorization => state.db.get_rule_eligible_transactions().await?,
         RuleType::Correlation => state.db.get_uncorrelated_transactions().await?,
     };
+
+    // Include a specific transaction even if it is not rule-eligible (e.g. it
+    // was just manually categorized and the user is generating a rule from it).
+    if let Some(ref id_str) = body.include_transaction_id {
+        let uuid = Uuid::parse_str(id_str)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        let include_id = TransactionId::from_uuid(uuid);
+        if !transactions.iter().any(|t| t.id == include_id)
+            && let Some(txn) = state.db.get_transaction_by_id(include_id).await?
+        {
+            transactions.push(txn);
+        }
+    }
 
     let mut match_count: u32 = 0;
     let mut sample = Vec::with_capacity(5);
