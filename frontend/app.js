@@ -506,7 +506,7 @@ function SpendBar({ items, maxVal, selectedCategoryId, onCategoryClick }) {
       ${items.map(
         (item) => html`
           <div
-            class="spend-bar-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
+            class="spend-bar-row clickable-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
             key=${item.id}
             onClick=${() => onCategoryClick?.(item.id)}
             style="cursor:pointer"
@@ -596,7 +596,7 @@ function BudgetSection({
           ${items.map(
             (s) => html`
               <div
-                class="hstack dash-cat-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
+                class="hstack dash-cat-row clickable-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
                 key=${s.category_id}
                 onClick=${() => onCategoryClick?.(s.category_id)}
                 style="cursor:pointer"
@@ -715,7 +715,7 @@ function ProjectDrillDown({
           ${childBreakdown.map(
             (item) => html`
               <div
-                class="spend-bar-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
+                class="spend-bar-row clickable-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
                 style="cursor:pointer"
@@ -1447,6 +1447,7 @@ function TxnDetail({
         target_category_id: ruleProposals.target_category_id,
         target_correlation_type: null,
         priority: 0,
+        include_transaction_id: txn.id,
       });
       setProposalPreview(result);
     } catch {
@@ -1769,9 +1770,8 @@ function TransactionTable({
           ${sorted.map(
             (t) => html`
               <tr
-                class=${t.correlation_type ? "row-correlated" : ""}
+                class="clickable-row ${t.correlation_type ? "row-correlated" : ""}"
                 onClick=${() => setSelected(t)}
-                style="cursor:pointer"
               >
                 <td class="mono${compact ? " text-light" : ""}" style="${compact ? "width:7rem" : ""}">${formatDate(t.posted_date)}</td>
                 <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
@@ -2178,6 +2178,14 @@ function Categories() {
   const grouped = {};
   for (const g of groups) {
     const cats = categories.filter((c) => effectiveGroup(c) === g.key);
+    // Include unbudgeted parent categories whose children appear in this group
+    const catIds = new Set(cats.map((c) => c.id));
+    for (const c of cats) {
+      if (c.parent_id && !catIds.has(c.parent_id) && catMap[c.parent_id]) {
+        cats.push(catMap[c.parent_id]);
+        catIds.add(c.parent_id);
+      }
+    }
     grouped[g.key] = withDepth(cats);
   }
 
@@ -2205,21 +2213,20 @@ function Categories() {
   }
 
   return html`
-    <h2>Categories</h2>
-    <p class="text-light" style="margin-bottom:1rem">
-      ${categories.length} categor${categories.length !== 1 ? "ies" : "y"}
-    </p>
+    <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+      <h2 style="margin:0">Categories</h2>
+      <span class="text-light" style="font-size:0.85rem">${categories.length}</span>
+    </div>
 
     ${
       pendingSuggestions.length > 0 &&
       html`
-        <div style="margin-bottom:1.5rem">
-          <h3>LLM Suggestions</h3>
-          <p class="text-light" style="margin-bottom:0.5rem">
-            The LLM suggested these categories for uncategorized transactions.
+        <div style="margin-bottom:1rem">
+          <h4 style="margin-bottom:0.15rem">LLM Suggestions</h4>
+          <p class="text-light" style="margin-bottom:0.4rem;font-size:0.85rem">
             Select to accept, then re-run categorize.
           </p>
-          <div class="hstack gap-2" role="group" aria-label="Suggested categories" style="margin-bottom:0.75rem">
+          <div class="hstack gap-2" role="group" aria-label="Suggested categories" style="margin-bottom:0.5rem;flex-wrap:wrap">
             ${pendingSuggestions.map(
               (s) => html`
                 <button
@@ -2237,11 +2244,11 @@ function Categories() {
             selectedSuggestions.size > 0 &&
             html`
             <button
-              data-variant="primary"
+              data-variant="primary" class="small"
               onClick=${acceptSelected}
               disabled=${adding}
             >
-              ${adding ? "Accepting..." : `Accept ${selectedSuggestions.size} Selected`}
+              ${adding ? "Accepting..." : `Accept ${selectedSuggestions.size}`}
             </button>
           `
           }
@@ -2249,7 +2256,7 @@ function Categories() {
       `
     }
 
-    <form style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem" onSubmit=${handleAdd}>
+    <form class="hstack gap-2" style="flex-wrap:wrap;margin-bottom:0.75rem" onSubmit=${handleAdd}>
       <input
         type="text"
         placeholder="Category name"
@@ -2273,36 +2280,25 @@ function Categories() {
             .filter((g) => grouped[g.key].length > 0)
             .map(
               (g) => html`
-        <div key=${g.key} style="margin-bottom:1.5rem">
-          <h3 class="${budgetModeColor(g.key)}" style="margin-bottom:0.25rem">${g.label}</h3>
-          ${g.desc && html`<p class="text-light" style="margin-bottom:0.5rem">${g.desc}</p>`}
-          <table>
+        <div key=${g.key} style="margin-bottom:1rem">
+          <h4 class="${budgetModeColor(g.key)}" style="margin-bottom:0.15rem">${g.label}</h4>
+          ${g.desc && html`<p class="text-light" style="margin-bottom:0.25rem;font-size:0.85rem">${g.desc}</p>`}
+          <table class="cat-table">
             <tbody>
               ${grouped[g.key].map(
                 (c) => html`
-                <tr key=${c.id}>
+                <tr key=${c.id} class="clickable-row" onClick=${() => startEdit(c)}>
                   <td>
                     <span style="padding-left:${c.depth * 1.5}rem">
                       ${
                         c.depth > 0
-                          ? html`<span class="text-light" style="font-size:0.85rem;margin-right:0.25rem"
-                          >${catMap[c.parent_id]?.name} ></span
-                        > `
+                          ? html`<span class="cat-parent">${catMap[c.parent_id]?.name}</span> `
                           : null
                       }
                       ${c.name}
                     </span>
                   </td>
                   <td style="text-align:right">${budgetBadge(c)}</td>
-                  <td style="text-align:right;white-space:nowrap">
-                    <button class="small" onClick=${() => startEdit(c)}>Edit</button>
-                    <button
-                      data-variant="danger" class="small"
-                      onClick=${() => handleDelete(c.id)}
-                    >
-                      Delete
-                    </button>
-                  </td>
                 </tr>
               `,
               )}
@@ -2396,11 +2392,14 @@ function Categories() {
             `
             }
           </div>
-          <footer>
-            <button type="button" class="outline" onClick=${(e) => e.target.closest("dialog").close()}>Cancel</button>
-            <button type="submit" disabled=${saving}>
-              ${saving ? "Saving..." : "Save"}
-            </button>
+          <footer style="justify-content:space-between">
+            <button type="button" data-variant="danger" class="outline small" onClick=${() => handleDelete(editingId)}>Delete</button>
+            <div class="hstack gap-2">
+              <button type="button" class="outline" onClick=${(e) => e.target.closest("dialog").close()}>Cancel</button>
+              <button type="submit" disabled=${saving}>
+                ${saving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </footer>
         </form>
       </dialog>

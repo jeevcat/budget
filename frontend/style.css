@@ -44,6 +44,14 @@
 
 /* Overrides on top of oat — check frontend/oat-reference.md before adding */
 
+/* Shared: clickable list/table rows */
+.clickable-row {
+  cursor: pointer;
+}
+.clickable-row:hover {
+  background: var(--muted);
+}
+
 .main {
   padding: var(--space-6) var(--space-8);
 }
@@ -153,9 +161,6 @@
   opacity: 1;
 }
 
-.txn-table tbody tr {
-  cursor: pointer;
-}
 .txn-table tbody td {
   padding-block: 0.35rem;
   white-space: nowrap;
@@ -175,6 +180,11 @@
 .cat-parent::after {
   content: "\203A";
   margin-left: 0.2em;
+}
+
+/* Categories page */
+.cat-table tbody td {
+  padding-block: 0.25rem;
 }
 
 /* Budget mode color coding */
@@ -295,9 +305,6 @@ dialog > form > div {
   padding: 0.15rem 0.35rem;
   border-radius: 4px;
 }
-.spend-bar-row:hover {
-  background: var(--muted);
-}
 .spend-bar-selected {
   background: var(--muted);
 }
@@ -350,9 +357,6 @@ dialog > form > div {
   gap: 0.65rem;
   padding: 0.5rem 0.35rem;
   border-radius: 4px;
-}
-.dash-cat-row:hover {
-  background: var(--muted);
 }
 .dash-cat-selected {
   background: var(--muted);
