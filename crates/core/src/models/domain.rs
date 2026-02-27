@@ -88,6 +88,14 @@ pub struct BudgetMonth {
     pub salary_transactions_detected: i32,
 }
 
+/// Spending breakdown for a direct child of a project category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectChildSpending {
+    pub category_id: CategoryId,
+    pub category_name: String,
+    pub spent: Decimal,
+}
+
 /// Result of computing budget status for a category in a budget month
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
