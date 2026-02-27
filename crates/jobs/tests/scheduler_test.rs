@@ -42,7 +42,7 @@ async fn seed_account(db: &Db, name: &str) -> Account {
 }
 
 fn make_run(
-    account_id: &str,
+    account_id: uuid::Uuid,
     status: RunStatus,
     reason: TriggerReason,
     attempt: i32,
@@ -51,8 +51,8 @@ fn make_run(
     error_message: Option<&str>,
 ) -> ScheduleRun {
     ScheduleRun {
-        id: uuid::Uuid::new_v4().to_string(),
-        account_id: account_id.to_owned(),
+        id: uuid::Uuid::new_v4(),
+        account_id,
         status,
         trigger_reason: reason,
         attempt,
@@ -80,7 +80,8 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
         .await
         .expect("tick should succeed");
 
-    let run = schedule_queries::get_latest_run_for_account(&apalis_pool, &account.id.to_string())
+    let account_uuid: uuid::Uuid = account.id.into();
+    let run = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
         .await
         .expect("query should succeed")
         .expect("should have a run");
@@ -88,7 +89,7 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
     assert_eq!(run.status, RunStatus::Running);
     assert_eq!(run.trigger_reason, TriggerReason::Scheduled);
     assert_eq!(run.attempt, 1);
-    assert_eq!(run.account_id, account.id.to_string());
+    assert_eq!(run.account_id, account_uuid);
 }
 
 /// Account with a running pipeline is skipped — no duplicate enqueue.
@@ -96,11 +97,11 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
 async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     let existing = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Running,
         TriggerReason::Scheduled,
         1,
@@ -119,7 +120,7 @@ async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
 
     // Count all runs — should still be just the one
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
-        .bind(&account_id)
+        .bind(account.id)
         .fetch_one(&apalis_pool)
         .await
         .expect("count query");
@@ -131,13 +132,13 @@ async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
 async fn scheduler_retries_failed_transient_error(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     // Failed 2 minutes ago with transient error, attempt 1
     // Backoff for attempt 1 = 60s, so 2 min > 60s → should retry
     let failed = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Failed,
         TriggerReason::Scheduled,
         1,
@@ -156,14 +157,14 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
 
     // Should have 2 runs now — original failed + new retry
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
-        .bind(&account_id)
+        .bind(account.id)
         .fetch_one(&apalis_pool)
         .await
         .expect("count query");
     assert_eq!(count.0, 2);
 
     // Latest run should be a retry at attempt 2
-    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, &account_id)
+    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
         .await
         .expect("query")
         .expect("should have latest run");
@@ -177,13 +178,13 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
 async fn scheduler_respects_backoff_delay(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     // Failed 30s ago with transient error, attempt 2
     // Backoff for attempt 2 = 120s, so 30s < 120s → should not retry
     let failed = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Failed,
         TriggerReason::Retry,
         2,
@@ -202,7 +203,7 @@ async fn scheduler_respects_backoff_delay(pool: PgPool) {
 
     // Should still be just 1 run
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
-        .bind(&account_id)
+        .bind(account.id)
         .fetch_one(&apalis_pool)
         .await
         .expect("count query");
@@ -214,12 +215,12 @@ async fn scheduler_respects_backoff_delay(pool: PgPool) {
 async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     // Failed 20 minutes ago at attempt 5
     let failed = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Failed,
         TriggerReason::Retry,
         5,
@@ -238,14 +239,14 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
 
     // Should still be just 1 run — no retry
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
-        .bind(&account_id)
+        .bind(account.id)
         .fetch_one(&apalis_pool)
         .await
         .expect("count query");
     assert_eq!(count.0, 1, "should not retry after max attempts");
 
     // But next_run_at should be set on the existing run
-    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, &account_id)
+    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
         .await
         .expect("query")
         .expect("should have latest run");
@@ -260,12 +261,12 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
 async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     // Failed 2 minutes ago with permanent error
     let failed = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Failed,
         TriggerReason::Scheduled,
         1,
@@ -284,7 +285,7 @@ async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
 
     // Should still be just 1 run — no retry for permanent errors
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
-        .bind(&account_id)
+        .bind(account.id)
         .fetch_one(&apalis_pool)
         .await
         .expect("count query");
@@ -296,11 +297,11 @@ async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
 async fn pipeline_completion_updates_schedule_run(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
     let account = seed_account(&db, "Primary Checking").await;
-    let account_id = account.id.to_string();
+    let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
     let running = make_run(
-        &account_id,
+        account_uuid,
         RunStatus::Running,
         TriggerReason::Scheduled,
         1,
@@ -308,17 +309,17 @@ async fn pipeline_completion_updates_schedule_run(pool: PgPool) {
         None,
         None,
     );
-    let run_id = running.id.clone();
+    let run_id = running.id;
     schedule_queries::insert_schedule_run(&apalis_pool, &running)
         .await
         .expect("insert run");
 
     // Simulate pipeline completion
-    schedule_queries::complete_schedule_run(&apalis_pool, &run_id, RunStatus::Succeeded, None)
+    schedule_queries::complete_schedule_run(&apalis_pool, run_id, RunStatus::Succeeded, None)
         .await
         .expect("complete should succeed");
 
-    let updated = schedule_queries::get_latest_run_for_account(&apalis_pool, &account_id)
+    let updated = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
         .await
         .expect("query")
         .expect("should have run");
@@ -338,7 +339,7 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
 
     // Checking: succeeded run
     let run1 = make_run(
-        &acct1.id.to_string(),
+        acct1.id.into(),
         RunStatus::Succeeded,
         TriggerReason::Scheduled,
         1,
@@ -352,7 +353,7 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
 
     // Savings: failed run
     let run2 = make_run(
-        &acct2.id.to_string(),
+        acct2.id.into(),
         RunStatus::Failed,
         TriggerReason::Scheduled,
         1,

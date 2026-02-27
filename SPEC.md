@@ -147,11 +147,11 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 **Async runtime**: Tokio
 
-**Database**: SQLite via sqlx (compile-time checked queries)
+**Database**: PostgreSQL via sqlx
 
 **Schema migrations**: sqlx migrations (SQL files in `migrations/` folder)
 
-**Job queue**: Apalis (persistent, retriable, observable, backed by SQLite via sqlx). Four atomic job types chained: sync → categorize → correlate → budget recompute.
+**Job queue**: Apalis (persistent, retriable, observable, backed by PostgreSQL via sqlx). Four atomic job types chained: sync → categorize → correlate → budget recompute.
 
 **LLM client**: reqwest + serde_json — direct REST API calls to configurable LLM provider (e.g., Gemini). No SDK dependency. Model name is a config parameter.
 
@@ -179,7 +179,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 **Runtime environment**:
 - Runs as a systemd service with `DynamicUser=true` (no dedicated system user needed).
-- SQLite database stored in a persistent directory (defined in `persist.nix`, e.g., `/persist/apps/budget/`). Survives ephemeral root rollback.
+- PostgreSQL database. Connection string configured via `database_url` in the config file or `DATABASE_URL` environment variable.
 - Config values (LLM model, provider choice, port) are NixOS module options, wired from `secrets.toml` and module config.
 - `secret_key` for API auth is read from `secrets.toml` and passed via environment variable.
 
@@ -190,7 +190,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 **Health monitoring**: Integrated with healthchecks.io via the existing `mkHealthcheckOverride` helper. The `/health` endpoint (unauthenticated) is the check target.
 
-**Backups**: SQLite database file included in the existing Restic-to-Backblaze-B2 backup jobs.
+**Backups**: PostgreSQL database included in the existing Restic-to-Backblaze-B2 backup jobs via `pg_dump`.
 
 ---
 

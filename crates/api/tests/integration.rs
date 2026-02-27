@@ -71,7 +71,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
     let app = Router::new()
         .route("/health", axum::routing::get(health))
         .merge(routes::connections::callback_router())
-        .nest("/api", api_routes)
+        .nest("/api", auth::router().merge(api_routes))
         .with_state(state);
 
     (app, db)

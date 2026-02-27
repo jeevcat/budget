@@ -209,7 +209,7 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(routes::connections::callback_router())
-        .nest("/api", api_routes)
+        .nest("/api", auth::router().merge(api_routes))
         .fallback_service(static_service)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
