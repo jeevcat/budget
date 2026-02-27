@@ -1361,13 +1361,6 @@ function TxnDetail({
   const debounceRef = useRef(null);
   if (!txn) return null;
 
-  // Pre-select LLM suggestion when no manual category is set
-  const suggestedCategoryId =
-    !txn.category_id && txn.suggested_category
-      ? ((categories ?? []).find((c) => c.name === txn.suggested_category)
-          ?.id ?? null)
-      : null;
-
   const ref = (el) => {
     if (el && !el.open) {
       el.addEventListener(
@@ -1512,7 +1505,7 @@ function TxnDetail({
             <dt>Category</dt>
             <dd>
               <${CategorySelect}
-                value=${txn.category_id ?? suggestedCategoryId ?? ""}
+                value=${txn.category_id ?? ""}
                 onChange=${handleCategorize}
                 categories=${categories}
                 catMap=${catMap}
