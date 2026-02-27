@@ -778,8 +778,6 @@ function Dashboard() {
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
-  const [transactions, setTransactions] = useState(null);
-  const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [selectedMonthId, setSelectedMonthId] = useState(null);
 
@@ -788,15 +786,11 @@ function Dashboard() {
       api.get("/budgets/status"),
       api.get("/categories"),
       api.get("/budgets/months"),
-      api.get("/transactions?limit=10000"),
-      api.get("/accounts"),
     ])
-      .then(([s, c, m, t, a]) => {
+      .then(([s, c, m]) => {
         setStatusResp(s);
         setCategories(c);
         setMonths(m);
-        setTransactions(t.items);
-        setAccounts(a);
       })
       .catch(setError);
   }, []);
@@ -815,7 +809,7 @@ function Dashboard() {
   }, [selectedMonthId]);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
-  if (!statusResp || !categories || !months || !transactions || !accounts)
+  if (!statusResp || !categories || !months)
     return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -893,107 +887,12 @@ function Dashboard() {
   const aTotals = groupTotals(annual);
   const pTotals = groupTotals(projects);
 
-  // Uncategorized count (scoped to selected month)
-  const monthTxns = transactions.filter(
-    (t) =>
-      t.posted_date >= activeMonth.start_date &&
-      (!activeMonth.end_date || t.posted_date <= activeMonth.end_date),
-  );
-  const uncategorizedCount = monthTxns.filter(
-    (t) => !t.category_id && !t.correlation_type,
-  ).length;
-
-  // Collect category subtree IDs for a given category (mirrors backend logic)
-  const collectSubtree = (rootId) => {
-    const ids = new Set([rootId]);
-    const stack = [rootId];
-    while (stack.length > 0) {
-      const current = stack.pop();
-      for (const c of categories) {
-        if (c.parent_id === current && !ids.has(c.id)) {
-          ids.add(c.id);
-          stack.push(c.id);
-        }
-      }
-    }
-    return ids;
-  };
-
-  // Effective budget mode per category (own mode or inherited from parent)
-  const effectiveBudgetMode = (cat) => {
-    if (cat.budget_mode) return cat.budget_mode;
-    const parent = cat.parent_id ? catMap[cat.parent_id] : null;
-    return parent?.budget_mode ?? null;
-  };
-
-  // Category ID sets by budget mode
-  const monthlyCatIds = new Set(
-    categories
-      .filter((c) => effectiveBudgetMode(c) === "monthly")
-      .map((c) => c.id),
-  );
-  const annualCatIds = new Set(
-    categories
-      .filter((c) => effectiveBudgetMode(c) === "annual")
-      .map((c) => c.id),
-  );
-  const projectCatIds = new Set(
-    categories
-      .filter((c) => effectiveBudgetMode(c) === "project")
-      .map((c) => c.id),
-  );
-
-  // IDs of transactions that are reimbursed (have a correlation partner)
-  const reimbursedIds = new Set(
-    transactions
-      .filter((t) => t.correlation_type === "reimbursement")
-      .map((t) => t.correlation_id)
-      .filter(Boolean),
-  );
-
-  // Shared filter: exclude transfers, reimbursements, reimbursed originals, income
-  const filterForBudget = (t) => {
-    if (Number(t.amount) > 0) return false;
-    if (t.correlation_type === "transfer") return false;
-    if (t.correlation_type === "reimbursement") return false;
-    if (reimbursedIds.has(t.id)) return false;
-    return true;
-  };
-
-  // Budget-contributing transactions for the current month (monthly/unbudgeted categories only)
-  const monthBudgetTxns = monthTxns.filter((t) => {
-    if (!filterForBudget(t)) return false;
-    if (!t.category_id || !monthlyCatIds.has(t.category_id)) return false;
-    return true;
-  });
-
-  // Budget year months: walk backwards from active month to find January anchor
-  const yearStartIdx = (() => {
-    for (let i = activeIdx; i >= 0; i--) {
-      const sd = new Date(`${sortedMonths[i].start_date}T00:00:00`);
-      if (sd.getMonth() === 0) return i;
-    }
-    return 0;
-  })();
-  const yearEndIdx = Math.min(yearStartIdx + 12, sortedMonths.length);
-  const yearStart = sortedMonths[yearStartIdx]?.start_date;
-  const lastYearMonth = sortedMonths[yearEndIdx - 1];
-  const yearEnd = lastYearMonth?.end_date;
-
-  // Annual-scoped transactions: spans the entire budget year, annual categories only
-  const annualBudgetTxns = transactions.filter((t) => {
-    if (!filterForBudget(t)) return false;
-    if (!t.category_id || !annualCatIds.has(t.category_id)) return false;
-    if (yearStart && t.posted_date < yearStart) return false;
-    if (yearEnd && t.posted_date > yearEnd) return false;
-    return true;
-  });
-
-  // Project transactions: in project categories, within project date ranges
-  const projectBudgetTxns = transactions.filter((t) => {
-    if (!t.category_id || !projectCatIds.has(t.category_id)) return false;
-    return filterForBudget(t);
-  });
+  // All pre-computed by the backend — no client-side budget logic
+  const uncategorizedCount = statusResp.uncategorized_count;
+  const monthBudgetTxns = statusResp.monthly_transactions;
+  const annualBudgetTxns = statusResp.annual_transactions;
+  const projectBudgetTxns = statusResp.project_transactions;
+  const budgetYear = statusResp.budget_year;
 
   // Time left label per mode
   const timeLeft = (items, unit) => {
@@ -1015,26 +914,23 @@ function Dashboard() {
     setSelectedCategoryId((prev) => (prev === catId ? null : catId));
   }, []);
 
-  // Check whether a project category has direct children
-  const projectHasChildren = useCallback(
-    (catId) => categories.some((c) => c.parent_id === catId),
-    [categories],
-  );
-
   // Handle click on a project row: drill in if it has children, otherwise filter transactions
   const handleProjectClick = useCallback(
     (catId) => {
-      if (projectHasChildren(catId)) {
+      const proj = (statusResp.projects || []).find(
+        (p) => p.category_id === catId,
+      );
+      if (proj?.has_children) {
         setDrilledProjectId(catId);
         setSelectedCategoryId(null);
       } else {
         setSelectedCategoryId((prev) => (prev === catId ? null : catId));
       }
     },
-    [projectHasChildren],
+    [statusResp],
   );
 
-  // Compute sub-category breakdown when drilled into a project
+  // Project drill-down: use backend-provided child breakdowns
   const drilledProject = drilledProjectId
     ? projects.find((p) => p.category_id === drilledProjectId)
     : null;
@@ -1043,61 +939,18 @@ function Dashboard() {
     if (!drilledProjectId || !drilledProject) {
       return { childBreakdown: [], drilledTotalSpent: 0 };
     }
-    const directChildren = categories.filter(
-      (c) => c.parent_id === drilledProjectId,
+    // Backend provides children with {category_id, category_name, spent}
+    const backendProject = (statusResp.projects || []).find(
+      (p) => p.category_id === drilledProjectId,
     );
-    const subtreeIds = collectSubtree(drilledProjectId);
-    const subtreeTxns = projectBudgetTxns.filter(
-      (t) => t.category_id && subtreeIds.has(t.category_id),
-    );
-
-    // Aggregate per direct child (deeper descendants roll up to their direct-child ancestor)
-    const childSpent = new Map();
-    for (const child of directChildren) {
-      childSpent.set(child.id, 0);
-    }
-    let directSpent = 0;
-    for (const t of subtreeTxns) {
-      const amt = Math.abs(Number(t.amount));
-      if (t.category_id === drilledProjectId) {
-        directSpent += amt;
-        continue;
-      }
-      // Find which direct child this transaction belongs to
-      let cid = t.category_id;
-      while (cid) {
-        if (childSpent.has(cid)) {
-          childSpent.set(cid, childSpent.get(cid) + amt);
-          break;
-        }
-        const cat = catMap[cid];
-        cid = cat?.parent_id ?? null;
-      }
-    }
-
-    const rows = directChildren
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        spent: childSpent.get(c.id) || 0,
-      }))
-      .filter((r) => r.spent > 0)
-      .sort((a, b) => b.spent - a.spent);
-
-    if (directSpent > 0) {
-      rows.push({ id: drilledProjectId, name: "(Direct)", spent: directSpent });
-    }
-
+    const rows = (backendProject?.children || []).map((c) => ({
+      id: c.category_id,
+      name: c.category_name,
+      spent: Number(c.spent),
+    }));
     const total = rows.reduce((sum, r) => sum + r.spent, 0);
     return { childBreakdown: rows, drilledTotalSpent: total };
-  }, [
-    drilledProjectId,
-    drilledProject,
-    categories,
-    projectBudgetTxns,
-    catMap,
-    collectSubtree,
-  ]);
+  }, [drilledProjectId, drilledProject, statusResp]);
 
   // Track active tab (0 = Monthly, 1 = Annual, 2 = Projects)
   const [activeTab, setActiveTab] = useState(0);
@@ -1130,6 +983,23 @@ function Dashboard() {
         ? annualBudgetTxns
         : monthBudgetTxns;
 
+  // Collect category subtree IDs (UI-only: narrows the already-filtered
+  // backend transaction lists when the user clicks a category bar)
+  const collectSubtree = (rootId) => {
+    const ids = new Set([rootId]);
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      for (const c of categories) {
+        if (c.parent_id === current && !ids.has(c.id)) {
+          ids.add(c.id);
+          stack.push(c.id);
+        }
+      }
+    }
+    return ids;
+  };
+
   // Apply optional category filter from chart clicks
   const displayTxns = (() => {
     let list = baseTxns;
@@ -1142,16 +1012,6 @@ function Dashboard() {
       list = list.filter((t) => t.category_id && subtree.has(t.category_id));
     }
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
-  })();
-
-  // Derive the budget year from the active month (mirrors backend logic:
-  // walk backwards through sorted months to find the January anchor)
-  const budgetYear = (() => {
-    for (let i = activeIdx; i >= 0; i--) {
-      const sd = new Date(`${sortedMonths[i].start_date}T00:00:00`);
-      if (sd.getMonth() === 0) return sd.getFullYear();
-    }
-    return new Date(`${activeMonth.start_date}T00:00:00`).getFullYear();
   })();
 
   return html`
@@ -1307,9 +1167,14 @@ function Dashboard() {
         categories=${categories}
         catMap=${catMap}
         onTransactionUpdate=${(txnId, patch) => {
-          setTransactions((prev) =>
-            prev.map((t) => (t.id === txnId ? { ...t, ...patch } : t)),
-          );
+          const updateList = (txns) =>
+            txns.map((t) => (t.id === txnId ? { ...t, ...patch } : t));
+          setStatusResp((prev) => ({
+            ...prev,
+            monthly_transactions: updateList(prev.monthly_transactions),
+            annual_transactions: updateList(prev.annual_transactions),
+            project_transactions: updateList(prev.project_transactions),
+          }));
         }}
         onRuleCreated=${() => setTimeout(() => load(), 1500)}
         compact=${true}

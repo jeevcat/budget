@@ -13,7 +13,6 @@ use budget_core::budget::{
 };
 use budget_core::models::{
     BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId, ProjectChildSpending, Transaction,
-    TransactionId,
 };
 
 use crate::routes::AppError;
@@ -37,20 +36,16 @@ struct StatusResponse {
     month: BudgetMonth,
     statuses: Vec<BudgetStatus>,
     projects: Vec<ProjectStatusEntry>,
-    /// Transaction IDs contributing to monthly budgets in the active month.
-    monthly_transaction_ids: Vec<TransactionId>,
-    /// Transaction IDs contributing to annual budgets across the budget year.
-    annual_transaction_ids: Vec<TransactionId>,
-    /// Transaction IDs contributing to project budgets.
-    project_transaction_ids: Vec<TransactionId>,
+    /// Transactions contributing to monthly budgets in the active month.
+    monthly_transactions: Vec<Transaction>,
+    /// Transactions contributing to annual budgets across the budget year.
+    annual_transactions: Vec<Transaction>,
+    /// Transactions contributing to project budgets.
+    project_transactions: Vec<Transaction>,
     /// Number of uncategorized, uncorrelated transactions in the active month.
     uncategorized_count: u32,
     /// The budget year (calendar year of the January-anchored start).
     budget_year: i32,
-    /// Category IDs in each budget mode's subtree (for client-side category filtering).
-    monthly_category_ids: Vec<CategoryId>,
-    annual_category_ids: Vec<CategoryId>,
-    project_category_ids: Vec<CategoryId>,
 }
 
 /// Build the budgets sub-router.
@@ -112,19 +107,19 @@ fn effective_budget_mode(cat: &Category, categories: &[Category]) -> Option<Budg
     parent.and_then(|p| p.budget_mode)
 }
 
-/// Pre-classified transaction IDs and auxiliary dashboard data.
+/// Pre-classified transactions and auxiliary dashboard data.
 struct ClassifiedTransactions {
-    monthly_ids: Vec<TransactionId>,
-    annual_ids: Vec<TransactionId>,
-    project_ids: Vec<TransactionId>,
+    monthly: Vec<Transaction>,
+    annual: Vec<Transaction>,
+    project: Vec<Transaction>,
     uncategorized_count: u32,
     budget_year: i32,
-    monthly_cat_ids: std::collections::HashSet<CategoryId>,
-    annual_cat_ids: std::collections::HashSet<CategoryId>,
-    project_cat_ids: std::collections::HashSet<CategoryId>,
 }
 
-/// Classify transaction IDs by budget mode and compute auxiliary dashboard data.
+/// Classify transactions by budget mode and compute auxiliary dashboard data.
+///
+/// Returns the actual transaction objects grouped by mode so the frontend
+/// can display them directly without any business logic.
 fn classify_transactions(
     transactions: &[Transaction],
     categories: &[Category],
@@ -145,25 +140,19 @@ fn classify_transactions(
         .map(|c| c.id)
         .collect();
 
-    let project_cat_ids: std::collections::HashSet<CategoryId> = categories
-        .iter()
-        .filter(|c| effective_budget_mode(c, categories) == Some(BudgetMode::Project))
-        .map(|c| c.id)
-        .collect();
-
-    let monthly_ids: Vec<TransactionId> = budget_txns
+    let monthly: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
             t.category_id
                 .is_some_and(|cid| monthly_cat_ids.contains(&cid))
                 && is_in_budget_month(t.posted_date, month)
         })
-        .map(|t| t.id)
+        .map(|t| (*t).clone())
         .collect();
 
     let year_start = year_months.first().map(|bm| bm.start_date);
     let year_end = year_months.last().and_then(|bm| bm.end_date);
-    let annual_ids: Vec<TransactionId> = budget_txns
+    let annual: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
             t.category_id
@@ -171,11 +160,13 @@ fn classify_transactions(
                 && year_start.is_none_or(|ys| t.posted_date >= ys)
                 && year_end.is_none_or(|ye| t.posted_date <= ye)
         })
-        .map(|t| t.id)
+        .map(|t| (*t).clone())
         .collect();
 
-    let project_txns = filter_for_project(transactions, categories);
-    let project_ids: Vec<TransactionId> = project_txns.iter().map(|t| t.id).collect();
+    let project: Vec<Transaction> = filter_for_project(transactions, categories)
+        .into_iter()
+        .cloned()
+        .collect();
 
     let uncategorized_count: u32 = transactions
         .iter()
@@ -194,14 +185,11 @@ fn classify_transactions(
     );
 
     ClassifiedTransactions {
-        monthly_ids,
-        annual_ids,
-        project_ids,
+        monthly,
+        annual,
+        project,
         uncategorized_count,
         budget_year,
-        monthly_cat_ids,
-        annual_cat_ids,
-        project_cat_ids,
     }
 }
 
@@ -253,9 +241,9 @@ fn compute_projects(
 
 /// Compute budget status for every budgeted category in a given month.
 ///
-/// If `month_id` is provided, looks up that specific month; otherwise finds the
-/// current open month (the one with `end_date IS NULL`). For historical months,
-/// pace is calculated against the month's end date rather than today.
+/// Returns all data needed to render the dashboard: budget statuses, pre-filtered
+/// transactions grouped by mode, uncategorized count, budget year, and project
+/// child breakdowns. The frontend is a pure display layer — no business logic.
 ///
 /// # Errors
 ///
@@ -332,14 +320,11 @@ async fn status(
         month: month.clone(),
         statuses,
         projects,
-        monthly_transaction_ids: classified.monthly_ids,
-        annual_transaction_ids: classified.annual_ids,
-        project_transaction_ids: classified.project_ids,
+        monthly_transactions: classified.monthly,
+        annual_transactions: classified.annual,
+        project_transactions: classified.project,
         uncategorized_count: classified.uncategorized_count,
         budget_year: classified.budget_year,
-        monthly_category_ids: classified.monthly_cat_ids.into_iter().collect(),
-        annual_category_ids: classified.annual_cat_ids.into_iter().collect(),
-        project_category_ids: classified.project_cat_ids.into_iter().collect(),
     }))
 }
 
