@@ -142,6 +142,25 @@ function categoryName(catMap, id) {
   return label.parent ? `${label.parent} > ${label.short}` : label.short;
 }
 
+function categoryBudgetMode(catMap, id) {
+  if (!id) return null;
+  const cat = catMap[id];
+  if (!cat) return null;
+  if (cat.budget_mode) return cat.budget_mode;
+  if (cat.parent_id) {
+    const parent = catMap[cat.parent_id];
+    return parent?.budget_mode ?? null;
+  }
+  return null;
+}
+
+function budgetModeColor(mode) {
+  if (mode === "monthly") return "cat-monthly";
+  if (mode === "annual") return "cat-annual";
+  if (mode === "project") return "cat-project";
+  return "";
+}
+
 function titleCase(s) {
   return s.toLowerCase().replace(/(?:^|\s|[-./])\S/g, (ch) => ch.toUpperCase());
 }
@@ -787,7 +806,7 @@ function Dashboard() {
           selectedCategoryId &&
           html`
           <button
-            class="chip outline small"
+            class="chip outline small ${budgetModeColor(categoryBudgetMode(catMap, selectedCategoryId))}"
             style="margin-left:0.5rem"
             onClick=${() => setSelectedCategoryId(null)}
           >
@@ -821,12 +840,13 @@ function Dashboard() {
 function CategoryBadge({ catMap, id, suggested }) {
   const label = categoryLabel(catMap, id);
   if (label) {
+    const cls = budgetModeColor(categoryBudgetMode(catMap, id));
     if (label.parent) {
-      return html`<span title="${label.parent} > ${label.short}">
+      return html`<span class=${cls} title="${label.parent} > ${label.short}">
         <span class="cat-parent">${label.parent}</span>${label.short}
       </span>`;
     }
-    return html`<span>${label.short}</span>`;
+    return html`<span class=${cls}>${label.short}</span>`;
   }
   if (suggested) {
     return html`<span class="llm-suggestion" title="LLM suggestion: ${suggested}"><span class="llm-suggestion-icon">✦</span> ${suggested}</span>`;
@@ -997,10 +1017,11 @@ function TxnDetail({
                 onChange=${(e) => handleCategorize(e.target.value)}
               >
                 ${!txn.category_id && html`<option value="" disabled>uncategorized</option>`}
-                ${(categories ?? []).map(
-                  (c) =>
-                    html`<option value=${c.id}>${categoryName(catMap, c.id)}</option>`,
-                )}
+                ${(categories ?? []).map((c) => {
+                  const mode = categoryBudgetMode(catMap, c.id);
+                  const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
+                  return html`<option value=${c.id} class=${budgetModeColor(mode)}>${categoryName(catMap, c.id)}${tag}</option>`;
+                })}
               </select>
               ${
                 txn.category_id && txn.category_method
@@ -1376,10 +1397,11 @@ function Transactions() {
       <select value=${filterCat} onChange=${(e) => setFilterCat(e.target.value)}>
         <option value="">All categories</option>
         <option value="__none">Uncategorized</option>
-        ${usedCatIds.map(
-          (id) =>
-            html`<option value=${id}>${categoryName(catMap, id)}</option>`,
-        )}
+        ${usedCatIds.map((id) => {
+          const mode = categoryBudgetMode(catMap, id);
+          const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
+          return html`<option value=${id} class=${budgetModeColor(mode)}>${categoryName(catMap, id)}${tag}</option>`;
+        })}
       </select>
       <select value=${filterAcct} onChange=${(e) => setFilterAcct(e.target.value)}>
         <option value="">All accounts</option>
@@ -1404,7 +1426,7 @@ function Transactions() {
         ${
           filterCat &&
           html`
-          <button class="chip" onClick=${() => setFilterCat("")}>
+          <button class="chip ${filterCat !== "__none" ? budgetModeColor(categoryBudgetMode(catMap, filterCat)) : ""}" onClick=${() => setFilterCat("")}>
             <span>${filterCat === "__none" ? "Uncategorized" : categoryName(catMap, filterCat)}</span>
             <span class="chip-close" aria-label="Remove filter">\u00d7</span>
           </button>
@@ -1745,7 +1767,7 @@ function Categories() {
             .map(
               (g) => html`
         <div key=${g.key} style="margin-bottom:1.5rem">
-          <h3 style="margin-bottom:0.25rem">${g.label}</h3>
+          <h3 class="${budgetModeColor(g.key)}" style="margin-bottom:0.25rem">${g.label}</h3>
           ${g.desc && html`<p class="text-light" style="margin-bottom:0.5rem">${g.desc}</p>`}
           <table>
             <tbody>
@@ -2030,7 +2052,11 @@ function Rules() {
 
   function ruleTarget(rule) {
     if (rule.rule_type === "categorization") {
-      return categoryName(catMap, rule.target_category_id) ?? "none";
+      const name = categoryName(catMap, rule.target_category_id) ?? "none";
+      const cls = budgetModeColor(
+        categoryBudgetMode(catMap, rule.target_category_id),
+      );
+      return html`<span class=${cls}>${name}</span>`;
     }
     return rule.target_correlation_type ?? "none";
   }
@@ -2131,10 +2157,11 @@ function Rules() {
             onInput=${(e) => setField("target_category_id", e.target.value)}
           >
             <option value="">-- Category --</option>
-            ${(categories ?? []).map(
-              (c) =>
-                html`<option value=${c.id}>${categoryName(catMap, c.id)}</option>`,
-            )}
+            ${(categories ?? []).map((c) => {
+              const mode = categoryBudgetMode(catMap, c.id);
+              const tag = mode ? ` [${mode[0].toUpperCase()}]` : "";
+              return html`<option value=${c.id} class=${budgetModeColor(mode)}>${categoryName(catMap, c.id)}${tag}</option>`;
+            })}
           </select>`
           : html`<select
             value=${form.target_correlation_type}

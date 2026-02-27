@@ -177,6 +177,17 @@
   margin-left: 0.2em;
 }
 
+/* Budget mode color coding */
+.cat-monthly {
+  color: var(--kw-crystal-blue);
+}
+.cat-annual {
+  color: var(--kw-oni-violet);
+}
+.cat-project {
+  color: var(--kw-autumn-yellow);
+}
+
 /* Category method dots */
 .method-dot {
   display: inline-block;
