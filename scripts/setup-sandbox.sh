@@ -47,14 +47,30 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='budget
   sudo -u postgres psql -c "CREATE DATABASE budget OWNER budget;" >/dev/null
 fi
 
-# Run SQL migrations so sqlx compile-time checks (clippy) work
+# Export DATABASE_URL for cargo/sqlx (compile-time checks + sqlx::test)
+export DATABASE_URL="postgresql://budget@localhost:5432/budget"
+
+# Run SQL migrations so sqlx compile-time checks (clippy) work.
+# Use the URL (TCP) rather than -U/-d which defaults to peer auth and fails
+# when the OS user (root) doesn't match the PG role (budget).
 echo "Running database migrations..."
 for f in "$PROJECT_DIR"/migrations/*.sql; do
-  psql -U budget -d budget -f "$f" >/dev/null 2>&1 || true
+  psql "$DATABASE_URL" -f "$f" >/dev/null 2>&1 || true
 done
 
-# Export DATABASE_URL for cargo test (sqlx::test needs it)
-export DATABASE_URL="postgresql://budget@localhost:5432/budget"
+# Fetch crate sources so we can find apalis-postgres migrations
+echo "Fetching crate sources..."
+cargo fetch --manifest-path "$PROJECT_DIR/Cargo.toml" --quiet 2>/dev/null || true
+
+# Run apalis-postgres migrations (its sqlx::query_file_as! macros need the
+# apalis schema to exist so we can compile without SQLX_OFFLINE)
+APALIS_DIR=$(find /root/.cargo/registry/src -maxdepth 2 -name 'apalis-postgres-*' -type d -print -quit 2>/dev/null)
+if [ -n "$APALIS_DIR" ] && [ -d "$APALIS_DIR/migrations" ]; then
+  echo "Running apalis-postgres migrations..."
+  for f in "$APALIS_DIR"/migrations/*.sql; do
+    psql "$DATABASE_URL" -f "$f" >/dev/null 2>&1 || true
+  done
+fi
 
 # Persist for future shell invocations in this session.
 # .bashrc typically has `[ -z "$PS1" ] && return` near the top, so anything

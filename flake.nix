@@ -184,7 +184,7 @@
 
           commonArgs = {
             strictDeps = true;
-            env.SQLX_OFFLINE = "true";
+            env.SQLX_OFFLINE = "true"; # Nix sandbox has no DB; CI/sandbox use live PG instead
             nativeBuildInputs = with pkgs; [
               pkg-config
             ];
