@@ -12,7 +12,7 @@ env:
 
 jobs:
   rust:
-    name: Rust
+    name: Backend
     runs-on: ubuntu-latest
     services:
       postgres:
