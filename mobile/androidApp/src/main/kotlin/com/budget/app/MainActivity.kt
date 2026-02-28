@@ -7,19 +7,59 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Receipt
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.budget.shared.config.AndroidConfigStore
 import com.budget.shared.config.ServerConfig
+import com.budget.shared.viewmodel.DashboardViewModel
+import com.budget.shared.viewmodel.TransactionsViewModel
+import kotlinx.serialization.Serializable
+
+@Serializable data object BudgetRoute
+@Serializable data object TransactionsRoute
+
+private data class TopLevelRoute(
+    val label: String,
+    val route: Any,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+)
 
 class MainActivity : ComponentActivity() {
 
@@ -50,7 +90,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val config = currentConfig
                     if (config != null) {
-                        DashboardScreen(
+                        AppShell(
                             config = config,
                             onLogout = {
                                 configStore.clear()
@@ -66,6 +106,100 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
+    val navController = rememberNavController()
+
+    val dashboardVm: DashboardViewModel = viewModel {
+        DashboardViewModel(config.serverUrl, config.apiKey)
+    }
+    val transactionsVm: TransactionsViewModel = viewModel {
+        TransactionsViewModel(config.serverUrl, config.apiKey)
+    }
+
+    val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
+    val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
+
+    val topLevelRoutes = listOf(
+        TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
+        TopLevelRoute("Transactions", TransactionsRoute, Icons.Filled.Receipt, Icons.Outlined.Receipt),
+    )
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    val title = when {
+                        currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
+                        else -> "Budget"
+                    }
+                    Text(title)
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                actions = {
+                    IconButton(onClick = onLogout) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Logout,
+                            contentDescription = "Disconnect",
+                        )
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            NavigationBar {
+                topLevelRoutes.forEach { route ->
+                    val selected = currentDestination?.hasRoute(route.route::class) == true
+                    NavigationBarItem(
+                        selected = selected,
+                        onClick = {
+                            navController.navigate(route.route) {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = {
+                            val icon = if (selected) route.selectedIcon else route.unselectedIcon
+                            if (route.route is TransactionsRoute && transactionsState.total > 0) {
+                                BadgedBox(badge = {
+                                    Badge { Text("${transactionsState.total}") }
+                                }) {
+                                    Icon(icon, contentDescription = route.label)
+                                }
+                            } else {
+                                Icon(icon, contentDescription = route.label)
+                            }
+                        },
+                        label = { Text(route.label) },
+                    )
+                }
+            }
+        },
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = BudgetRoute,
+            modifier = Modifier.padding(innerPadding),
+        ) {
+            composable<BudgetRoute> {
+                DashboardContent(viewModel = dashboardVm)
+            }
+            composable<TransactionsRoute> {
+                TransactionsScreen(viewModel = transactionsVm)
             }
         }
     }

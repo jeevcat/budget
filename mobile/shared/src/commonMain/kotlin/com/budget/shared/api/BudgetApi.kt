@@ -3,8 +3,13 @@ package com.budget.shared.api
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
@@ -86,6 +91,62 @@ class BudgetApi(private val baseUrl: String, private val apiKey: String) {
             header("Authorization", "Bearer $apiKey")
         }
         return response.body()
+    }
+
+    /** Fetch paginated transactions with optional filters. */
+    suspend fun getTransactions(
+        limit: Int = 50,
+        offset: Int = 0,
+        categoryId: String? = null,
+        search: String? = null,
+        categoryMethod: String? = null,
+    ): TransactionPage {
+        val params = buildList {
+            add("limit=$limit")
+            add("offset=$offset")
+            if (categoryId != null) add("category_id=$categoryId")
+            if (search != null) add("search=$search")
+            if (categoryMethod != null) add("category_method=$categoryMethod")
+        }
+        val query = params.joinToString("&")
+        val response = client.get(url("/api/transactions?$query")) {
+            header("Authorization", "Bearer $apiKey")
+        }
+        return response.body()
+    }
+
+    /** Fetch all categories. */
+    suspend fun getCategories(): List<Category> {
+        val response = client.get(url("/api/categories")) {
+            header("Authorization", "Bearer $apiKey")
+        }
+        return response.body()
+    }
+
+    /** Assign a category to a transaction. Returns true on success. */
+    suspend fun categorizeTransaction(transactionId: String, categoryId: String): Boolean {
+        return try {
+            val response = client.post(url("/api/transactions/$transactionId/categorize")) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(CategorizeRequest(categoryId))
+            }
+            response.status.isSuccess()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Clear a transaction's category. Returns true on success. */
+    suspend fun uncategorizeTransaction(transactionId: String): Boolean {
+        return try {
+            val response = client.delete(url("/api/transactions/$transactionId/categorize")) {
+                header("Authorization", "Bearer $apiKey")
+            }
+            response.status.isSuccess()
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun close() {
