@@ -85,6 +85,7 @@ class DashboardViewModel(
 
     private var sortedMonths: List<BudgetMonth> = emptyList()
     private var activeMonthIndex: Int = -1
+    private val cache = mutableMapOf<String, FetchResult>()
 
     init {
         load(monthId = null)
@@ -114,13 +115,52 @@ class DashboardViewModel(
     }
 
     private fun load(monthId: String?) {
+        // Clear category selection when switching months
+        _uiState.update { it.copy(selectedCategoryId = null) }
+
+        // Serve from cache instantly when available
+        if (monthId != null) {
+            val cached = cache[monthId]
+            if (cached != null) {
+                processResult(cached)
+                return
+            }
+        }
+
         _uiState.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
                 val result = fetcher.fetch(serverUrl, apiKey, monthId)
+                cache[result.status.month.id] = result
                 processResult(result)
+                prefetchAdjacentMonths()
             } catch (e: Exception) {
                 _uiState.update { it.copy(loading = false, error = e.message ?: "Unknown error") }
+            }
+        }
+    }
+
+    private fun prefetchAdjacentMonths() {
+        if (activeMonthIndex > 0) {
+            val prevId = sortedMonths[activeMonthIndex - 1].id
+            if (prevId !in cache) {
+                viewModelScope.launch {
+                    try {
+                        val result = fetcher.fetch(serverUrl, apiKey, prevId)
+                        cache[result.status.month.id] = result
+                    } catch (_: Exception) { /* silent prefetch failure */ }
+                }
+            }
+        }
+        if (activeMonthIndex < sortedMonths.size - 1) {
+            val nextId = sortedMonths[activeMonthIndex + 1].id
+            if (nextId !in cache) {
+                viewModelScope.launch {
+                    try {
+                        val result = fetcher.fetch(serverUrl, apiKey, nextId)
+                        cache[result.status.month.id] = result
+                    } catch (_: Exception) { /* silent prefetch failure */ }
+                }
             }
         }
     }

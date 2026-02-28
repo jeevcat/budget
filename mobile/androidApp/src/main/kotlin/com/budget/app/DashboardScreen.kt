@@ -1,5 +1,6 @@
 package com.budget.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -26,6 +27,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
@@ -130,6 +132,17 @@ fun DashboardScreen(config: ServerConfig, onLogout: () -> Unit) {
     }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
+    val selectedCategoryId = state.selectedCategoryId
+    if (selectedCategoryId != null) {
+        BackHandler { viewModel.selectCategory(null) }
+        CategoryTransactionsScreen(
+            state = state,
+            categoryId = selectedCategoryId,
+            onBack = { viewModel.selectCategory(null) },
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -163,6 +176,12 @@ fun DashboardScreen(config: ServerConfig, onLogout: () -> Unit) {
                 else -> {
                     DashboardContent(state = state, viewModel = viewModel)
                 }
+            }
+            // Subtle loading bar when refreshing (data already visible)
+            if (state.loading && state.currentMonth != null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                )
             }
         }
     }
@@ -229,14 +248,11 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             remaining = status.remaining,
                             pace = status.pace,
                             barMax = state.monthlySummary.barMax,
-                            selected = state.selectedCategoryId == status.categoryId,
+                            selected = false,
                             onClick = { viewModel.selectCategory(status.categoryId) },
                         )
                     }
-                    transactionSection(
-                        transactions = state.monthlyTransactions,
-                        selectedCategoryId = state.selectedCategoryId,
-                    )
+                    transactionSection(transactions = state.monthlyTransactions)
                 }
                 BudgetMode.ANNUAL -> {
                     item {
@@ -254,14 +270,11 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             remaining = status.remaining,
                             pace = status.pace,
                             barMax = state.annualSummary.barMax,
-                            selected = state.selectedCategoryId == status.categoryId,
+                            selected = false,
                             onClick = { viewModel.selectCategory(status.categoryId) },
                         )
                     }
-                    transactionSection(
-                        transactions = state.annualTransactions,
-                        selectedCategoryId = state.selectedCategoryId,
-                    )
+                    transactionSection(transactions = state.annualTransactions)
                 }
                 BudgetMode.PROJECT -> {
                     item { SummaryCards(summary = state.projectSummary) }
@@ -273,14 +286,11 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             remaining = project.remaining,
                             pace = project.pace,
                             barMax = state.projectSummary.barMax,
-                            selected = state.selectedCategoryId == project.categoryId,
+                            selected = false,
                             onClick = { viewModel.selectCategory(project.categoryId) },
                         )
                     }
-                    transactionSection(
-                        transactions = state.projectTransactions,
-                        selectedCategoryId = state.selectedCategoryId,
-                    )
+                    transactionSection(transactions = state.projectTransactions)
                 }
             }
         }
@@ -595,15 +605,8 @@ private fun PaceBadge(pace: PaceIndicator) {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.transactionSection(
     transactions: List<TransactionEntry>,
-    selectedCategoryId: String?,
 ) {
-    val filtered = if (selectedCategoryId != null) {
-        transactions.filter { it.categoryId == selectedCategoryId }
-    } else {
-        transactions
-    }
-
-    if (filtered.isEmpty()) return
+    if (transactions.isEmpty()) return
 
     item {
         Spacer(modifier = Modifier.height(4.dp))
@@ -618,14 +621,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.transactionSection(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "${filtered.size}",
+                text = "${transactions.size}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 
-    items(filtered.take(50), key = { it.id }) { txn ->
+    items(transactions.take(50), key = { it.id }) { txn ->
         TransactionRow(txn)
     }
 }
@@ -658,6 +661,165 @@ private fun TransactionRow(txn: TransactionEntry) {
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+// -- Category transactions detail screen ------------------------------------
+
+private data class CategoryInfo(
+    val name: String,
+    val spent: Double,
+    val budget: Double,
+    val remaining: Double,
+    val pace: PaceIndicator,
+    val barMax: Double,
+)
+
+private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
+    when (state.selectedTab) {
+        BudgetMode.MONTHLY -> {
+            val s = state.monthlyStatuses.find { it.categoryId == categoryId }
+            if (s != null) return CategoryInfo(s.categoryName, s.spent, s.budgetAmount, s.remaining, s.pace, state.monthlySummary.barMax)
+        }
+        BudgetMode.ANNUAL -> {
+            val s = state.annualStatuses.find { it.categoryId == categoryId }
+            if (s != null) return CategoryInfo(s.categoryName, s.spent, s.budgetAmount, s.remaining, s.pace, state.annualSummary.barMax)
+        }
+        BudgetMode.PROJECT -> {
+            val p = state.projects.find { it.categoryId == categoryId }
+            if (p != null) return CategoryInfo(p.categoryName, p.spent, p.budgetAmount, p.remaining, p.pace, state.projectSummary.barMax)
+        }
+    }
+    return null
+}
+
+private fun resolveTransactions(state: DashboardUiState, categoryId: String): List<TransactionEntry> {
+    val all = when (state.selectedTab) {
+        BudgetMode.MONTHLY -> state.monthlyTransactions
+        BudgetMode.ANNUAL -> state.annualTransactions
+        BudgetMode.PROJECT -> state.projectTransactions
+    }
+    return all.filter { it.categoryId == categoryId }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryTransactionsScreen(
+    state: DashboardUiState,
+    categoryId: String,
+    onBack: () -> Unit,
+) {
+    val info = resolveCategoryInfo(state, categoryId)
+    val transactions = resolveTransactions(state, categoryId)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(info?.name ?: "Category") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier.padding(innerPadding).fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (info != null) {
+                item {
+                    CategoryDetailHeader(info)
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Transactions",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "${transactions.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (transactions.isEmpty()) {
+                item {
+                    Text(
+                        text = "No transactions in this category",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                items(transactions, key = { it.id }) { txn ->
+                    TransactionRow(txn)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryDetailHeader(info: CategoryInfo) {
+    val color = paceColor(info.pace)
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = formatAmount(info.spent),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                PaceBadge(pace = info.pace)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            SpendBar(
+                spent = info.spent,
+                budget = info.budget,
+                barMax = info.barMax,
+                pace = info.pace,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = if (info.budget > 0) "of ${formatAmount(info.budget)}" else "no budget",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = formatAmount(info.remaining, showSign = true),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = color,
+                )
+            }
+        }
     }
 }
 
