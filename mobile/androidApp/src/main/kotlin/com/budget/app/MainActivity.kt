@@ -55,7 +55,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object TransactionsRoute
 
-private data class TopLevelRoute(
+internal data class TopLevelRoute(
     val label: String,
     val route: Any,
     val selectedIcon: ImageVector,
@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
+internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val navController = rememberNavController()
 
   val dashboardVm: DashboardViewModel = viewModel {

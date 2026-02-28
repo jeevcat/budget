@@ -242,6 +242,8 @@
               env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
               env.JAVA_HOME = "${pkgs.jdk21_headless}";
               env.ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+              # Generic Linux aapt2 binaries can't run on NixOS — override with the nix-patched one
+              env.GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/36.0.0/aapt2";
             };
         }
       )
