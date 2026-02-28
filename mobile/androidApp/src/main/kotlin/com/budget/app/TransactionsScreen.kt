@@ -288,9 +288,10 @@ private fun CategoryPickerSheet(
       }
 
       // Extra details
-      if (txn.counterpartyName != null) {
+      val counterpartyName = txn.counterpartyName
+      if (counterpartyName != null) {
         Text(
-            text = txn.counterpartyName,
+            text = counterpartyName,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -313,9 +314,10 @@ private fun CategoryPickerSheet(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        if (txn.llmJustification != null) {
+        val llmJustification = txn.llmJustification
+        if (llmJustification != null) {
           Text(
-              text = txn.llmJustification,
+              text = llmJustification,
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
               maxLines = 2,
@@ -358,10 +360,7 @@ private fun CategoryPickerSheet(
                     fontWeight = if (category.depth == 0) FontWeight.Medium else FontWeight.Normal,
                 )
               },
-              supportingContent =
-                  if (category.parentName != null) {
-                    { Text(category.parentName) }
-                  } else null,
+              supportingContent = category.parentName?.let { name -> { Text(name) } },
               leadingContent =
                   if (category.depth > 0) {
                     { Spacer(modifier = Modifier.width(24.dp)) }
