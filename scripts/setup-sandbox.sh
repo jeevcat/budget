@@ -47,6 +47,12 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='budget
   sudo -u postgres psql -c "CREATE DATABASE budget OWNER budget;" >/dev/null
 fi
 
+# Run SQL migrations so sqlx compile-time checks (clippy) work
+echo "Running database migrations..."
+for f in "$PROJECT_DIR"/migrations/*.sql; do
+  psql -U budget -d budget -f "$f" >/dev/null 2>&1 || true
+done
+
 # Export DATABASE_URL for cargo test (sqlx::test needs it)
 export DATABASE_URL="postgresql://budget@localhost:5432/budget"
 
