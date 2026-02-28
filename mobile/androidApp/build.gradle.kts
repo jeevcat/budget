@@ -11,8 +11,27 @@ android {
         applicationId = "com.budget.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = (findProperty("budget.versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (findProperty("budget.versionName") as String?) ?: "dev"
+    }
+
+    signingConfigs {
+        create("release") {
+            val ksFile = System.getenv("KEYSTORE_FILE")
+            if (ksFile != null) {
+                storeFile = file(ksFile)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+        }
     }
 
     buildFeatures {

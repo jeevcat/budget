@@ -29,18 +29,29 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      - name: Build debug APK
-        run: ./gradlew :androidApp:assembleDebug
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/release.keystore
 
       - name: Get version
         id: version
         run: echo "version=$(date +'%Y.%m.%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_FILE: /tmp/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: >
+          ./gradlew :androidApp:assembleRelease
+          -Pbudget.versionCode=${{ github.run_number }}
+          -Pbudget.versionName=${{ steps.version.outputs.version }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v${{ steps.version.outputs.version }}
           name: Android ${{ steps.version.outputs.version }}
-          files: mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk
+          files: mobile/androidApp/build/outputs/apk/release/androidApp-release.apk
           prerelease: true
           generate_release_notes: true
