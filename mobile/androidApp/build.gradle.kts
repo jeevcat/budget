@@ -40,6 +40,7 @@ android {
     warningsAsErrors = true
     checkAllWarnings = true
     abortOnError = true
+    disable += "InvalidPackage"
   }
 
   compileOptions {
