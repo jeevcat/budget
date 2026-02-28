@@ -35,9 +35,22 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 
 ## Mobile
 
+### Architecture
+
 - **Kotlin Multiplatform (KMP)** — share as much non-presentation code as possible between Android and iOS
-- **Ktor** for HTTP networking (KMP-compatible, shared across platforms)
+- **Shared ViewModel** — use AndroidX `lifecycle-viewmodel` (KMP since 2.8+) in `commonMain`; ViewModels expose `StateFlow` consumed by platform UI
+- **Persistence** — `ConfigStore` interface in `commonMain` with platform implementations (`AndroidConfigStore` via SharedPreferences); simple key-value config doesn't need DataStore
+- **Networking** — **Ktor** HTTP client (KMP-compatible, shared across platforms)
+- **Navigation** — platform-native (no shared navigation library); shared ViewModels handle logic, platform screens handle routing
+- **iOS Flow consumption** — SKIE transforms Kotlin `StateFlow` into Swift `AsyncSequence` for seamless SwiftUI integration
+
+### Conventions
+
 - Presentation layer is platform-specific: Jetpack Compose on Android, SwiftUI on iOS
+- Screens are thin render layers: observe `StateFlow` from shared ViewModels, forward user events back
+- Business logic (validation, API calls, config persistence) lives in shared ViewModels, not in Compose/SwiftUI code
+- Use `ConnectionTester` (fun interface) to abstract API calls in ViewModels for unit testability
+- ViewModel tests go in `shared/src/commonTest` using `kotlinx-coroutines-test` with fake implementations
 
 ## Coding Standards
 

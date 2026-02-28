@@ -15,28 +15,27 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.budget.shared.api.BudgetApi
-import com.budget.shared.api.ConnectionResult
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.budget.shared.config.ConfigStore
 import com.budget.shared.config.ServerConfig
-import kotlinx.coroutines.launch
+import com.budget.shared.viewmodel.SetupViewModel
 
 @Composable
-fun SetupScreen(onConnected: (ServerConfig) -> Unit) {
-    var serverUrl by rememberSaveable { mutableStateOf("") }
-    var apiKey by rememberSaveable { mutableStateOf("") }
-    var loading by rememberSaveable { mutableStateOf(false) }
-    var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+fun SetupScreen(configStore: ConfigStore, onConnected: (ServerConfig) -> Unit) {
+    val viewModel: SetupViewModel = viewModel { SetupViewModel(configStore) }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(uiState.connectedConfig) {
+        uiState.connectedConfig?.let { onConnected(it) }
+    }
 
     Column(
         modifier = Modifier
@@ -62,11 +61,8 @@ fun SetupScreen(onConnected: (ServerConfig) -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
 
         OutlinedTextField(
-            value = serverUrl,
-            onValueChange = {
-                serverUrl = it
-                errorMessage = null
-            },
+            value = uiState.serverUrl,
+            onValueChange = viewModel::updateServerUrl,
             label = { Text("Server URL") },
             placeholder = { Text("https://budget.example.com") },
             singleLine = true,
@@ -77,11 +73,8 @@ fun SetupScreen(onConnected: (ServerConfig) -> Unit) {
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = apiKey,
-            onValueChange = {
-                apiKey = it
-                errorMessage = null
-            },
+            value = uiState.apiKey,
+            onValueChange = viewModel::updateApiKey,
             label = { Text("API Key") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
@@ -91,9 +84,9 @@ fun SetupScreen(onConnected: (ServerConfig) -> Unit) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        if (errorMessage != null) {
+        if (uiState.errorMessage != null) {
             Text(
-                text = errorMessage!!,
+                text = uiState.errorMessage!!,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(bottom = 12.dp),
@@ -101,42 +94,11 @@ fun SetupScreen(onConnected: (ServerConfig) -> Unit) {
         }
 
         Button(
-            onClick = {
-                val trimmedUrl = serverUrl.trim().trimEnd('/')
-                val trimmedKey = apiKey.trim()
-                if (trimmedUrl.isEmpty() || trimmedKey.isEmpty()) {
-                    errorMessage = "Both fields are required"
-                    return@Button
-                }
-                loading = true
-                errorMessage = null
-                scope.launch {
-                    val api = BudgetApi(trimmedUrl, trimmedKey)
-                    try {
-                        when (val result = api.testConnection()) {
-                            is ConnectionResult.Success -> {
-                                onConnected(ServerConfig(trimmedUrl, trimmedKey))
-                            }
-                            is ConnectionResult.ServerUnreachable -> {
-                                errorMessage = result.message
-                            }
-                            is ConnectionResult.AuthFailed -> {
-                                errorMessage = result.message
-                            }
-                            is ConnectionResult.Error -> {
-                                errorMessage = result.message
-                            }
-                        }
-                    } finally {
-                        loading = false
-                        api.close()
-                    }
-                }
-            },
-            enabled = !loading,
+            onClick = viewModel::connect,
+            enabled = !uiState.loading,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            if (loading) {
+            if (uiState.loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.height(20.dp),
                     strokeWidth = 2.dp,
