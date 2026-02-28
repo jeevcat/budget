@@ -93,6 +93,21 @@ jobs:
       - uses: biomejs/setup-biome@v2
       - run: biome check frontend/
 
+  kotlin:
+    name: Kotlin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew compileDebugKotlin
+
   nix:
     name: Nix
     runs-on: ubuntu-latest
