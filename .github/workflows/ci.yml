@@ -106,7 +106,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew compileDebugKotlin
+      - run: ./gradlew compileDebugKotlin --warning-mode all
 
   nix:
     name: Nix
