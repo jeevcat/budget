@@ -31,6 +31,9 @@
 - [x] **TEXT UUIDs → native UUID type**: Migrated to native PostgreSQL UUID columns with sqlx `uuid` feature. ID newtypes implement `sqlx::Type/Encode/Decode` directly
 - [x] **Deduplicate budget logic**: Frontend re-implements category subtree traversal, transaction filtering, and month boundary computation. Consider having the frontend rely on the `/api/budgets/status` response instead
 
+### Blocked Upstream
+- [ ] **Gradle in Claude Code sandbox**: `dl.google.com` / `maven.google.com` are blocked by the sandbox egress proxy (403 `host_not_allowed`), so Gradle can't resolve AGP or Google Maven deps. The pre-commit hook gracefully skips Kotlin compilation when this happens. Once [anthropics/claude-code#16222](https://github.com/anthropics/claude-code/issues/16222) is fixed, remove the skip logic from `.github/hooks/pre-commit` and verify `./gradlew compileDebugKotlin` works in sandbox sessions
+
 ### Low Priority
 - [ ] **Constant-time token comparison**: `auth.rs` uses `==` for bearer token check. Use `subtle::ConstantTimeEq` for timing-attack resistance
 - [ ] **Error boundaries + retry in frontend**: Errors replace entire page content with no retry button. Add a retry mechanism
