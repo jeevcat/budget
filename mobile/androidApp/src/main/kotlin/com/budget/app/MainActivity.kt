@@ -43,8 +43,8 @@ class MainActivity : ComponentActivity() {
                         )
                     } else {
                         SetupScreen(
+                            configStore = configStore,
                             onConnected = { newConfig ->
-                                configStore.save(newConfig)
                                 currentConfig = newConfig
                             },
                         )
