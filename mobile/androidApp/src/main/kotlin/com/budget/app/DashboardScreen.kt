@@ -228,7 +228,6 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             budget = status.budgetAmount,
                             remaining = status.remaining,
                             pace = status.pace,
-                            rollover = status.rollover,
                             barMax = state.monthlySummary.barMax,
                             selected = state.selectedCategoryId == status.categoryId,
                             onClick = { viewModel.selectCategory(status.categoryId) },
@@ -254,7 +253,6 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             budget = status.budgetAmount,
                             remaining = status.remaining,
                             pace = status.pace,
-                            rollover = status.rollover,
                             barMax = state.annualSummary.barMax,
                             selected = state.selectedCategoryId == status.categoryId,
                             onClick = { viewModel.selectCategory(status.categoryId) },
@@ -274,7 +272,6 @@ private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewMo
                             budget = project.budgetAmount,
                             remaining = project.remaining,
                             pace = project.pace,
-                            rollover = project.rollover,
                             barMax = state.projectSummary.barMax,
                             selected = state.selectedCategoryId == project.categoryId,
                             onClick = { viewModel.selectCategory(project.categoryId) },
@@ -437,7 +434,6 @@ private fun CategoryRow(
     budget: Double,
     remaining: Double,
     pace: PaceIndicator,
-    rollover: Double,
     barMax: Double,
     selected: Boolean,
     onClick: () -> Unit,
@@ -507,13 +503,6 @@ private fun CategoryRow(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (rollover != 0.0) {
-                        Text(
-                            text = " (${formatAmount(rollover, showSign = true)} rollover)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

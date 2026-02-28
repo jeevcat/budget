@@ -622,10 +622,6 @@ function BudgetSection({
                     <span class="text-light">
                       ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span
                     >
-                    ${
-                      Number(s.rollover) !== 0 &&
-                      html`<span class="text-light" style="margin-left:0.25rem">(${formatAmount(s.rollover, { decimals: 0, sign: true })} rollover)</span>`
-                    }
                   </div>
                 </div>
                 <div class="vstack dash-cat-end">

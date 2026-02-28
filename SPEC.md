@@ -69,7 +69,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - Budget month starts on the day the **last** of these expected monthly salary transactions posts in a given calendar month.
 - **Late/missing salary**: The budget month simply does not start until all predefined salary transactions have posted. No fallback date, no partial start. The previous budget month effectively extends until the new one begins.
 - **Inter-month gap**: Transactions that occur between the start of a calendar month and the day salary lands belong to the **previous budget month**. The previous month is not closed until the new one begins.
-- **First-time backfill**: On initial account connection, historical transactions are imported and retroactively organized into budget months using the same salary-anchoring logic. This gives the user immediate visibility into past spending patterns and seeds rollover balances from day one. Because the system is always-live/functional, backfilled data is treated identically to new data — annual budgets will show cumulative spend from the start of the budget year, and monthly rollover balances will reflect the full history.
+- **First-time backfill**: On initial account connection, historical transactions are imported and retroactively organized into budget months using the same salary-anchoring logic. This gives the user immediate visibility into past spending patterns. Because the system is always-live/functional, backfilled data is treated identically to new data — annual budgets will show cumulative spend from the start of the budget year.
 
 ### 3. Transaction Categorization
 - **Layer 1 — Deterministic rules**: User-defined merchant-to-category mappings, regex/pattern rules, exact-match overrides. These always win.
@@ -87,14 +87,13 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 
 ### 4. Daily Overspend Monitoring
 - Per-category budget amounts set by the user, with support for three budget modes:
-  - **Monthly**: base budget amount is the same each month, but surplus/deficit rolls over (see Rollover below).
+  - **Monthly**: base budget amount is the same each month.
   - **Annual**: cumulative spend tracked across 12 budget months. The budget year starts with the first budget month that aligns with January (i.e., after January salaries post). Consistent with the salary-anchored month logic.
   - **Project**: see Section 5.
 - The daily overspend view shows per category: **amount spent**, **amount remaining**, and **days left in budget period** (for monthly budgets: days until next budget month starts; for annual budgets: months remaining in the budget year, since days would be too granular to be useful).
 - A subtle pace indicator (visual only, not an alert) shows whether spend is ahead of or behind the linear pro-rata line — but the primary mental model is "remaining budget," not daily allowance.
 - **Uncategorized transactions**: Transactions in the uncategorized queue are included in the **overall total** as unallocated spend (so the total is never artificially low), but they do not count toward any specific category budget until categorized.
 - **Always live / functional**: All views are computed from the current state of transactions. If a transaction posts late, gets recategorized, or is deleted, all daily and monthly views update retroactively. No snapshots — the system is purely functional over the current transaction set.
-- **Rollover (monthly categories only)**: If a monthly category is underspent at the end of a budget month, the surplus carries forward into the next month's budget for that category. Overspend similarly carries forward as a deficit. Annual categories do not roll over — they simply accumulate spend against the annual budget and reset at the start of each budget year.
 - **Delivery**: Dashboard only (pull model). User checks when they want to. Push notifications (email/mobile) are out of scope for v1 — future work.
 - **Overall total**: An aggregate spent/remaining across all active categories is shown for informational purposes, but overspend signals are per-category only.
 
@@ -102,7 +101,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - A **project** is not a separate entity — it is a category (or subtree) with `budget_mode` set to `project`. The category itself carries the project's start date, optional end date, and optional budget amount. There are no project tables or linking operations; the category *is* the project.
 - A project-mode category has a user-defined **start date** and an **optional end date**. Projects with no end date remain active indefinitely (useful for open-ended efforts like ongoing renovations). The budget amount is also optional. The pace indicator only displays when both an end date and a budget are set.
 - Transactions are assigned to a project by being categorized into a project-mode category (or any of its children). E.g., setting "Home > Renovation" to project mode with a start date and budget captures all transactions in that category and its subtree for the project's duration.
-- Project spend is tracked against its own budget and timeline, with the same spent/remaining/days-left model. `time_left` is days until the end date (or -1 for open-ended projects). The pace indicator pro-rates across the project's full timeline (start to end date). No rollover — projects are finite.
+- Project spend is tracked against its own budget and timeline, with the same spent/remaining/days-left model. `time_left` is days until the end date (or -1 for open-ended projects). The pace indicator pro-rates across the project's full timeline (start to end date).
 - **Projects are excluded from monthly/annual budgets.** When computing regular budget status, transactions in project-mode categories (and their subtrees) are filtered out entirely. The "overall total" in Section 4 covers regular-budget categories only; projects have their own separate summary in the API response and a dedicated tab in the UI.
 - **Ending a project**: To end a project, the user changes the category's `budget_mode` back to monthly or annual. Transactions in that category then resume flowing into regular budgets going forward. The category can later be set to project mode again for a different project (sequentially, not simultaneously).
 - **Retroactive exclusion**: Because the system is always-live/functional, setting a category to project mode retroactively excludes its historical transactions from regular budget months — no reassignment needed, project membership is derived from category budget mode + date range at query time.
@@ -214,7 +213,6 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 ### Frontend Polish
 
 - [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month.
-- [ ] **Rollover visualization**: Dashboard doesn't show rollover surplus/deficit carried from prior months.
 - [x] **Project category transaction list**: The Projects tab in the budget dashboard shows transactions belonging to project-mode categories.
 
 ---
@@ -225,7 +223,7 @@ Each account in the `accounts` table has a `connection_id` foreign key. Multiple
 - Investment portfolio tracking
 - Bill reminders / due date tracking
 - Debt snowball/avalanche planners
-- Historical reporting beyond what's needed for annual budget tracking and monthly rollover calculations
+- Historical reporting beyond what's needed for annual budget tracking
 - Mobile app (TBD — may revisit)
 - Push notifications / alerts (future work)
 - Manual transaction entry — if it's not in a bank feed, it doesn't exist

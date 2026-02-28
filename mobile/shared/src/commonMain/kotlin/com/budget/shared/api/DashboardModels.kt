@@ -35,7 +35,6 @@ data class BudgetStatus(
     @SerialName("time_left") val timeLeft: Long,
     val pace: PaceIndicator,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
-    val rollover: Double = 0.0,
 )
 
 @Serializable
@@ -55,7 +54,6 @@ data class ProjectStatusEntry(
     @SerialName("time_left") val timeLeft: Long,
     val pace: PaceIndicator,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
-    val rollover: Double = 0.0,
     val children: List<ProjectChildSpending> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
 )
