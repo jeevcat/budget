@@ -5,9 +5,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class CategoryMethod {
-    @SerialName("manual") MANUAL,
-    @SerialName("rule") RULE,
-    @SerialName("llm") LLM,
+  @SerialName("manual") MANUAL,
+  @SerialName("rule") RULE,
+  @SerialName("llm") LLM,
 }
 
 @Serializable

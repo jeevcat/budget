@@ -15,27 +15,23 @@ import com.budget.shared.config.ServerConfig
 
 @Composable
 fun MainScreen(config: ServerConfig, onLogout: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = "Connected",
-            style = MaterialTheme.typography.headlineLarge,
-        )
+  Column(
+      modifier = Modifier.fillMaxSize().padding(24.dp),
+      verticalArrangement = Arrangement.Center,
+      horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Text(
+        text = "Connected",
+        style = MaterialTheme.typography.headlineLarge,
+    )
 
-        Text(
-            text = config.serverUrl,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp, bottom = 32.dp),
-        )
+    Text(
+        text = config.serverUrl,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp, bottom = 32.dp),
+    )
 
-        OutlinedButton(onClick = onLogout) {
-            Text("Disconnect")
-        }
-    }
+    OutlinedButton(onClick = onLogout) { Text("Disconnect") }
+  }
 }

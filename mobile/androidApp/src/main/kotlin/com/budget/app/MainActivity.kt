@@ -52,6 +52,7 @@ import com.budget.shared.viewmodel.TransactionsViewModel
 import kotlinx.serialization.Serializable
 
 @Serializable data object BudgetRoute
+
 @Serializable data object TransactionsRoute
 
 private data class TopLevelRoute(
@@ -63,144 +64,143 @@ private data class TopLevelRoute(
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var configStore: AndroidConfigStore
-    private var currentConfig by mutableStateOf<ServerConfig?>(null)
+  private lateinit var configStore: AndroidConfigStore
+  private var currentConfig by mutableStateOf<ServerConfig?>(null)
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    enableEdgeToEdge()
 
-        configStore = AndroidConfigStore(applicationContext)
-        currentConfig = configStore.load()
+    configStore = AndroidConfigStore(applicationContext)
+    currentConfig = configStore.load()
 
-        setContent {
-            val darkTheme = isSystemInDarkTheme()
-            val colorScheme = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                    val context = LocalContext.current
-                    if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-                }
-                darkTheme -> darkColorScheme()
-                else -> lightColorScheme()
+    setContent {
+      val darkTheme = isSystemInDarkTheme()
+      val colorScheme =
+          when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+              val context = LocalContext.current
+              if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             }
-            MaterialTheme(colorScheme = colorScheme) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    val config = currentConfig
-                    if (config != null) {
-                        AppShell(
-                            config = config,
-                            onLogout = {
-                                configStore.clear()
-                                currentConfig = null
-                            },
-                        )
-                    } else {
-                        SetupScreen(
-                            configStore = configStore,
-                            onConnected = { newConfig ->
-                                currentConfig = newConfig
-                            },
-                        )
-                    }
-                }
-            }
+            darkTheme -> darkColorScheme()
+            else -> lightColorScheme()
+          }
+      MaterialTheme(colorScheme = colorScheme) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+          val config = currentConfig
+          if (config != null) {
+            AppShell(
+                config = config,
+                onLogout = {
+                  configStore.clear()
+                  currentConfig = null
+                },
+            )
+          } else {
+            SetupScreen(
+                configStore = configStore,
+                onConnected = { newConfig -> currentConfig = newConfig },
+            )
+          }
         }
+      }
     }
+  }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
-    val navController = rememberNavController()
+  val navController = rememberNavController()
 
-    val dashboardVm: DashboardViewModel = viewModel {
-        DashboardViewModel(config.serverUrl, config.apiKey)
-    }
-    val transactionsVm: TransactionsViewModel = viewModel {
-        TransactionsViewModel(config.serverUrl, config.apiKey)
-    }
+  val dashboardVm: DashboardViewModel = viewModel {
+    DashboardViewModel(config.serverUrl, config.apiKey)
+  }
+  val transactionsVm: TransactionsViewModel = viewModel {
+    TransactionsViewModel(config.serverUrl, config.apiKey)
+  }
 
-    val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
-    val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
+  val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
+  val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
 
-    val topLevelRoutes = listOf(
-        TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
-        TopLevelRoute("Transactions", TransactionsRoute, Icons.Filled.Receipt, Icons.Outlined.Receipt),
-    )
+  val topLevelRoutes =
+      listOf(
+          TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
+          TopLevelRoute(
+              "Transactions",
+              TransactionsRoute,
+              Icons.Filled.Receipt,
+              Icons.Outlined.Receipt,
+          ),
+      )
 
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
+  val navBackStackEntry by navController.currentBackStackEntryAsState()
+  val currentDestination = navBackStackEntry?.destination
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    val title = when {
-                        currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
-                        else -> "Budget"
-                    }
-                    Text(title)
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
+  Scaffold(
+      topBar = {
+        TopAppBar(
+            title = {
+              val title =
+                  when {
+                    currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
+                    else -> "Budget"
+                  }
+              Text(title)
+            },
+            colors =
+                TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
-                actions = {
-                    IconButton(onClick = onLogout) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Logout,
-                            contentDescription = "Disconnect",
-                        )
-                    }
+            actions = {
+              IconButton(onClick = onLogout) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = "Disconnect",
+                )
+              }
+            },
+        )
+      },
+      bottomBar = {
+        NavigationBar {
+          topLevelRoutes.forEach { route ->
+            val selected = currentDestination?.hasRoute(route.route::class) == true
+            NavigationBarItem(
+                selected = selected,
+                onClick = {
+                  navController.navigate(route.route) {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
                 },
+                icon = {
+                  val icon = if (selected) route.selectedIcon else route.unselectedIcon
+                  if (route.route is TransactionsRoute && transactionsState.total > 0) {
+                    BadgedBox(badge = { Badge { Text("${transactionsState.total}") } }) {
+                      Icon(icon, contentDescription = route.label)
+                    }
+                  } else {
+                    Icon(icon, contentDescription = route.label)
+                  }
+                },
+                label = { Text(route.label) },
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                topLevelRoutes.forEach { route ->
-                    val selected = currentDestination?.hasRoute(route.route::class) == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            navController.navigate(route.route) {
-                                popUpTo(navController.graph.startDestinationId) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = {
-                            val icon = if (selected) route.selectedIcon else route.unselectedIcon
-                            if (route.route is TransactionsRoute && transactionsState.total > 0) {
-                                BadgedBox(badge = {
-                                    Badge { Text("${transactionsState.total}") }
-                                }) {
-                                    Icon(icon, contentDescription = route.label)
-                                }
-                            } else {
-                                Icon(icon, contentDescription = route.label)
-                            }
-                        },
-                        label = { Text(route.label) },
-                    )
-                }
-            }
-        },
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = BudgetRoute,
-            modifier = Modifier.padding(innerPadding),
-        ) {
-            composable<BudgetRoute> {
-                DashboardContent(viewModel = dashboardVm)
-            }
-            composable<TransactionsRoute> {
-                TransactionsScreen(viewModel = transactionsVm)
-            }
+          }
         }
+      },
+  ) { innerPadding ->
+    NavHost(
+        navController = navController,
+        startDestination = BudgetRoute,
+        modifier = Modifier.padding(innerPadding),
+    ) {
+      composable<BudgetRoute> { DashboardContent(viewModel = dashboardVm) }
+      composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
     }
+  }
 }

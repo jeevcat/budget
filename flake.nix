@@ -218,6 +218,7 @@
 
           devShells.default = craneLib.devShell {
             inputsFrom = [ budget ];
+            packages = [ pkgs.jdk21_headless ];
             env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
           };
         }
