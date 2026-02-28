@@ -11,18 +11,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  rust-format:
-    name: "Rust: Format"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  rust-clippy:
-    name: "Rust: Clippy"
+  rust:
+    name: Rust
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -44,57 +34,32 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Run migrations
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Migrations
         run: |
           cargo fetch --quiet
           for f in migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
           APALIS_DIR=$(find ~/.cargo/registry/src -maxdepth 2 -name 'apalis-postgres-*' -type d -print -quit 2>/dev/null)
           if [ -n "$APALIS_DIR" ]; then for f in "$APALIS_DIR"/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done; fi
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-
-  rust-test:
-    name: "Rust: Test"
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: budget
-          POSTGRES_PASSWORD: budget
-          POSTGRES_DB: budget
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    env:
-      DATABASE_URL: postgresql://budget:budget@localhost:5432/budget
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run migrations
-        run: |
-          cargo fetch --quiet
-          for f in migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
-          APALIS_DIR=$(find ~/.cargo/registry/src -maxdepth 2 -name 'apalis-postgres-*' -type d -print -quit 2>/dev/null)
-          if [ -n "$APALIS_DIR" ]; then for f in "$APALIS_DIR"/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done; fi
-      - run: cargo test --all-features
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-features
 
   frontend:
-    name: "Frontend: Biome"
+    name: Frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: biomejs/setup-biome@v2
-      - run: biome check frontend/
+      - name: Biome
+        run: biome check frontend/
 
   mobile:
-    name: "Mobile: Kotlin"
+    name: Mobile
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -118,10 +83,10 @@ jobs:
         run: ./gradlew compileDebugKotlin --warning-mode all --console=plain --no-problems-report
 
   nix:
-    name: "Nix: Flake check"
+    name: Nix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31
-      - name: Check flake
+      - name: Flake check
         run: nix flake check
