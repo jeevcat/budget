@@ -10,13 +10,13 @@ import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
 import com.budget.shared.api.StatusResponse
 import com.budget.shared.api.TransactionEntry
+import kotlin.math.abs
+import kotlin.math.max
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.math.abs
-import kotlin.math.max
 
 data class BudgetSummary(
     val totalBudget: Double = 0.0,
@@ -53,7 +53,7 @@ data class DashboardUiState(
 
 /** Abstraction over [BudgetApi] fetches so the ViewModel is unit-testable. */
 fun interface DashboardFetcher {
-    suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult
+  suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult
 }
 
 data class FetchResult(
@@ -62,16 +62,16 @@ data class FetchResult(
 )
 
 class DefaultDashboardFetcher : DashboardFetcher {
-    override suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult {
-        val api = BudgetApi(serverUrl, apiKey)
-        return try {
-            val status = api.getStatus(monthId)
-            val months = api.getMonths()
-            FetchResult(status, months)
-        } finally {
-            api.close()
-        }
+  override suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult {
+    val api = BudgetApi(serverUrl, apiKey)
+    return try {
+      val status = api.getStatus(monthId)
+      val months = api.getMonths()
+      FetchResult(status, months)
+    } finally {
+      api.close()
     }
+  }
 }
 
 class DashboardViewModel(
@@ -80,157 +80,161 @@ class DashboardViewModel(
     private val fetcher: DashboardFetcher = DefaultDashboardFetcher(),
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(DashboardUiState())
-    val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
+  private val _uiState = MutableStateFlow(DashboardUiState())
+  val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
-    private var sortedMonths: List<BudgetMonth> = emptyList()
-    private var activeMonthIndex: Int = -1
-    private val cache = mutableMapOf<String, FetchResult>()
+  private var sortedMonths: List<BudgetMonth> = emptyList()
+  private var activeMonthIndex: Int = -1
+  private val cache = mutableMapOf<String, FetchResult>()
 
-    init {
-        load(monthId = null)
+  init {
+    load(monthId = null)
+  }
+
+  fun selectTab(tab: BudgetMode) {
+    _uiState.update { it.copy(selectedTab = tab, selectedCategoryId = null) }
+  }
+
+  fun selectCategory(categoryId: String?) {
+    _uiState.update { state ->
+      val newId = if (state.selectedCategoryId == categoryId) null else categoryId
+      state.copy(selectedCategoryId = newId)
+    }
+  }
+
+  fun goToPreviousMonth() {
+    if (activeMonthIndex <= 0) return
+    val prev = sortedMonths[activeMonthIndex - 1]
+    load(monthId = prev.id)
+  }
+
+  fun goToNextMonth() {
+    if (activeMonthIndex >= sortedMonths.size - 1) return
+    val next = sortedMonths[activeMonthIndex + 1]
+    load(monthId = next.id)
+  }
+
+  private fun load(monthId: String?) {
+    // Clear category selection when switching months
+    _uiState.update { it.copy(selectedCategoryId = null) }
+
+    // Serve from cache instantly when available
+    if (monthId != null) {
+      val cached = cache[monthId]
+      if (cached != null) {
+        processResult(cached)
+        return
+      }
     }
 
-    fun selectTab(tab: BudgetMode) {
-        _uiState.update { it.copy(selectedTab = tab, selectedCategoryId = null) }
+    _uiState.update { it.copy(loading = true, error = null) }
+    viewModelScope.launch {
+      try {
+        val result = fetcher.fetch(serverUrl, apiKey, monthId)
+        cache[result.status.month.id] = result
+        processResult(result)
+        prefetchAdjacentMonths()
+      } catch (e: Exception) {
+        _uiState.update { it.copy(loading = false, error = e.message ?: "Unknown error") }
+      }
     }
+  }
 
-    fun selectCategory(categoryId: String?) {
-        _uiState.update { state ->
-            val newId = if (state.selectedCategoryId == categoryId) null else categoryId
-            state.copy(selectedCategoryId = newId)
-        }
-    }
-
-    fun goToPreviousMonth() {
-        if (activeMonthIndex <= 0) return
-        val prev = sortedMonths[activeMonthIndex - 1]
-        load(monthId = prev.id)
-    }
-
-    fun goToNextMonth() {
-        if (activeMonthIndex >= sortedMonths.size - 1) return
-        val next = sortedMonths[activeMonthIndex + 1]
-        load(monthId = next.id)
-    }
-
-    private fun load(monthId: String?) {
-        // Clear category selection when switching months
-        _uiState.update { it.copy(selectedCategoryId = null) }
-
-        // Serve from cache instantly when available
-        if (monthId != null) {
-            val cached = cache[monthId]
-            if (cached != null) {
-                processResult(cached)
-                return
-            }
-        }
-
-        _uiState.update { it.copy(loading = true, error = null) }
+  private fun prefetchAdjacentMonths() {
+    if (activeMonthIndex > 0) {
+      val prevId = sortedMonths[activeMonthIndex - 1].id
+      if (prevId !in cache) {
         viewModelScope.launch {
-            try {
-                val result = fetcher.fetch(serverUrl, apiKey, monthId)
-                cache[result.status.month.id] = result
-                processResult(result)
-                prefetchAdjacentMonths()
-            } catch (e: Exception) {
-                _uiState.update { it.copy(loading = false, error = e.message ?: "Unknown error") }
-            }
+          try {
+            val result = fetcher.fetch(serverUrl, apiKey, prevId)
+            cache[result.status.month.id] = result
+          } catch (_: Exception) {
+            /* silent prefetch failure */
+          }
         }
+      }
     }
-
-    private fun prefetchAdjacentMonths() {
-        if (activeMonthIndex > 0) {
-            val prevId = sortedMonths[activeMonthIndex - 1].id
-            if (prevId !in cache) {
-                viewModelScope.launch {
-                    try {
-                        val result = fetcher.fetch(serverUrl, apiKey, prevId)
-                        cache[result.status.month.id] = result
-                    } catch (_: Exception) { /* silent prefetch failure */ }
-                }
-            }
+    if (activeMonthIndex < sortedMonths.size - 1) {
+      val nextId = sortedMonths[activeMonthIndex + 1].id
+      if (nextId !in cache) {
+        viewModelScope.launch {
+          try {
+            val result = fetcher.fetch(serverUrl, apiKey, nextId)
+            cache[result.status.month.id] = result
+          } catch (_: Exception) {
+            /* silent prefetch failure */
+          }
         }
-        if (activeMonthIndex < sortedMonths.size - 1) {
-            val nextId = sortedMonths[activeMonthIndex + 1].id
-            if (nextId !in cache) {
-                viewModelScope.launch {
-                    try {
-                        val result = fetcher.fetch(serverUrl, apiKey, nextId)
-                        cache[result.status.month.id] = result
-                    } catch (_: Exception) { /* silent prefetch failure */ }
-                }
-            }
-        }
+      }
     }
+  }
 
-    private fun processResult(result: FetchResult) {
-        val resp = result.status
-        val months = result.months
+  private fun processResult(result: FetchResult) {
+    val resp = result.status
+    val months = result.months
 
-        sortedMonths = months.sortedBy { it.startDate }
-        val activeMonth = resp.month
-        activeMonthIndex = sortedMonths.indexOfFirst { it.id == activeMonth.id }
-        val isCurrentMonth = activeMonth.endDate == null
+    sortedMonths = months.sortedBy { it.startDate }
+    val activeMonth = resp.month
+    activeMonthIndex = sortedMonths.indexOfFirst { it.id == activeMonth.id }
+    val isCurrentMonth = activeMonth.endDate == null
 
-        val monthly = resp.statuses
-            .filter { it.budgetMode == BudgetMode.MONTHLY }
-            .sortedByDescending { it.spent }
-        val annual = resp.statuses
-            .filter { it.budgetMode == BudgetMode.ANNUAL }
-            .sortedByDescending { it.spent }
-        val projects = resp.projects.sortedByDescending { it.spent }
+    val monthly =
+        resp.statuses.filter { it.budgetMode == BudgetMode.MONTHLY }.sortedByDescending { it.spent }
+    val annual =
+        resp.statuses.filter { it.budgetMode == BudgetMode.ANNUAL }.sortedByDescending { it.spent }
+    val projects = resp.projects.sortedByDescending { it.spent }
 
-        val monthlyTimeLabel = if (monthly.isNotEmpty()) {
-            val tl = monthly.first().timeLeft
-            if (tl < 0) "open-ended" else "${tl}d left"
+    val monthlyTimeLabel =
+        if (monthly.isNotEmpty()) {
+          val tl = monthly.first().timeLeft
+          if (tl < 0) "open-ended" else "${tl}d left"
         } else ""
 
-        val annualTimeLabel = if (annual.isNotEmpty()) {
-            val tl = annual.first().timeLeft
-            if (tl < 0) "open-ended" else "${tl}mo left"
+    val annualTimeLabel =
+        if (annual.isNotEmpty()) {
+          val tl = annual.first().timeLeft
+          if (tl < 0) "open-ended" else "${tl}mo left"
         } else ""
 
-        _uiState.update {
-            it.copy(
-                loading = false,
-                error = null,
-                currentMonth = activeMonth,
-                months = months,
-                monthlyStatuses = monthly,
-                annualStatuses = annual,
-                projects = projects,
-                monthlySummary = computeSummary(monthly),
-                annualSummary = computeSummary(annual),
-                projectSummary = computeProjectSummary(projects),
-                monthlyTransactions = resp.monthlyTransactions.sortedByDescending { t -> t.postedDate },
-                annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
-                projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
-                uncategorizedCount = resp.uncategorizedCount,
-                budgetYear = resp.budgetYear,
-                monthlyTimeLabel = monthlyTimeLabel,
-                annualTimeLabel = annualTimeLabel,
-                isCurrentMonth = isCurrentMonth,
-                hasPrevMonth = activeMonthIndex > 0,
-                hasNextMonth = activeMonthIndex < sortedMonths.size - 1,
-            )
-        }
+    _uiState.update {
+      it.copy(
+          loading = false,
+          error = null,
+          currentMonth = activeMonth,
+          months = months,
+          monthlyStatuses = monthly,
+          annualStatuses = annual,
+          projects = projects,
+          monthlySummary = computeSummary(monthly),
+          annualSummary = computeSummary(annual),
+          projectSummary = computeProjectSummary(projects),
+          monthlyTransactions = resp.monthlyTransactions.sortedByDescending { t -> t.postedDate },
+          annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
+          projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
+          uncategorizedCount = resp.uncategorizedCount,
+          budgetYear = resp.budgetYear,
+          monthlyTimeLabel = monthlyTimeLabel,
+          annualTimeLabel = annualTimeLabel,
+          isCurrentMonth = isCurrentMonth,
+          hasPrevMonth = activeMonthIndex > 0,
+          hasNextMonth = activeMonthIndex < sortedMonths.size - 1,
+      )
     }
+  }
 
-    private fun computeSummary(items: List<BudgetStatus>): BudgetSummary {
-        val budget = items.sumOf { it.budgetAmount }
-        val spent = items.sumOf { it.spent }
-        val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
-        val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
-        return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
-    }
+  private fun computeSummary(items: List<BudgetStatus>): BudgetSummary {
+    val budget = items.sumOf { it.budgetAmount }
+    val spent = items.sumOf { it.spent }
+    val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
+    val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
+    return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
+  }
 
-    private fun computeProjectSummary(items: List<ProjectStatusEntry>): BudgetSummary {
-        val budget = items.sumOf { it.budgetAmount }
-        val spent = items.sumOf { it.spent }
-        val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
-        val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
-        return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
-    }
+  private fun computeProjectSummary(items: List<ProjectStatusEntry>): BudgetSummary {
+    val budget = items.sumOf { it.budgetAmount }
+    val spent = items.sumOf { it.spent }
+    val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
+    val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
+    return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
+  }
 }

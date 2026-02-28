@@ -56,11 +56,39 @@ output=$(run biome check frontend/ 2>&1) || {
 echo -e "${GREEN}OK${NC}"
 
 if git diff --cached --name-only | grep -q '^mobile/'; then
+    echo -n "Checking Kotlin formatting (mobile)... "
+    if output=$(cd mobile && ./gradlew spotlessCheck --console=plain --no-problems-report --no-daemon 2>&1); then
+        echo -e "${GREEN}OK${NC}"
+    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
+        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "$output"
+        echo ""
+        echo "To fix, run:"
+        echo "  cd mobile && ./gradlew spotlessApply"
+        exit 1
+    fi
+
+    echo -n "Running detekt (mobile)... "
+    if output=$(cd mobile && ./gradlew detekt --console=plain --no-problems-report --no-daemon 2>&1); then
+        echo -e "${GREEN}OK${NC}"
+    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
+        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "$output"
+        echo ""
+        echo "To see errors again, run:"
+        echo "  cd mobile && ./gradlew detekt --console=plain --no-problems-report"
+        exit 1
+    fi
+
     echo -n "Compiling Kotlin (mobile)... "
     if output=$(cd mobile && ./gradlew compileDebugKotlin --console=plain --no-problems-report --no-daemon 2>&1); then
         echo -e "${GREEN}OK${NC}"
-    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources'; then
-        echo -e "${RED}SKIPPED${NC} (cannot resolve Gradle plugins — missing network access to Google Maven)"
+    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
+        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
     else
         echo -e "${RED}FAILED${NC}"
         echo "$output"

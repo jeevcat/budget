@@ -11,8 +11,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  fmt:
-    name: Format
+  rust-format:
+    name: "Rust: Format"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -21,8 +21,8 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  clippy:
-    name: Clippy
+  rust-clippy:
+    name: "Rust: Clippy"
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -54,8 +54,8 @@ jobs:
           if [ -n "$APALIS_DIR" ]; then for f in "$APALIS_DIR"/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done; fi
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
-  test:
-    name: Test
+  rust-test:
+    name: "Rust: Test"
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -85,16 +85,16 @@ jobs:
           if [ -n "$APALIS_DIR" ]; then for f in "$APALIS_DIR"/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done; fi
       - run: cargo test --all-features
 
-  biome:
-    name: Biome
+  frontend:
+    name: "Frontend: Biome"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: biomejs/setup-biome@v2
       - run: biome check frontend/
 
-  kotlin:
-    name: Kotlin
+  mobile:
+    name: "Mobile: Kotlin"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -106,10 +106,19 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v5
-      - run: ./gradlew compileDebugKotlin --warning-mode all --console=plain --no-problems-report
+      - name: Formatting (Spotless)
+        run: ./gradlew spotlessCheck --console=plain --no-problems-report
+      - name: Static analysis (detekt)
+        run: ./gradlew detekt --console=plain --no-problems-report
+      - name: Android Lint
+        run: ./gradlew :androidApp:lint --console=plain --no-problems-report
+      - name: Tests
+        run: ./gradlew allTests --console=plain --no-problems-report
+      - name: Compile
+        run: ./gradlew compileDebugKotlin --warning-mode all --console=plain --no-problems-report
 
   nix:
-    name: Nix
+    name: "Nix: Flake check"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

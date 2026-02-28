@@ -5,16 +5,16 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class BudgetMode {
-    @SerialName("monthly") MONTHLY,
-    @SerialName("annual") ANNUAL,
-    @SerialName("project") PROJECT,
+  @SerialName("monthly") MONTHLY,
+  @SerialName("annual") ANNUAL,
+  @SerialName("project") PROJECT,
 }
 
 @Serializable
 enum class PaceIndicator {
-    @SerialName("under_budget") UNDER_BUDGET,
-    @SerialName("on_track") ON_TRACK,
-    @SerialName("over_budget") OVER_BUDGET,
+  @SerialName("under_budget") UNDER_BUDGET,
+  @SerialName("on_track") ON_TRACK,
+  @SerialName("over_budget") OVER_BUDGET,
 }
 
 @Serializable
@@ -73,9 +73,11 @@ data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
     val projects: List<ProjectStatusEntry> = emptyList(),
-    @SerialName("monthly_transactions") val monthlyTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("monthly_transactions")
+    val monthlyTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("annual_transactions") val annualTransactions: List<TransactionEntry> = emptyList(),
-    @SerialName("project_transactions") val projectTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("project_transactions")
+    val projectTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("uncategorized_count") val uncategorizedCount: Int = 0,
     @SerialName("budget_year") val budgetYear: Int = 0,
 )
