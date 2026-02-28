@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val config = currentConfig
                     if (config != null) {
-                        MainScreen(
+                        DashboardScreen(
                             config = config,
                             onLogout = {
                                 configStore.clear()

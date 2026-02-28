@@ -1,10 +1,10 @@
 package com.budget.shared.api
 
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
@@ -69,6 +69,23 @@ class BudgetApi(private val baseUrl: String, private val apiKey: String) {
         } catch (e: Exception) {
             ConnectionResult.Error(e.message ?: "Unknown error")
         }
+    }
+
+    /** Fetch budget status for the current or a specific month. */
+    suspend fun getStatus(monthId: String? = null): StatusResponse {
+        val path = if (monthId != null) "/api/budgets/status?month_id=$monthId" else "/api/budgets/status"
+        val response = client.get(url(path)) {
+            header("Authorization", "Bearer $apiKey")
+        }
+        return response.body()
+    }
+
+    /** Fetch all available budget months. */
+    suspend fun getMonths(): List<BudgetMonth> {
+        val response = client.get(url("/api/budgets/months")) {
+            header("Authorization", "Bearer $apiKey")
+        }
+        return response.body()
     }
 
     fun close() {

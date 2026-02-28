@@ -972,7 +972,6 @@ function Dashboard() {
     });
   }, []);
 
-  const isAnnualTab = activeTab === 1;
   const annualTimeLabel = timeLeft(annual, "mo");
 
   // Pick the right base list depending on which tab is active
@@ -1015,15 +1014,14 @@ function Dashboard() {
   })();
 
   return html`
-    <div class="hstack" style="margin-bottom:1.25rem">
-      ${
-        isAnnualTab
-          ? html`
-          <div style="text-align:center">
-            <strong>${budgetYear}</strong>
-            ${annualTimeLabel && html`<div class="text-light mono" style="font-size:0.85rem">${annualTimeLabel}</div>`}
-          </div>`
-          : html`
+    <ot-tabs ref=${tabsCallbackRef}>
+      <div role="tablist">
+        <button role="tab">Monthly</button>
+        <button role="tab">Annual</button>
+        ${hasProjects && html`<button role="tab">Projects</button>`}
+      </div>
+      <div role="tabpanel">
+        <div class="hstack" style="margin-bottom:1.25rem">
           <div class="hstack" style="gap:0.5rem;align-items:center">
             <button
               onClick=${goPrev}
@@ -1045,29 +1043,20 @@ function Dashboard() {
               style="padding:0.25rem 0.5rem;font-size:1rem"
               aria-label="Next month"
             >\u203A</button>
-          </div>`
-      }
-      ${
-        uncategorizedCount > 0 &&
-        html`
-          <a
-            href="#/transactions?cat=__none"
-            class="badge warning"
-            style="margin-left:auto;text-decoration:none"
-          >
-            ${uncategorizedCount} uncategorized
-          </a>
-        `
-      }
-    </div>
-
-    <ot-tabs ref=${tabsCallbackRef}>
-      <div role="tablist">
-        <button role="tab">Monthly</button>
-        <button role="tab">Annual</button>
-        ${hasProjects && html`<button role="tab">Projects</button>`}
-      </div>
-      <div role="tabpanel">
+          </div>
+          ${
+            uncategorizedCount > 0 &&
+            html`
+              <a
+                href="#/transactions?cat=__none"
+                class="badge warning"
+                style="margin-left:auto;text-decoration:none"
+              >
+                ${uncategorizedCount} uncategorized
+              </a>
+            `
+          }
+        </div>
         ${
           monthly.length > 0
             ? html`<${BudgetSection}
@@ -1083,6 +1072,12 @@ function Dashboard() {
         }
       </div>
       <div role="tabpanel">
+        <div class="hstack" style="margin-bottom:1.25rem;align-items:center">
+          <div style="text-align:center">
+            <strong>${budgetYear}</strong>
+            ${annualTimeLabel && html`<div class="text-light mono" style="font-size:0.85rem">${annualTimeLabel}</div>`}
+          </div>
+        </div>
         ${
           annual.length > 0
             ? html`<${BudgetSection}
