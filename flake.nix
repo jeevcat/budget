@@ -164,7 +164,14 @@
       (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = import nixpkgs {
+            inherit system;
+            config = {
+              # Android SDK components pulled via androidenv are unfree
+              allowUnfree = true;
+              android_sdk.accept_license = true;
+            };
+          };
           craneLib = crane.mkLib pkgs;
           lib = pkgs.lib;
 
@@ -216,12 +223,26 @@
 
           checks.default = budget;
 
-          devShells.default = craneLib.devShell {
-            inputsFrom = [ budget ];
-            packages = [ pkgs.jdk21_headless ];
-            env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
-            env.JAVA_HOME = "${pkgs.jdk21_headless}";
-          };
+          devShells.default =
+            let
+              androidSdk =
+                (pkgs.androidenv.composeAndroidPackages {
+                  platformVersions = [ "36" ];
+                  buildToolsVersions = [ "36.0.0" ];
+                  includeEmulator = false;
+                  includeNDK = false;
+                }).androidsdk;
+            in
+            craneLib.devShell {
+              inputsFrom = [ budget ];
+              packages = [
+                pkgs.jdk21_headless
+                androidSdk
+              ];
+              env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
+              env.JAVA_HOME = "${pkgs.jdk21_headless}";
+              env.ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+            };
         }
       )
     )

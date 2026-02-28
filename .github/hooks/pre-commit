@@ -56,11 +56,25 @@ output=$(run biome check frontend/ 2>&1) || {
 echo -e "${GREEN}OK${NC}"
 
 if git diff --cached --name-only | grep -q '^mobile/'; then
+    # Detect the specific reason a Gradle task can't run
+    gradle_skip_reason() {
+        local output="$1"
+        if echo "$output" | grep -q 'JAVA_HOME is not set'; then
+            echo "JAVA_HOME not set"
+        elif echo "$output" | grep -q 'SDK location not found'; then
+            echo "ANDROID_HOME not set"
+        elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources'; then
+            echo "Gradle plugins not available (check network)"
+        else
+            return 1
+        fi
+    }
+
     echo -n "Checking Kotlin formatting (mobile)... "
     if output=$(cd mobile && ./gradlew spotlessCheck --console=plain --no-problems-report --no-daemon 2>&1); then
         echo -e "${GREEN}OK${NC}"
-    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
-        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
+    elif reason=$(gradle_skip_reason "$output"); then
+        echo -e "${RED}SKIPPED${NC} ($reason)"
     else
         echo -e "${RED}FAILED${NC}"
         echo "$output"
@@ -73,8 +87,8 @@ if git diff --cached --name-only | grep -q '^mobile/'; then
     echo -n "Running detekt (mobile)... "
     if output=$(cd mobile && ./gradlew detekt --console=plain --no-problems-report --no-daemon 2>&1); then
         echo -e "${GREEN}OK${NC}"
-    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
-        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
+    elif reason=$(gradle_skip_reason "$output"); then
+        echo -e "${RED}SKIPPED${NC} ($reason)"
     else
         echo -e "${RED}FAILED${NC}"
         echo "$output"
@@ -87,8 +101,8 @@ if git diff --cached --name-only | grep -q '^mobile/'; then
     echo -n "Compiling Kotlin (mobile)... "
     if output=$(cd mobile && ./gradlew compileDebugKotlin --console=plain --no-problems-report --no-daemon 2>&1); then
         echo -e "${GREEN}OK${NC}"
-    elif echo "$output" | grep -q 'could not resolve plugin artifact\|was not found in any of the following sources\|JAVA_HOME is not set'; then
-        echo -e "${RED}SKIPPED${NC} (missing Java or Gradle plugins — set JAVA_HOME or check network)"
+    elif reason=$(gradle_skip_reason "$output"); then
+        echo -e "${RED}SKIPPED${NC} ($reason)"
     else
         echo -e "${RED}FAILED${NC}"
         echo "$output"
