@@ -21,20 +21,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -53,9 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
-import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.PaceIndicator
-import com.budget.shared.api.ProjectStatusEntry
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.config.ServerConfig
 import com.budget.shared.viewmodel.BudgetSummary
@@ -124,12 +120,19 @@ private fun formatMonthRange(month: BudgetMonth): String {
 
 // -- Root screen -----------------------------------------------------------
 
+/** Standalone entry point (kept for backward compatibility). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(config: ServerConfig, onLogout: () -> Unit) {
     val viewModel: DashboardViewModel = viewModel {
         DashboardViewModel(config.serverUrl, config.apiKey)
     }
+    DashboardContent(viewModel = viewModel)
+}
+
+/** Content without Scaffold — used from AppShell's NavHost. */
+@Composable
+fun DashboardContent(viewModel: DashboardViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     val selectedCategoryId = state.selectedCategoryId
@@ -143,45 +146,20 @@ fun DashboardScreen(config: ServerConfig, onLogout: () -> Unit) {
         return
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Budget") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-                actions = {
-                    IconButton(onClick = onLogout) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Logout,
-                            contentDescription = "Disconnect",
-                        )
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            when {
-                state.loading && state.currentMonth == null -> {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                }
-                state.error != null && state.currentMonth == null -> {
-                    Text(
-                        text = state.error ?: "Unknown error",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    )
-                }
-                else -> {
-                    DashboardContent(state = state, viewModel = viewModel)
-                }
+    Box(modifier = Modifier.fillMaxSize()) {
+        when {
+            state.loading && state.currentMonth == null -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
-            // Subtle loading bar when refreshing (data already visible)
-            if (state.loading && state.currentMonth != null) {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+            state.error != null && state.currentMonth == null -> {
+                Text(
+                    text = state.error ?: "Unknown error",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
                 )
+            }
+            else -> {
+                DashboardTabContent(state = state, viewModel = viewModel)
             }
         }
     }
@@ -191,7 +169,7 @@ fun DashboardScreen(config: ServerConfig, onLogout: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DashboardContent(state: DashboardUiState, viewModel: DashboardViewModel) {
+private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardViewModel) {
     val tabs = buildList {
         add(BudgetMode.MONTHLY)
         add(BudgetMode.ANNUAL)
