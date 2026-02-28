@@ -220,6 +220,7 @@
             inputsFrom = [ budget ];
             packages = [ pkgs.jdk21_headless ];
             env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
+            env.JAVA_HOME = "${pkgs.jdk21_headless}";
           };
         }
       )
