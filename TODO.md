@@ -12,7 +12,6 @@
 
 ### Frontend Polish
 - [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month
-- [ ] **Rollover visualization**: Dashboard doesn't show rollover surplus/deficit carried from prior months
 
 ## From Spec — Deviations
 

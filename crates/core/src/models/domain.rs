@@ -108,5 +108,4 @@ pub struct BudgetStatus {
     pub time_left: i64,
     pub pace: PaceIndicator,
     pub budget_mode: BudgetMode,
-    pub rollover: Decimal,
 }

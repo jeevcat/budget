@@ -284,22 +284,12 @@ fn compute_monthly_status(
     category: &Category,
     transactions: &[Transaction],
     current_month: &BudgetMonth,
-    all_months: &[BudgetMonth],
     categories: &[Category],
     today: NaiveDate,
 ) -> BudgetStatus {
     let spent = compute_category_spending(transactions, category.id, current_month, categories);
     let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
-
-    // Rollover from prior months only (exclude the month we're computing status for)
-    let prior_months: Vec<BudgetMonth> = all_months
-        .iter()
-        .filter(|bm| bm.id != current_month.id)
-        .cloned()
-        .collect();
-    let rollover = compute_rollover(category, &prior_months, transactions, categories);
-    let effective_budget = budget_amount + rollover;
-    let remaining = effective_budget - spent;
+    let remaining = budget_amount - spent;
 
     let end_date = current_month
         .end_date
@@ -309,7 +299,7 @@ fn compute_monthly_status(
 
     let total_days = (end_date - current_month.start_date).num_days();
     let elapsed_days = (today - current_month.start_date).num_days().max(0);
-    let pace = compute_pace(spent, effective_budget, elapsed_days, total_days);
+    let pace = compute_pace(spent, budget_amount, elapsed_days, total_days);
 
     BudgetStatus {
         category_id: category.id,
@@ -320,7 +310,6 @@ fn compute_monthly_status(
         time_left,
         pace,
         budget_mode: BudgetMode::Monthly,
-        rollover,
     }
 }
 
@@ -365,7 +354,6 @@ fn compute_annual_status(
         time_left,
         pace,
         budget_mode: BudgetMode::Annual,
-        rollover: Decimal::ZERO,
     }
 }
 
@@ -459,7 +447,6 @@ fn compute_project_status(
         time_left,
         pace,
         budget_mode: BudgetMode::Project,
-        rollover: Decimal::ZERO,
     }
 }
 
@@ -488,44 +475,8 @@ pub fn compute_budget_status(
             compute_project_status(category, transactions, categories, today)
         }
         // Monthly (default)
-        _ => compute_monthly_status(
-            category,
-            transactions,
-            current_month,
-            all_months,
-            categories,
-            today,
-        ),
+        _ => compute_monthly_status(category, transactions, current_month, categories, today),
     }
-}
-
-/// Compute cumulative rollover for a monthly category across budget months.
-///
-/// Rollover = sum of (budget - spent) for each completed budget month.
-/// Only applies to monthly budget categories. Annual/project categories do not
-/// roll over.
-#[must_use]
-pub fn compute_rollover(
-    category: &Category,
-    budget_months: &[BudgetMonth],
-    transactions: &[Transaction],
-    categories: &[Category],
-) -> Decimal {
-    if category.budget_mode != Some(BudgetMode::Monthly) {
-        return Decimal::ZERO;
-    }
-
-    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
-
-    // Only closed budget months contribute to rollover
-    budget_months
-        .iter()
-        .filter(|bm| bm.end_date.is_some())
-        .fold(Decimal::ZERO, |rollover, bm| {
-            let spent = compute_category_spending(transactions, category.id, bm, categories);
-            let surplus = budget_amount - spent;
-            rollover + surplus
-        })
 }
 
 /// Filter transactions relevant to project budget math.
@@ -987,7 +938,6 @@ mod tests {
         assert_eq!(status.pace, PaceIndicator::UnderBudget);
         assert!(status.time_left > 0);
         assert_eq!(status.budget_mode, BudgetMode::Monthly);
-        assert_eq!(status.rollover, Decimal::ZERO);
     }
 
     #[test]
@@ -1013,110 +963,6 @@ mod tests {
         assert_eq!(status.remaining, dec!(-50));
         assert_eq!(status.pace, PaceIndicator::OverBudget);
         assert_eq!(status.budget_mode, BudgetMode::Monthly);
-    }
-
-    #[test]
-    fn rollover_accumulates_surplus() {
-        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
-        let categories = vec![food.clone()];
-
-        let bm1 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-
-        let bm2 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 2, 14),
-            end_date: Some(date(2025, 3, 14)),
-            salary_transactions_detected: 1,
-        };
-
-        let transactions = vec![
-            // Month 1: spent 300, surplus 200
-            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
-            // Month 2: spent 400, surplus 100
-            make_txn(Some(food.id), dec!(-400), date(2025, 2, 20)),
-        ];
-
-        let rollover = compute_rollover(&food, &[bm1, bm2], &transactions, &categories);
-
-        // Month 1: 500 - 300 = 200 surplus
-        // Month 2: 500 - 400 = 100 surplus
-        // Total rollover: 300
-        assert_eq!(rollover, dec!(300));
-    }
-
-    #[test]
-    fn rollover_accumulates_deficit() {
-        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
-        let categories = vec![food.clone()];
-
-        let bm1 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-
-        let transactions = vec![make_txn(Some(food.id), dec!(-700), date(2025, 1, 20))];
-
-        let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
-
-        // 500 - 700 = -200 deficit carried forward
-        assert_eq!(rollover, dec!(-200));
-    }
-
-    #[test]
-    fn rollover_zero_for_annual() {
-        let food = food_with_budget(BudgetMode::Annual, dec!(6000));
-        let categories = vec![food.clone()];
-
-        let bm1 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-
-        let transactions = vec![make_txn(Some(food.id), dec!(-300), date(2025, 1, 20))];
-
-        let rollover = compute_rollover(&food, &[bm1], &transactions, &categories);
-
-        // Annual budgets don't roll over
-        assert_eq!(rollover, Decimal::ZERO);
-    }
-
-    #[test]
-    fn open_budget_month_not_included_in_rollover() {
-        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
-        let categories = vec![food.clone()];
-
-        let bm_closed = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-
-        let bm_open = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 2, 14),
-            end_date: None, // Still open
-            salary_transactions_detected: 1,
-        };
-
-        let transactions = vec![
-            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(-100), date(2025, 2, 20)),
-        ];
-
-        let rollover = compute_rollover(&food, &[bm_closed, bm_open], &transactions, &categories);
-
-        // Only closed month counts: 500 - 300 = 200
-        assert_eq!(rollover, dec!(200));
     }
 
     #[test]
@@ -1214,7 +1060,6 @@ mod tests {
         // 400 + 600 + 200 = 1200 across three months
         assert_eq!(status.spent, dec!(1200));
         assert_eq!(status.remaining, dec!(4800));
-        assert_eq!(status.rollover, Decimal::ZERO);
         // 3 months total, reference is month 3 → 0 months left
         assert_eq!(status.time_left, 0);
     }
@@ -1298,43 +1143,6 @@ mod tests {
     }
 
     #[test]
-    fn monthly_status_includes_rollover() {
-        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
-        let categories = vec![food.clone()];
-
-        let bm1 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-        let bm2 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 2, 14),
-            end_date: None,
-            salary_transactions_detected: 1,
-        };
-        let all_months = [bm1.clone(), bm2.clone()];
-
-        let transactions = vec![
-            // Month 1: spent 300, surplus 200
-            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
-            // Month 2 (current): spent 100
-            make_txn(Some(food.id), dec!(-100), date(2025, 2, 20)),
-        ];
-
-        let today = date(2025, 2, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm2, &all_months, &categories, today);
-
-        assert_eq!(status.budget_mode, BudgetMode::Monthly);
-        assert_eq!(status.rollover, dec!(200));
-        assert_eq!(status.spent, dec!(100));
-        // remaining = budget(500) + rollover(200) - spent(100) = 600
-        assert_eq!(status.remaining, dec!(600));
-    }
-
-    #[test]
     fn spending_nets_refund_against_expenses() {
         let food = food_category();
         let categories = vec![food.clone()];
@@ -1402,10 +1210,8 @@ mod tests {
         );
         assert_eq!(food_status.budget_mode, BudgetMode::Monthly);
         assert_eq!(food_status.spent, dec!(200));
-        // Rollover from Jan: 500 - 300 = 200
-        assert_eq!(food_status.rollover, dec!(200));
-        // remaining = 500 + 200 - 200 = 500
-        assert_eq!(food_status.remaining, dec!(500));
+        // remaining = 500 - 200 = 300
+        assert_eq!(food_status.remaining, dec!(300));
 
         // Annual insurance status (sums all months in the year)
         let ins_status = compute_budget_status(
@@ -1420,7 +1226,6 @@ mod tests {
         // 100 + 150 = 250 across two months
         assert_eq!(ins_status.spent, dec!(250));
         assert_eq!(ins_status.remaining, dec!(2150));
-        assert_eq!(ins_status.rollover, Decimal::ZERO);
     }
 
     #[test]
@@ -1527,17 +1332,13 @@ mod tests {
         assert_eq!(food_s.budget_mode, BudgetMode::Monthly);
         assert_eq!(food_s.budget_amount, dec!(500));
         assert_eq!(food_s.spent, dec!(420));
-        // Rollover from Jan: 500 - 350 = 150
-        assert_eq!(food_s.rollover, dec!(150));
-        assert_eq!(food_s.remaining, dec!(230)); // 500 + 150 - 420
+        assert_eq!(food_s.remaining, dec!(80)); // 500 - 420
 
         let transport_s = &statuses[1];
         assert_eq!(transport_s.budget_mode, BudgetMode::Monthly);
         assert_eq!(transport_s.budget_amount, dec!(200));
         assert_eq!(transport_s.spent, dec!(90));
-        // Rollover from Jan: 200 - 180 = 20
-        assert_eq!(transport_s.rollover, dec!(20));
-        assert_eq!(transport_s.remaining, dec!(130)); // 200 + 20 - 90
+        assert_eq!(transport_s.remaining, dec!(110)); // 200 - 90
 
         let ins_s = &statuses[2];
         assert_eq!(ins_s.budget_mode, BudgetMode::Annual);
@@ -1545,7 +1346,6 @@ mod tests {
         // Annual sums across all months: 200 + 200 = 400
         assert_eq!(ins_s.spent, dec!(400));
         assert_eq!(ins_s.remaining, dec!(2000));
-        assert_eq!(ins_s.rollover, Decimal::ZERO);
 
         // Dashboard totals (mirrors frontend logic: sum budget_amount, sum spent)
         let total_budget: Decimal = statuses.iter().map(|s| s.budget_amount).sum();
@@ -1650,44 +1450,5 @@ mod tests {
         // Net: -5000 + -3000 + 800 = -7200, negated → 7200
         assert_eq!(status.spent, dec!(7200));
         assert_eq!(status.remaining, dec!(2800));
-    }
-
-    #[test]
-    fn rollover_with_mixed_expenses_and_refunds() {
-        let food = food_with_budget(BudgetMode::Monthly, dec!(500));
-        let categories = vec![food.clone()];
-
-        let bm1 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 1, 15),
-            end_date: Some(date(2025, 2, 13)),
-            salary_transactions_detected: 1,
-        };
-
-        let bm2 = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: date(2025, 2, 14),
-            end_date: None,
-            salary_transactions_detected: 1,
-        };
-        let all_months = [bm1.clone(), bm2.clone()];
-
-        let transactions = vec![
-            // Month 1: -400 expense + 50 refund = -350 net → 350 spent → 150 surplus
-            make_txn(Some(food.id), dec!(-400), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(50), date(2025, 1, 28)),
-            // Month 2 (current): -200 expense
-            make_txn(Some(food.id), dec!(-200), date(2025, 2, 20)),
-        ];
-
-        let today = date(2025, 2, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm2, &all_months, &categories, today);
-
-        assert_eq!(status.spent, dec!(200));
-        // Rollover: 500 - 350 = 150
-        assert_eq!(status.rollover, dec!(150));
-        // remaining = 500 + 150 - 200 = 450
-        assert_eq!(status.remaining, dec!(450));
     }
 }
