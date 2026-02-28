@@ -55,4 +55,17 @@ output=$(run biome check frontend/ 2>&1) || {
 }
 echo -e "${GREEN}OK${NC}"
 
+if git diff --cached --name-only | grep -q '^mobile/'; then
+    echo -n "Compiling Kotlin (mobile)... "
+    output=$(cd mobile && ./gradlew compileDebugKotlin 2>&1) || {
+        echo -e "${RED}FAILED${NC}"
+        echo "$output"
+        echo ""
+        echo "To see errors again, run:"
+        echo "  cd mobile && ./gradlew compileDebugKotlin"
+        exit 1
+    }
+    echo -e "${GREEN}OK${NC}"
+fi
+
 echo -e "${GREEN}All pre-commit checks passed!${NC}"
