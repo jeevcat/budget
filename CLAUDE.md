@@ -33,6 +33,12 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Custom CSS in `style.css` is a last resort — only for things Oat genuinely cannot do (custom visualizations, pseudo-elements, responsive grid breakpoints, sticky table headers)
 - When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
 
+## Mobile
+
+- **Kotlin Multiplatform (KMP)** — share as much non-presentation code as possible between Android and iOS
+- **Ktor** for HTTP networking (KMP-compatible, shared across platforms)
+- Presentation layer is platform-specific: Jetpack Compose on Android, SwiftUI on iOS
+
 ## Coding Standards
 
 - **Never suppress clippy lints** without explicit human approval
