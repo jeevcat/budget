@@ -98,6 +98,36 @@ class CategoriesViewModelTest {
   }
 
   @Test
+  fun childrenInheritBudgetModeFromParent() = runTest {
+    val categories =
+        listOf(
+            Category(
+                id = "transport",
+                name = "Transport",
+                budgetMode = BudgetMode.ANNUAL,
+                budgetAmount = "2000",
+                transactionCount = 10,
+            ),
+            Category(
+                id = "fuel",
+                name = "Fuel",
+                parentId = "transport",
+                // budgetMode is null — inherited from parent
+                budgetAmount = "500",
+                transactionCount = 5,
+            ),
+        )
+    val sections = CategoriesViewModel.buildSections(categories)
+
+    assertEquals(1, sections.size)
+    assertEquals(BudgetMode.ANNUAL, sections[0].mode)
+    assertEquals(2, sections[0].categories.size)
+    assertEquals("Transport", sections[0].categories[0].name)
+    assertEquals("Fuel", sections[0].categories[1].name)
+    assertTrue(sections[0].categories[1].isChild)
+  }
+
+  @Test
   fun allSectionsExpandedByDefault() = runTest {
     val fetcher = FakeCategoriesFetcher(sampleCategories())
     val vm = CategoriesViewModel("https://example.com", "key", fetcher)
@@ -173,7 +203,7 @@ private fun sampleCategories(): List<Category> =
             id = "dining",
             name = "Dining Out",
             parentId = "food",
-            budgetMode = BudgetMode.MONTHLY,
+            // budgetMode is null — inherited from parent
             budgetAmount = "100",
             transactionCount = 8,
         ),

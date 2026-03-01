@@ -101,13 +101,19 @@ class CategoriesViewModel(
     /** Group categories by budget mode with parent/child hierarchy. */
     fun buildSections(categories: List<Category>): List<CategorySection> {
       val byId = categories.associateBy { it.id }
+
+      // Children inherit budget mode from their parent
+      fun effectiveMode(cat: Category): BudgetMode? =
+          cat.budgetMode ?: cat.parentId?.let { byId[it]?.budgetMode }
+
       val childrenOf =
           categories
               .filter { it.parentId != null }
               .groupBy { it.parentId }
               .mapValues { (_, v) -> v.sortedBy { it.name.lowercase() } }
 
-      val grouped = categories.groupBy { it.budgetMode }
+      // Group roots by their own mode, children by their parent's mode
+      val grouped = categories.groupBy { effectiveMode(it) }
 
       val sectionOrder: List<BudgetMode?> =
           listOf(BudgetMode.MONTHLY, BudgetMode.ANNUAL, BudgetMode.PROJECT, null)
@@ -125,21 +131,18 @@ class CategoriesViewModel(
                     budgetMode = root.budgetMode,
                     budgetAmount = root.budgetAmount,
                     transactionCount = root.transactionCount,
-                )
-            )
-            val children = childrenOf[root.id].orEmpty().filter { it.budgetMode == mode }
-            for (child in children) {
+                ))
+            for (child in childrenOf[root.id].orEmpty()) {
               add(
                   CategoryDisplayItem(
                       id = child.id,
                       name = child.name,
                       parentName = root.name,
-                      budgetMode = child.budgetMode,
+                      budgetMode = effectiveMode(child),
                       budgetAmount = child.budgetAmount,
                       transactionCount = child.transactionCount,
                       isChild = true,
-                  )
-              )
+                  ))
             }
           }
         }
