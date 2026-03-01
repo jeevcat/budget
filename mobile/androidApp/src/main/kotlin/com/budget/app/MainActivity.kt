@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material3.Badge
@@ -47,6 +49,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.budget.shared.config.AndroidConfigStore
 import com.budget.shared.config.ServerConfig
+import com.budget.shared.viewmodel.CategoriesViewModel
 import com.budget.shared.viewmodel.DashboardViewModel
 import com.budget.shared.viewmodel.TransactionsViewModel
 import kotlinx.serialization.Serializable
@@ -54,6 +57,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object BudgetRoute
 
 @Serializable data object TransactionsRoute
+
+@Serializable data object CategoriesRoute
 
 internal data class TopLevelRoute(
     val label: String,
@@ -122,6 +127,9 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val transactionsVm: TransactionsViewModel = viewModel {
     TransactionsViewModel(config.serverUrl, config.apiKey)
   }
+  val categoriesVm: CategoriesViewModel = viewModel {
+    CategoriesViewModel(config.serverUrl, config.apiKey)
+  }
 
   val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
   val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
@@ -135,6 +143,12 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
               Icons.Filled.Receipt,
               Icons.Outlined.Receipt,
           ),
+          TopLevelRoute(
+              "Categories",
+              CategoriesRoute,
+              Icons.Filled.Category,
+              Icons.Outlined.Category,
+          ),
       )
 
   val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -147,6 +161,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
               val title =
                   when {
                     currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
+                    currentDestination?.hasRoute<CategoriesRoute>() == true -> "Categories"
                     else -> "Budget"
                   }
               Text(title)
@@ -213,6 +228,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
         )
       }
       composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
+      composable<CategoriesRoute> { CategoriesScreen(viewModel = categoriesVm) }
     }
   }
 }

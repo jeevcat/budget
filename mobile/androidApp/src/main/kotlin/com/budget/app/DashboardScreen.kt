@@ -214,7 +214,8 @@ private fun DashboardTabContent(
                     BudgetMode.MONTHLY -> "Monthly"
                     BudgetMode.ANNUAL -> "Annual"
                     BudgetMode.PROJECT -> "Projects"
-                  })
+                  }
+              )
             },
         )
       }
