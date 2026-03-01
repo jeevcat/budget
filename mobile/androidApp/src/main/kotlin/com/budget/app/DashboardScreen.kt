@@ -145,7 +145,10 @@ fun DashboardScreen(config: ServerConfig) {
 
 /** Content without Scaffold — used from AppShell's NavHost. */
 @Composable
-fun DashboardContent(viewModel: DashboardViewModel) {
+fun DashboardContent(
+    viewModel: DashboardViewModel,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
   val selectedCategoryId = state.selectedCategoryId
@@ -155,6 +158,7 @@ fun DashboardContent(viewModel: DashboardViewModel) {
         state = state,
         categoryId = selectedCategoryId,
         onBack = { viewModel.selectCategory(null) },
+        onTransactionClick = onTransactionClick,
     )
     return
   }
@@ -172,7 +176,11 @@ fun DashboardContent(viewModel: DashboardViewModel) {
         )
       }
       else -> {
-        DashboardTabContent(state = state, viewModel = viewModel)
+        DashboardTabContent(
+            state = state,
+            viewModel = viewModel,
+            onTransactionClick = onTransactionClick,
+        )
       }
     }
   }
@@ -182,7 +190,11 @@ fun DashboardContent(viewModel: DashboardViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardViewModel) {
+private fun DashboardTabContent(
+    state: DashboardUiState,
+    viewModel: DashboardViewModel,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
   val tabs = buildList {
     add(BudgetMode.MONTHLY)
     add(BudgetMode.ANNUAL)
@@ -202,8 +214,7 @@ private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardVie
                     BudgetMode.MONTHLY -> "Monthly"
                     BudgetMode.ANNUAL -> "Annual"
                     BudgetMode.PROJECT -> "Projects"
-                  }
-              )
+                  })
             },
         )
       }
@@ -247,7 +258,10 @@ private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardVie
                 onClick = { viewModel.selectCategory(status.categoryId) },
             )
           }
-          transactionSection(transactions = state.monthlyTransactions)
+          transactionSection(
+              transactions = state.monthlyTransactions,
+              onTransactionClick = onTransactionClick,
+          )
         }
         BudgetMode.ANNUAL -> {
           item {
@@ -269,7 +283,10 @@ private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardVie
                 onClick = { viewModel.selectCategory(status.categoryId) },
             )
           }
-          transactionSection(transactions = state.annualTransactions)
+          transactionSection(
+              transactions = state.annualTransactions,
+              onTransactionClick = onTransactionClick,
+          )
         }
         BudgetMode.PROJECT -> {
           item { SummaryCards(summary = state.projectSummary) }
@@ -285,7 +302,10 @@ private fun DashboardTabContent(state: DashboardUiState, viewModel: DashboardVie
                 onClick = { viewModel.selectCategory(project.categoryId) },
             )
           }
-          transactionSection(transactions = state.projectTransactions)
+          transactionSection(
+              transactions = state.projectTransactions,
+              onTransactionClick = onTransactionClick,
+          )
         }
       }
     }
@@ -597,6 +617,7 @@ private fun PaceBadge(pace: PaceIndicator) {
 
 private fun LazyListScope.transactionSection(
     transactions: List<TransactionEntry>,
+    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   if (transactions.isEmpty()) return
 
@@ -620,13 +641,21 @@ private fun LazyListScope.transactionSection(
     }
   }
 
-  items(transactions.take(MAX_VISIBLE_TRANSACTIONS), key = { it.id }) { txn -> TransactionRow(txn) }
+  items(transactions.take(MAX_VISIBLE_TRANSACTIONS), key = { it.id }) { txn ->
+    TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+  }
 }
 
 @Composable
-private fun TransactionRow(txn: TransactionEntry) {
+private fun TransactionRow(txn: TransactionEntry, onClick: (() -> Unit)? = null) {
+  val modifier =
+      if (onClick != null) {
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp)
+      } else {
+        Modifier.fillMaxWidth().padding(vertical = 6.dp)
+      }
   Row(
-      modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+      modifier = modifier,
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
   ) {
@@ -724,6 +753,7 @@ private fun CategoryTransactionsScreen(
     state: DashboardUiState,
     categoryId: String,
     onBack: () -> Unit,
+    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   val info = resolveCategoryInfo(state, categoryId)
   val transactions = resolveTransactions(state, categoryId)
@@ -785,7 +815,9 @@ private fun CategoryTransactionsScreen(
           )
         }
       } else {
-        items(transactions, key = { it.id }) { txn -> TransactionRow(txn) }
+        items(transactions, key = { it.id }) { txn ->
+          TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+        }
       }
     }
   }

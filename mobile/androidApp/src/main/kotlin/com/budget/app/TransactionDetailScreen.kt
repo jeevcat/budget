@@ -106,14 +106,39 @@ private data class DetailField(
     val value: String?,
 )
 
+/**
+ * Parse a bank description into key-value pairs.
+ *
+ * Bank descriptions are built from remittance_information segments joined by " / ". Each segment
+ * may be a "Key: Value" pair. This splits them into individual [DetailField] entries so they render
+ * as a table instead of a raw colon-separated string.
+ */
+private fun parseDescription(description: String): List<DetailField> {
+  val segments = description.split(" / ").map { it.trim() }.filter { it.isNotEmpty() }
+  if (segments.size <= 1 && !description.contains(": ")) {
+    // Plain text description — show as a single field
+    return listOf(DetailField("Description", description))
+  }
+  return segments.map { segment ->
+    val colonIndex = segment.indexOf(": ")
+    if (colonIndex > 0) {
+      DetailField(segment.substring(0, colonIndex), segment.substring(colonIndex + 2))
+    } else {
+      DetailField("Description", segment)
+    }
+  }
+}
+
 private fun buildDetailFields(txn: Transaction): List<DetailField> {
-  val descriptionValue =
+  val showDescription =
       when {
-        txn.description.isEmpty() -> null
-        txn.merchantName.isEmpty() -> null // shown as hero title
-        txn.description == txn.merchantName -> null // duplicate
-        else -> txn.description
+        txn.description.isEmpty() -> false
+        txn.merchantName.isEmpty() -> false // shown as hero title
+        txn.description == txn.merchantName -> false // duplicate
+        else -> true
       }
+
+  val descriptionFields = if (showDescription) parseDescription(txn.description) else emptyList()
 
   val originalAmount =
       if (txn.originalAmount != null) {
@@ -122,15 +147,15 @@ private fun buildDetailFields(txn: Transaction): List<DetailField> {
         null
       }
 
-  return listOf(
-      DetailField("Description", descriptionValue),
-      DetailField("Counterparty", txn.counterpartyName),
-      DetailField("IBAN", txn.counterpartyIban),
-      DetailField("BIC", txn.counterpartyBic),
-      DetailField("Original amount", originalAmount),
-      DetailField("Bank code", txn.bankTransactionCode),
-      DetailField("Correlation", txn.correlationType),
-  )
+  return descriptionFields +
+      listOf(
+          DetailField("Counterparty", txn.counterpartyName),
+          DetailField("IBAN", txn.counterpartyIban),
+          DetailField("BIC", txn.counterpartyBic),
+          DetailField("Original amount", originalAmount),
+          DetailField("Bank code", txn.bankTransactionCode),
+          DetailField("Correlation", txn.correlationType),
+      )
 }
 
 // -- Root composable --------------------------------------------------------

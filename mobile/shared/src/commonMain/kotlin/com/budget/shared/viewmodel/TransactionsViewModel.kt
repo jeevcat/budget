@@ -48,6 +48,8 @@ interface TransactionsFetcher {
       categoryId: String?,
   ): TransactionPage
 
+  suspend fun fetchTransaction(serverUrl: String, apiKey: String, id: String): Transaction
+
   suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category>
 
   suspend fun categorize(
@@ -75,6 +77,19 @@ class DefaultTransactionsFetcher : TransactionsFetcher {
     val api = BudgetApi(serverUrl, apiKey)
     return try {
       api.getTransactions(limit = limit, offset = offset, categoryId = categoryId)
+    } finally {
+      api.close()
+    }
+  }
+
+  override suspend fun fetchTransaction(
+      serverUrl: String,
+      apiKey: String,
+      id: String,
+  ): Transaction {
+    val api = BudgetApi(serverUrl, apiKey)
+    return try {
+      api.getTransaction(id)
     } finally {
       api.close()
     }
@@ -136,6 +151,19 @@ class TransactionsViewModel(
 
   fun selectTransaction(transaction: Transaction?) {
     _uiState.update { it.copy(selectedTransaction = transaction, categorySearch = "") }
+  }
+
+  /** Fetch a transaction by ID and select it for detail view. */
+  fun selectTransactionById(id: String) {
+    _uiState.update { it.copy(loading = true, error = null) }
+    viewModelScope.launch {
+      try {
+        val txn = fetcher.fetchTransaction(serverUrl, apiKey, id)
+        _uiState.update { it.copy(loading = false, selectedTransaction = txn, categorySearch = "") }
+      } catch (e: Exception) {
+        _uiState.update { it.copy(loading = false, error = e.message ?: "Unknown error") }
+      }
+    }
   }
 
   fun updateCategorySearch(query: String) {
