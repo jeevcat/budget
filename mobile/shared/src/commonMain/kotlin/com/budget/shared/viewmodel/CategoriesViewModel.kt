@@ -98,47 +98,59 @@ class CategoriesViewModel(
   }
 
   companion object {
-    /** Group categories by budget mode with parent/child hierarchy. */
+    /**
+     * Group categories by budget mode with parent/child hierarchy.
+     *
+     * Each category's own [Category.budgetMode] determines its section. Children that have their
+     * own budget_mode appear as top-level entries in that section. Children without a budget_mode
+     * are nested under their parent in whichever section the parent belongs to.
+     */
     fun buildSections(categories: List<Category>): List<CategorySection> {
       val byId = categories.associateBy { it.id }
 
-      // Children inherit budget mode from their parent
-      fun effectiveMode(cat: Category): BudgetMode? =
-          cat.budgetMode ?: cat.parentId?.let { byId[it]?.budgetMode }
-
-      val childrenOf =
+      // Children without their own budget_mode, keyed by parent ID
+      val unbudgetedChildrenOf =
           categories
-              .filter { it.parentId != null }
+              .filter { it.parentId != null && it.budgetMode == null }
               .groupBy { it.parentId }
               .mapValues { (_, v) -> v.sortedBy { it.name.lowercase() } }
 
-      // Group roots by their own mode, children by their parent's mode
-      val grouped = categories.groupBy { effectiveMode(it) }
+      // Every category that has a budget_mode set, grouped by that mode.
+      // Categories without budget_mode and without a parent go into the null group.
+      // Categories without budget_mode that have a parent are handled as nested children.
+      val topLevel =
+          categories.filter { it.budgetMode != null || it.parentId == null }
+
+      val grouped = topLevel.groupBy { it.budgetMode }
 
       val sectionOrder: List<BudgetMode?> =
           listOf(BudgetMode.MONTHLY, BudgetMode.ANNUAL, BudgetMode.PROJECT, null)
 
       return sectionOrder.mapNotNull { mode ->
         val cats = grouped[mode] ?: return@mapNotNull null
-        val roots = cats.filter { it.parentId == null }.sortedBy { it.name.lowercase() }
+        val sorted = cats.sortedBy { it.name.lowercase() }
 
         val items = buildList {
-          for (root in roots) {
+          for (cat in sorted) {
+            val parentName = cat.parentId?.let { byId[it]?.name }
             add(
                 CategoryDisplayItem(
-                    id = root.id,
-                    name = root.name,
-                    budgetMode = root.budgetMode,
-                    budgetAmount = root.budgetAmount,
-                    transactionCount = root.transactionCount,
+                    id = cat.id,
+                    name = cat.name,
+                    parentName = parentName,
+                    budgetMode = cat.budgetMode,
+                    budgetAmount = cat.budgetAmount,
+                    transactionCount = cat.transactionCount,
+                    isChild = cat.parentId != null,
                 ))
-            for (child in childrenOf[root.id].orEmpty()) {
+            // Nest children that don't have their own budget_mode
+            for (child in unbudgetedChildrenOf[cat.id].orEmpty()) {
               add(
                   CategoryDisplayItem(
                       id = child.id,
                       name = child.name,
-                      parentName = root.name,
-                      budgetMode = effectiveMode(child),
+                      parentName = cat.name,
+                      budgetMode = null,
                       budgetAmount = child.budgetAmount,
                       transactionCount = child.transactionCount,
                       isChild = true,

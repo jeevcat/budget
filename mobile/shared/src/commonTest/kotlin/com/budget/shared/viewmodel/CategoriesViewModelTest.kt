@@ -82,11 +82,11 @@ class CategoriesViewModelTest {
   }
 
   @Test
-  fun parentChildOrderingWithinGroups() = runTest {
+  fun parentWithBudgetNestsUnbudgetedChildren() = runTest {
     val sections = CategoriesViewModel.buildSections(sampleCategories())
 
     val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    // "Food" root, then "Dining Out" child, then "Groceries" root
+    // "Food" (monthly), then its unbudgeted child "Dining Out", then "Groceries" (monthly)
     assertEquals(3, monthly.categories.size)
     assertEquals("Food", monthly.categories[0].name)
     assertFalse(monthly.categories[0].isChild)
@@ -98,33 +98,40 @@ class CategoriesViewModelTest {
   }
 
   @Test
-  fun childrenInheritBudgetModeFromParent() = runTest {
+  fun childWithOwnBudgetModeAppearsInItsSection() = runTest {
     val categories =
         listOf(
+            Category(id = "house", name = "House", transactionCount = 0),
             Category(
-                id = "transport",
-                name = "Transport",
-                budgetMode = BudgetMode.ANNUAL,
-                budgetAmount = "2000",
-                transactionCount = 10,
+                id = "mortgage",
+                name = "Mortgage",
+                parentId = "house",
+                budgetMode = BudgetMode.MONTHLY,
+                budgetAmount = "4000",
+                transactionCount = 12,
             ),
             Category(
-                id = "fuel",
-                name = "Fuel",
-                parentId = "transport",
-                // budgetMode is null — inherited from parent
-                budgetAmount = "500",
-                transactionCount = 5,
+                id = "cleaning",
+                name = "Cleaning",
+                parentId = "house",
+                transactionCount = 3,
             ),
         )
     val sections = CategoriesViewModel.buildSections(categories)
 
-    assertEquals(1, sections.size)
-    assertEquals(BudgetMode.ANNUAL, sections[0].mode)
-    assertEquals(2, sections[0].categories.size)
-    assertEquals("Transport", sections[0].categories[0].name)
-    assertEquals("Fuel", sections[0].categories[1].name)
-    assertTrue(sections[0].categories[1].isChild)
+    // Mortgage has its own budget_mode=monthly, so it appears in Monthly
+    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
+    assertEquals(1, monthly.categories.size)
+    assertEquals("Mortgage", monthly.categories[0].name)
+    assertTrue(monthly.categories[0].isChild)
+    assertEquals("House", monthly.categories[0].parentName)
+
+    // House (unbudgeted root) appears in Unbudgeted with Cleaning nested under it
+    val unbudgeted = sections.first { it.mode == null }
+    assertEquals(2, unbudgeted.categories.size)
+    assertEquals("House", unbudgeted.categories[0].name)
+    assertEquals("Cleaning", unbudgeted.categories[1].name)
+    assertTrue(unbudgeted.categories[1].isChild)
   }
 
   @Test
