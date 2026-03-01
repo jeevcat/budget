@@ -155,6 +155,32 @@ pub(crate) struct ApiTransaction {
     pub debtor_agent: Option<AgentIdentification>,
     #[serde(default)]
     pub bank_transaction_code: Option<BankTransactionCode>,
+    /// Account balance after this transaction. API returns `AmountType` (amount + currency).
+    /// Source: Enable Banking `balance_after_transaction`
+    #[serde(default)]
+    pub balance_after_transaction: Option<Amount>,
+    /// Structured payment reference (e.g. "RF07850352502356628678117").
+    /// Source: Enable Banking `reference_number`
+    #[serde(default)]
+    pub reference_number: Option<String>,
+    /// Scheme of the reference number. JSON key is `reference_number_schema` (not "scheme").
+    /// Values: BERF (Belgian), FIRF (Finnish), INTL (ISO 11649/RF), NORF (Norwegian KID),
+    /// SDDM (SEPA DD mandate), SEBG (Swedish Bankgiro OCR).
+    /// Source: Enable Banking `reference_number_schema`
+    #[serde(default)]
+    pub reference_number_schema: Option<String>,
+    /// Internal note made by PSU (Payment Service User), distinct from remittance info.
+    /// Source: Enable Banking `note`
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Non-IBAN debtor account identifications (BBAN, card PAN, proprietary).
+    /// Source: Enable Banking `debtor_account_additional_identification`
+    #[serde(default)]
+    pub debtor_account_additional_identification: Option<Vec<GenericIdentification>>,
+    /// Non-IBAN creditor account identifications (BBAN, card PAN, proprietary).
+    /// Source: Enable Banking `creditor_account_additional_identification`
+    #[serde(default)]
+    pub creditor_account_additional_identification: Option<Vec<GenericIdentification>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,12 +205,51 @@ pub(crate) struct AgentIdentification {
 pub(crate) struct BankTransactionCode {
     #[serde(default)]
     pub description: Option<String>,
+    /// ISO 20022 domain code (e.g. "PMNT" for payments).
+    /// Source: Enable Banking `bank_transaction_code.code`
+    #[serde(default)]
+    pub code: Option<String>,
+    /// ISO 20022 sub-family code (e.g. "ICDT-STDO" for standing order credit transfer).
+    /// Source: Enable Banking `bank_transaction_code.sub_code`
+    #[serde(default)]
+    pub sub_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct ExchangeRate {
     #[serde(default)]
     pub instructed_amount: Option<Amount>,
+    /// ISO 4217 currency code of the currency in which the rate is expressed.
+    /// Source: Enable Banking `exchange_rate.unit_currency`
+    #[serde(default)]
+    pub unit_currency: Option<String>,
+    /// The actual FX rate applied (e.g. "1.0856"). Stored as string to preserve bank precision.
+    /// JSON key is `exchange_rate.exchange_rate` (yes, nested same name as parent).
+    /// Source: Enable Banking `exchange_rate.exchange_rate`
+    #[serde(default)]
+    pub exchange_rate: Option<String>,
+    /// Rate type: AGRD (agreed/contract), SALE, or SPOT.
+    /// Source: Enable Banking `exchange_rate.rate_type`
+    #[serde(default)]
+    pub rate_type: Option<String>,
+    /// FX contract reference when `rate_type` is AGRD.
+    /// Source: Enable Banking `exchange_rate.contract_identification`
+    #[serde(default)]
+    pub contract_identification: Option<String>,
+}
+
+/// Non-IBAN account identification (BBAN, card PAN, proprietary).
+/// Source: Enable Banking `GenericIdentification` in `creditor/debtor_account_additional_identification`
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct GenericIdentification {
+    #[serde(default)]
+    pub identification: Option<String>,
+    /// Scheme: BBAN, CPAN, etc.
+    #[serde(default)]
+    pub scheme_name: Option<String>,
+    #[serde(default)]
+    pub issuer: Option<String>,
 }
 
 // ── Error response ────────────────────────────────────────────────

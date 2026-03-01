@@ -117,16 +117,10 @@ pub async fn handle_categorize_transaction_job(
 
     let existing_categories = db.list_category_names().await?;
 
-    let description = if txn.description.is_empty() {
-        None
-    } else {
-        Some(txn.description.as_str())
-    };
-
     let input = budget_providers::CategorizeInput {
         merchant_name: &txn.merchant_name,
         amount: txn.amount,
-        description,
+        remittance_information: &txn.remittance_information,
         existing_categories: &existing_categories,
         bank_transaction_code: txn.bank_transaction_code.as_deref(),
         counterparty_name: txn.counterparty_name.as_deref(),

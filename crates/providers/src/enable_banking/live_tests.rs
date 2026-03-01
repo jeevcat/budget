@@ -78,7 +78,7 @@ fn home_dir() -> PathBuf {
 }
 
 /// Try to get a sandbox session from env vars.
-/// Returns (session_id, account_uid) if set.
+/// Returns (`session_id`, `account_uid`) if set.
 fn session_from_env() -> Option<(String, String)> {
     let session_id = std::env::var("EB_SESSION_ID").ok()?;
     let account_uid = std::env::var("EB_ACCOUNT_UID").ok()?;
@@ -86,7 +86,7 @@ fn session_from_env() -> Option<(String, String)> {
 }
 
 /// Create a provider from an existing session by fetching account details.
-async fn provider_from_session(session_id: &str) -> EnableBankingProvider {
+fn provider_from_session(session_id: &str) -> EnableBankingProvider {
     let config = require_config();
     let client = Client::new(config);
     let auth = EnableBankingAuth::new(Client::new(require_config()));
@@ -214,19 +214,18 @@ async fn sandbox_start_authorization() {
 #[tokio::test]
 #[ignore = "hits live Enable Banking sandbox API — needs EB_SESSION_ID + EB_ACCOUNT_UID"]
 async fn sandbox_fetch_balances() {
-    let (session_id, account_uid) = match session_from_env() {
-        Some(s) => s,
-        None => {
-            println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
-            return;
-        }
+    let Some((session_id, account_uid)) = session_from_env() else {
+        println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
+        return;
     };
 
     println!("session: {session_id}, account: {account_uid}");
-    let provider = provider_from_session(&session_id).await;
-    let account_id = AccountId(account_uid);
+    let provider = provider_from_session(&session_id);
 
-    let balance = provider.get_balances(&account_id).await.unwrap();
+    let balance = provider
+        .get_balances(&AccountId(account_uid))
+        .await
+        .unwrap();
 
     println!(
         "balance: available={} current={} currency={}",
@@ -238,21 +237,17 @@ async fn sandbox_fetch_balances() {
 #[tokio::test]
 #[ignore = "hits live Enable Banking sandbox API — needs EB_SESSION_ID + EB_ACCOUNT_UID"]
 async fn sandbox_fetch_transactions() {
-    let (session_id, account_uid) = match session_from_env() {
-        Some(s) => s,
-        None => {
-            println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
-            return;
-        }
+    let Some((session_id, account_uid)) = session_from_env() else {
+        println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
+        return;
     };
 
     println!("session: {session_id}, account: {account_uid}");
-    let provider = provider_from_session(&session_id).await;
-    let account_id = AccountId(account_uid);
+    let provider = provider_from_session(&session_id);
     let since = NaiveDate::from_ymd_opt(2020, 1, 1);
 
     let txns = provider
-        .fetch_transactions(&account_id, since)
+        .fetch_transactions(&AccountId(account_uid), since)
         .await
         .unwrap();
 
@@ -265,7 +260,7 @@ async fn sandbox_fetch_transactions() {
             txn.currency,
             txn.merchant_name,
             txn.counterparty_name,
-            txn.description,
+            txn.remittance_information,
         );
     }
 
@@ -293,12 +288,9 @@ async fn sandbox_fetch_transactions() {
 #[tokio::test]
 #[ignore = "hits live Enable Banking sandbox API — needs EB_SESSION_ID + EB_ACCOUNT_UID"]
 async fn sandbox_session_accounts() {
-    let (session_id, _account_uid) = match session_from_env() {
-        Some(s) => s,
-        None => {
-            println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
-            return;
-        }
+    let Some((session_id, _account_uid)) = session_from_env() else {
+        println!("SKIPPED: set EB_SESSION_ID and EB_ACCOUNT_UID to run");
+        return;
     };
 
     // Exchange a fresh session to verify account field parsing.

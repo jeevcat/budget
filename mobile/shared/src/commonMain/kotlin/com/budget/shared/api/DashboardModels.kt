@@ -64,7 +64,7 @@ data class TransactionEntry(
     @SerialName("category_id") val categoryId: String? = null,
     val amount: Double,
     @SerialName("merchant_name") val merchantName: String = "",
-    val description: String = "",
+    @SerialName("remittance_information") val remittanceInformation: List<String> = emptyList(),
     @SerialName("posted_date") val postedDate: String,
 )
 

@@ -297,7 +297,7 @@ async fn generate_rule(
 
     let context = RuleContext {
         merchant_name: txn.merchant_name,
-        description: txn.description,
+        remittance_information: txn.remittance_information,
         amount: txn.amount,
         posted_date: txn.posted_date,
         category_name: category.name.clone(),

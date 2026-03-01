@@ -1,6 +1,6 @@
 //! Integration tests for job handlers.
 //!
-//! Each test gets its own PostgreSQL database (via `sqlx::test`) with all
+//! Each test gets its own `PostgreSQL` database (via `sqlx::test`) with all
 //! migrations applied, seeds the necessary data, and invokes the handler
 //! function directly. Mock providers from `budget_providers` supply
 //! deterministic bank and LLM responses.
@@ -14,7 +14,7 @@ use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, Connection, ConnectionId,
     ConnectionStatus, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
-    Transaction, TransactionId,
+    Transaction,
 };
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
@@ -110,25 +110,12 @@ async fn seed_transaction(
     category_id: Option<CategoryId>,
 ) -> Transaction {
     let txn = Transaction {
-        id: TransactionId::new(),
         account_id,
         category_id,
         amount,
-        original_amount: None,
-        original_currency: None,
         merchant_name: merchant.to_owned(),
-        description: String::new(),
         posted_date,
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-        counterparty_name: None,
-        counterparty_iban: None,
-        counterparty_bic: None,
-        bank_transaction_code: None,
-        llm_justification: None,
-        skip_correlation: false,
+        ..Default::default()
     };
     db.upsert_transaction(&txn, None)
         .await

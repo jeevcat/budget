@@ -662,7 +662,7 @@ private fun TransactionRow(txn: TransactionEntry, onClick: (() -> Unit)? = null)
   ) {
     Column(modifier = Modifier.weight(1f)) {
       Text(
-          text = txn.merchantName.ifEmpty { txn.description },
+          text = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
           style = MaterialTheme.typography.bodyMedium,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,

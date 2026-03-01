@@ -612,7 +612,7 @@ pub fn compute_project_child_breakdowns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AccountId, CategoryId, TransactionId};
+    use crate::models::CategoryId;
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -626,25 +626,12 @@ mod tests {
         posted_date: NaiveDate,
     ) -> Transaction {
         Transaction {
-            id: TransactionId::new(),
-            account_id: AccountId::new(),
             category_id,
             amount,
-            original_amount: None,
-            original_currency: None,
             merchant_name: "Test".to_owned(),
-            description: "Test transaction".to_owned(),
+            remittance_information: vec!["Test transaction".to_owned()],
             posted_date,
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-            counterparty_name: None,
-            counterparty_iban: None,
-            counterparty_bic: None,
-            bank_transaction_code: None,
-            llm_justification: None,
-            skip_correlation: false,
+            ..Default::default()
         }
     }
 
@@ -995,14 +982,14 @@ mod tests {
     #[test]
     fn budget_year_months_caps_at_twelve() {
         // 14 months starting from November (no January anchor found before it)
-        let months: Vec<BudgetMonth> = (0..14)
+        let months: Vec<BudgetMonth> = (0..14_u32)
             .map(|i| {
-                let y = 2024 + (10 + i) / 12;
+                let y = i32::try_from(2024 + (10 + i) / 12).expect("year fits i32");
                 let m = ((10 + i) % 12) + 1;
                 BudgetMonth {
                     id: BudgetMonthId::new(),
-                    start_date: date(y as i32, m, 15),
-                    end_date: Some(date(y as i32, m, 28)),
+                    start_date: date(y, m, 15),
+                    end_date: Some(date(y, m, 28)),
                     salary_transactions_detected: 1,
                 }
             })

@@ -5,9 +5,41 @@ use apalis::prelude::*;
 use uuid::Uuid;
 
 use budget_core::db::Db;
-use budget_core::models::{AccountId, ConnectionStatus, Transaction, TransactionId};
+use budget_core::models::{AccountId, ConnectionStatus, Transaction};
 
 use super::{BankProviderFactory, SyncJob};
+
+/// Map a provider transaction to a domain transaction for a given account.
+fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) -> Transaction {
+    Transaction {
+        account_id,
+        amount: ptxn.amount,
+        original_amount: ptxn.original_amount,
+        original_currency: ptxn.original_currency.clone(),
+        merchant_name: ptxn.merchant_name.clone(),
+        remittance_information: ptxn.remittance_information.clone(),
+        posted_date: ptxn.posted_date,
+        counterparty_name: ptxn.counterparty_name.clone(),
+        counterparty_iban: ptxn.counterparty_iban.clone(),
+        counterparty_bic: ptxn.counterparty_bic.clone(),
+        bank_transaction_code: ptxn.bank_transaction_code.clone(),
+        merchant_category_code: ptxn.merchant_category_code.clone(),
+        bank_transaction_code_code: ptxn.bank_transaction_code_code.clone(),
+        bank_transaction_code_sub_code: ptxn.bank_transaction_code_sub_code.clone(),
+        exchange_rate: ptxn.exchange_rate.clone(),
+        exchange_rate_unit_currency: ptxn.exchange_rate_unit_currency.clone(),
+        exchange_rate_type: ptxn.exchange_rate_type.clone(),
+        exchange_rate_contract_id: ptxn.exchange_rate_contract_id.clone(),
+        reference_number: ptxn.reference_number.clone(),
+        reference_number_schema: ptxn.reference_number_schema.clone(),
+        note: ptxn.note.clone(),
+        balance_after_transaction: ptxn.balance_after_transaction,
+        balance_after_transaction_currency: ptxn.balance_after_transaction_currency.clone(),
+        creditor_account_additional_id: ptxn.creditor_account_additional_id.clone(),
+        debtor_account_additional_id: ptxn.debtor_account_additional_id.clone(),
+        ..Default::default()
+    }
+}
 
 /// Fetch transactions from a bank provider for the given account and upsert
 /// them into the database.
@@ -90,27 +122,7 @@ pub(crate) async fn sync_account(
 
     let mut failed: Vec<String> = Vec::new();
     for ptxn in &provider_txns {
-        let txn = Transaction {
-            id: TransactionId::new(),
-            account_id: account.id,
-            category_id: None,
-            amount: ptxn.amount,
-            original_amount: ptxn.original_amount,
-            original_currency: ptxn.original_currency.clone(),
-            merchant_name: ptxn.merchant_name.clone(),
-            description: ptxn.description.clone().unwrap_or_default(),
-            posted_date: ptxn.posted_date,
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-            counterparty_name: ptxn.counterparty_name.clone(),
-            counterparty_iban: ptxn.counterparty_iban.clone(),
-            counterparty_bic: ptxn.counterparty_bic.clone(),
-            bank_transaction_code: ptxn.bank_transaction_code.clone(),
-            llm_justification: None,
-            skip_correlation: false,
-        };
+        let txn = to_domain(account.id, ptxn);
 
         if let Err(e) = db
             .upsert_transaction(&txn, Some(&ptxn.provider_transaction_id))

@@ -13,7 +13,6 @@ use budget_jobs::{JobStorage, PipelineStorage};
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, Rule, RuleCondition, Transaction,
-    TransactionId,
 };
 
 /// Mirror of the paginated response from `GET /api/transactions`.
@@ -147,25 +146,11 @@ fn post_empty(uri: &str) -> Request<Body> {
 /// Helper: build an uncategorized transaction with the given merchant and account.
 fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
     Transaction {
-        id: TransactionId::new(),
         account_id,
-        category_id: None,
         amount: rust_decimal::Decimal::new(1000, 2),
-        original_amount: None,
-        original_currency: None,
         merchant_name: merchant.to_owned(),
-        description: String::new(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-        counterparty_name: None,
-        counterparty_iban: None,
-        counterparty_bic: None,
-        bank_transaction_code: None,
-        llm_justification: None,
-        skip_correlation: false,
+        ..Default::default()
     }
 }
 
@@ -185,25 +170,11 @@ fn make_category(name: &str) -> Category {
 /// Helper: build a basic transaction.
 fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
     Transaction {
-        id: TransactionId::new(),
         account_id,
-        category_id: None,
         amount: rust_decimal::Decimal::new(1000, 2),
-        original_amount: None,
-        original_currency: None,
         merchant_name: merchant.to_owned(),
-        description: String::new(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
-        correlation_id: None,
-        correlation_type: None,
-        category_method: None,
-        suggested_category: None,
-        counterparty_name: None,
-        counterparty_iban: None,
-        counterparty_bic: None,
-        bank_transaction_code: None,
-        llm_justification: None,
-        skip_correlation: false,
+        ..Default::default()
     }
 }
 
@@ -353,13 +324,13 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
     let mut txn_categorized = make_txn(account.id, "Grocery Store", 15);
     txn_categorized.category_id = Some(category.id);
     txn_categorized.amount = rust_decimal::Decimal::new(2500, 2);
-    txn_categorized.description = "Weekly groceries".to_owned();
+    txn_categorized.remittance_information = vec!["Weekly groceries".to_owned()];
     db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
         .await
         .expect("insert categorized");
 
     let mut txn_uncategorized = make_txn(account.id, "Coffee Shop", 16);
-    txn_uncategorized.description = "Morning coffee".to_owned();
+    txn_uncategorized.remittance_information = vec!["Morning coffee".to_owned()];
     db.upsert_transaction(&txn_uncategorized, Some("txn-uncat-1"))
         .await
         .expect("insert uncategorized");
@@ -403,7 +374,7 @@ async fn transactions_categorize_success(pool: PgPool) {
 
     let mut txn = make_txn(account.id, "Restaurant", 1);
     txn.amount = rust_decimal::Decimal::new(1500, 2);
-    txn.description = "Dinner".to_owned();
+    txn.remittance_information = vec!["Dinner".to_owned()];
     txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date");
     db.upsert_transaction(&txn, Some("txn-to-categorize"))
         .await
@@ -776,7 +747,7 @@ async fn generate_rule_for_categorized_transaction(pool: PgPool) {
     let mut txn = make_txn(account.id, "WHOLE FOODS MARKET", 15);
     txn.category_id = Some(category.id);
     txn.amount = rust_decimal::Decimal::new(7234, 2);
-    txn.description = "Weekly groceries".to_owned();
+    txn.remittance_information = vec!["Weekly groceries".to_owned()];
     db.upsert_transaction(&txn, None).await.expect("insert txn");
     db.update_transaction_category(
         txn.id,
@@ -1021,7 +992,7 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
     let mut txn = make_txn(account.id, "STARBUCKS RESERVE", 1);
     txn.category_id = Some(category_b.id);
     txn.amount = rust_decimal::Decimal::new(550, 2);
-    txn.description = "Coffee".to_owned();
+    txn.remittance_information = vec!["Coffee".to_owned()];
     txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date");
     db.upsert_transaction(&txn, None).await.expect("insert");
 

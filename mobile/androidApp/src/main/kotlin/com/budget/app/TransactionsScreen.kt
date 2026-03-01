@@ -173,7 +173,8 @@ private fun TransactionCard(
     categories: List<DisplayCategory>,
     onClick: () -> Unit,
 ) {
-  val merchant = transaction.merchantName.ifEmpty { transaction.description }
+  val merchant =
+      transaction.merchantName.ifEmpty { transaction.remittanceInformation.firstOrNull() ?: "" }
   val subtitle = buildString {
     append(formatTransactionDate(transaction.postedDate))
     if (transaction.categoryMethod != null) {

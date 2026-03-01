@@ -225,33 +225,62 @@ fn convert_transaction(api: &ApiTransaction) -> Result<Option<Transaction>, Prov
 
     let (merchant_name, counterparty_name) = extract_names(api);
 
-    let description = if api.remittance_information.is_empty() {
-        None
-    } else {
-        Some(api.remittance_information.join(" / "))
-    };
-
-    let (original_amount, original_currency) = extract_fx(api);
+    let fx = extract_fx(api);
     let (counterparty_iban, counterparty_bic) = extract_counterparty_bank(api);
     let bank_transaction_code = api
         .bank_transaction_code
         .as_ref()
         .and_then(|b| b.description.clone());
+    let bank_transaction_code_code = api
+        .bank_transaction_code
+        .as_ref()
+        .and_then(|b| b.code.clone());
+    let bank_transaction_code_sub_code = api
+        .bank_transaction_code
+        .as_ref()
+        .and_then(|b| b.sub_code.clone());
+
+    let (balance_after_transaction, balance_after_transaction_currency) = api
+        .balance_after_transaction
+        .as_ref()
+        .map_or((None, None), |a| (Some(a.amount), Some(a.currency.clone())));
+
+    let creditor_account_additional_id = api
+        .creditor_account_additional_identification
+        .as_ref()
+        .map(|ids| serde_json::to_value(ids).unwrap_or_default());
+    let debtor_account_additional_id = api
+        .debtor_account_additional_identification
+        .as_ref()
+        .map(|ids| serde_json::to_value(ids).unwrap_or_default());
 
     Ok(Some(Transaction {
         provider_transaction_id: id,
         amount,
         currency: api.transaction_amount.currency.clone(),
         merchant_name,
-        description,
+        remittance_information: api.remittance_information.clone(),
         posted_date,
         counterparty_name,
         counterparty_iban,
         counterparty_bic,
         bank_transaction_code,
         merchant_category_code: api.merchant_category_code.clone(),
-        original_amount,
-        original_currency,
+        original_amount: fx.original_amount,
+        original_currency: fx.original_currency,
+        bank_transaction_code_code,
+        bank_transaction_code_sub_code,
+        exchange_rate: fx.exchange_rate,
+        exchange_rate_unit_currency: fx.unit_currency,
+        exchange_rate_type: fx.rate_type,
+        exchange_rate_contract_id: fx.contract_id,
+        reference_number: api.reference_number.clone(),
+        reference_number_schema: api.reference_number_schema.clone(),
+        note: api.note.clone(),
+        balance_after_transaction,
+        balance_after_transaction_currency,
+        creditor_account_additional_id,
+        debtor_account_additional_id,
     }))
 }
 
@@ -298,15 +327,26 @@ fn extract_counterparty_bank(api: &ApiTransaction) -> (Option<String>, Option<St
     (iban, bic)
 }
 
-fn extract_fx(api: &ApiTransaction) -> (Option<Decimal>, Option<String>) {
-    let instructed = api
-        .exchange_rate
-        .as_ref()
-        .and_then(|r| r.instructed_amount.as_ref());
+struct FxFields {
+    original_amount: Option<Decimal>,
+    original_currency: Option<String>,
+    exchange_rate: Option<String>,
+    unit_currency: Option<String>,
+    rate_type: Option<String>,
+    contract_id: Option<String>,
+}
 
-    match instructed {
-        Some(amount) => (Some(amount.amount), Some(amount.currency.clone())),
-        None => (None, None),
+fn extract_fx(api: &ApiTransaction) -> FxFields {
+    let fx = api.exchange_rate.as_ref();
+    let instructed = fx.and_then(|r| r.instructed_amount.as_ref());
+
+    FxFields {
+        original_amount: instructed.map(|a| a.amount),
+        original_currency: instructed.map(|a| a.currency.clone()),
+        exchange_rate: fx.and_then(|r| r.exchange_rate.clone()),
+        unit_currency: fx.and_then(|r| r.unit_currency.clone()),
+        rate_type: fx.and_then(|r| r.rate_type.clone()),
+        contract_id: fx.and_then(|r| r.contract_identification.clone()),
     }
 }
 
@@ -344,6 +384,12 @@ mod tests {
             creditor_agent: None,
             debtor_agent: None,
             bank_transaction_code: None,
+            balance_after_transaction: None,
+            reference_number: None,
+            reference_number_schema: None,
+            note: None,
+            debtor_account_additional_identification: None,
+            creditor_account_additional_identification: None,
         }
     }
 
@@ -443,6 +489,10 @@ mod tests {
                 amount: dec!(50.00),
                 currency: "USD".to_owned(),
             }),
+            unit_currency: None,
+            exchange_rate: None,
+            rate_type: None,
+            contract_identification: None,
         });
 
         let txn = convert_transaction(&api).unwrap().unwrap();
@@ -519,6 +569,8 @@ mod tests {
         let mut api = base_api_txn();
         api.bank_transaction_code = Some(BankTransactionCode {
             description: Some("Gehalt/Rente".to_owned()),
+            code: None,
+            sub_code: None,
         });
 
         let txn = convert_transaction(&api).unwrap().unwrap();

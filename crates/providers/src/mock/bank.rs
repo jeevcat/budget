@@ -101,7 +101,7 @@ fn txn(id: &str, amount: Decimal, merchant: &str, desc: Option<&str>, ago: i64) 
         amount,
         currency: "USD".to_owned(),
         merchant_name: merchant.to_owned(),
-        description: desc.map(ToOwned::to_owned),
+        remittance_information: desc.into_iter().map(ToOwned::to_owned).collect(),
         posted_date: days_ago(ago),
         counterparty_name: None,
         counterparty_iban: None,
@@ -110,6 +110,19 @@ fn txn(id: &str, amount: Decimal, merchant: &str, desc: Option<&str>, ago: i64) 
         merchant_category_code: None,
         original_amount: None,
         original_currency: None,
+        bank_transaction_code_code: None,
+        bank_transaction_code_sub_code: None,
+        exchange_rate: None,
+        exchange_rate_unit_currency: None,
+        exchange_rate_type: None,
+        exchange_rate_contract_id: None,
+        reference_number: None,
+        reference_number_schema: None,
+        note: None,
+        balance_after_transaction: None,
+        balance_after_transaction_currency: None,
+        creditor_account_additional_id: None,
+        debtor_account_additional_id: None,
     }
 }
 

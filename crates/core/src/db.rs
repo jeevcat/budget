@@ -80,6 +80,19 @@ fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
     })
 }
 
+/// Column list shared by all transaction SELECT queries.
+const TXN_COLUMNS: &str = "id, account_id, category_id, amount, original_amount, original_currency,
+                    merchant_name, remittance_information, posted_date,
+                    correlation_id, correlation_type, category_method, suggested_category,
+                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
+                    llm_justification, skip_correlation,
+                    merchant_category_code, bank_transaction_code_code, bank_transaction_code_sub_code,
+                    exchange_rate, exchange_rate_unit_currency, exchange_rate_type,
+                    exchange_rate_contract_id,
+                    reference_number, reference_number_schema, note,
+                    balance_after_transaction, balance_after_transaction_currency,
+                    creditor_account_additional_id, debtor_account_additional_id";
+
 fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
     Ok(Transaction {
         id: row.try_get("id")?,
@@ -89,7 +102,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         original_amount: row.try_get("original_amount")?,
         original_currency: row.try_get("original_currency")?,
         merchant_name: row.try_get("merchant_name")?,
-        description: row.try_get("description")?,
+        remittance_information: row.try_get("remittance_information")?,
         posted_date: row.try_get("posted_date")?,
         correlation_id: row.try_get("correlation_id")?,
         correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
@@ -101,6 +114,20 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         bank_transaction_code: row.try_get("bank_transaction_code")?,
         llm_justification: row.try_get("llm_justification")?,
         skip_correlation: row.try_get("skip_correlation")?,
+        merchant_category_code: row.try_get("merchant_category_code")?,
+        bank_transaction_code_code: row.try_get("bank_transaction_code_code")?,
+        bank_transaction_code_sub_code: row.try_get("bank_transaction_code_sub_code")?,
+        exchange_rate: row.try_get("exchange_rate")?,
+        exchange_rate_unit_currency: row.try_get("exchange_rate_unit_currency")?,
+        exchange_rate_type: row.try_get("exchange_rate_type")?,
+        exchange_rate_contract_id: row.try_get("exchange_rate_contract_id")?,
+        reference_number: row.try_get("reference_number")?,
+        reference_number_schema: row.try_get("reference_number_schema")?,
+        note: row.try_get("note")?,
+        balance_after_transaction: row.try_get("balance_after_transaction")?,
+        balance_after_transaction_currency: row.try_get("balance_after_transaction_currency")?,
+        creditor_account_additional_id: row.try_get("creditor_account_additional_id")?,
+        debtor_account_additional_id: row.try_get("debtor_account_additional_id")?,
     })
 }
 
@@ -300,22 +327,43 @@ impl Db {
         sqlx::query(
             "INSERT INTO transactions
                  (id, account_id, category_id, amount, original_amount, original_currency,
-                  merchant_name, description, posted_date,
+                  merchant_name, remittance_information, posted_date,
                   correlation_id, correlation_type, provider_transaction_id, suggested_category,
                   counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                  skip_correlation)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                  skip_correlation,
+                  merchant_category_code, bank_transaction_code_code, bank_transaction_code_sub_code,
+                  exchange_rate, exchange_rate_unit_currency, exchange_rate_type,
+                  exchange_rate_contract_id,
+                  reference_number, reference_number_schema, note,
+                  balance_after_transaction, balance_after_transaction_currency,
+                  creditor_account_additional_id, debtor_account_additional_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                     $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
              ON CONFLICT(account_id, provider_transaction_id) DO UPDATE SET
                  amount = excluded.amount,
                  original_amount = excluded.original_amount,
                  original_currency = excluded.original_currency,
                  merchant_name = excluded.merchant_name,
-                 description = excluded.description,
+                 remittance_information = excluded.remittance_information,
                  posted_date = excluded.posted_date,
                  counterparty_name = excluded.counterparty_name,
                  counterparty_iban = excluded.counterparty_iban,
                  counterparty_bic = excluded.counterparty_bic,
-                 bank_transaction_code = excluded.bank_transaction_code",
+                 bank_transaction_code = excluded.bank_transaction_code,
+                 merchant_category_code = excluded.merchant_category_code,
+                 bank_transaction_code_code = excluded.bank_transaction_code_code,
+                 bank_transaction_code_sub_code = excluded.bank_transaction_code_sub_code,
+                 exchange_rate = excluded.exchange_rate,
+                 exchange_rate_unit_currency = excluded.exchange_rate_unit_currency,
+                 exchange_rate_type = excluded.exchange_rate_type,
+                 exchange_rate_contract_id = excluded.exchange_rate_contract_id,
+                 reference_number = excluded.reference_number,
+                 reference_number_schema = excluded.reference_number_schema,
+                 note = excluded.note,
+                 balance_after_transaction = excluded.balance_after_transaction,
+                 balance_after_transaction_currency = excluded.balance_after_transaction_currency,
+                 creditor_account_additional_id = excluded.creditor_account_additional_id,
+                 debtor_account_additional_id = excluded.debtor_account_additional_id",
         )
         .bind(txn.id)
         .bind(txn.account_id)
@@ -324,7 +372,7 @@ impl Db {
         .bind(txn.original_amount)
         .bind(txn.original_currency.as_deref())
         .bind(&txn.merchant_name)
-        .bind(&txn.description)
+        .bind(&txn.remittance_information)
         .bind(txn.posted_date)
         .bind(txn.correlation_id)
         .bind(txn.correlation_type.map(|ct| ct.to_string()))
@@ -335,6 +383,20 @@ impl Db {
         .bind(txn.counterparty_bic.as_deref())
         .bind(txn.bank_transaction_code.as_deref())
         .bind(txn.skip_correlation)
+        .bind(txn.merchant_category_code.as_deref())
+        .bind(txn.bank_transaction_code_code.as_deref())
+        .bind(txn.bank_transaction_code_sub_code.as_deref())
+        .bind(txn.exchange_rate.as_deref())
+        .bind(txn.exchange_rate_unit_currency.as_deref())
+        .bind(txn.exchange_rate_type.as_deref())
+        .bind(txn.exchange_rate_contract_id.as_deref())
+        .bind(txn.reference_number.as_deref())
+        .bind(txn.reference_number_schema.as_deref())
+        .bind(txn.note.as_deref())
+        .bind(txn.balance_after_transaction)
+        .bind(txn.balance_after_transaction_currency.as_deref())
+        .bind(&txn.creditor_account_additional_id)
+        .bind(&txn.debtor_account_additional_id)
         .execute(pool)
         .await?;
         Ok(())
@@ -347,15 +409,11 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn list_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
-             ORDER BY posted_date DESC, merchant_name ASC",
-        )
+             ORDER BY posted_date DESC, merchant_name ASC"
+        ))
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -384,7 +442,7 @@ impl Db {
         let pool = &self.0;
 
         let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
-                            OR LOWER(description) LIKE '%' || LOWER($1) || '%')
+                            OR LOWER(array_to_string(remittance_information, ' ')) LIKE '%' || LOWER($1) || '%')
                AND ($2 = '' OR ($2 = '__none' AND category_id IS NULL)
                             OR ($2 != '__none' AND category_id = $2::uuid))
                AND ($3 = '' OR account_id = $3::uuid)
@@ -401,11 +459,7 @@ impl Db {
             .await?;
 
         let data_sql = format!(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+            "SELECT {TXN_COLUMNS}
              FROM transactions
              {where_clause}
              ORDER BY posted_date DESC, merchant_name ASC
@@ -442,16 +496,12 @@ impl Db {
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
         let ids: Vec<CategoryId> = category_ids.to_vec();
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
              WHERE category_id = ANY($1)
-             ORDER BY posted_date DESC, merchant_name ASC",
-        )
+             ORDER BY posted_date DESC, merchant_name ASC"
+        ))
         .bind(&ids)
         .fetch_all(pool)
         .await?;
@@ -471,16 +521,12 @@ impl Db {
         since: NaiveDate,
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
              WHERE posted_date >= $1
-             ORDER BY posted_date DESC, merchant_name ASC",
-        )
+             ORDER BY posted_date DESC, merchant_name ASC"
+        ))
         .bind(since)
         .fetch_all(pool)
         .await?;
@@ -499,15 +545,11 @@ impl Db {
         id: TransactionId,
     ) -> Result<Option<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let row = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let row = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
-             WHERE id = $1",
-        )
+             WHERE id = $1"
+        ))
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -525,15 +567,11 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_rule_eligible_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
-             WHERE category_id IS NULL OR category_method = 'llm'",
-        )
+             WHERE category_id IS NULL OR category_method = 'llm'"
+        ))
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -546,15 +584,11 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_uncategorized_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
-             WHERE category_id IS NULL",
-        )
+             WHERE category_id IS NULL"
+        ))
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -570,16 +604,12 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn get_uncorrelated_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL AND category_id IS NOT NULL
-               AND skip_correlation = FALSE",
-        )
+               AND skip_correlation = FALSE"
+        ))
         .fetch_all(pool)
         .await?;
         rows.iter().map(row_to_transaction).collect()
@@ -601,18 +631,14 @@ impl Db {
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+            &format!("SELECT {TXN_COLUMNS}
              FROM transactions
              WHERE correlation_id IS NULL AND correlation_type IS NULL
                AND category_id IS NOT NULL
                AND skip_correlation = FALSE
                AND amount = $1
                AND id != $2
-               AND posted_date BETWEEN ($3 - INTERVAL '45 days')::date AND ($3 + INTERVAL '45 days')::date",
+               AND posted_date BETWEEN ($3 - INTERVAL '45 days')::date AND ($3 + INTERVAL '45 days')::date"),
         )
         .bind(opposite_amount)
         .bind(exclude_id)
@@ -888,15 +914,11 @@ impl Db {
         account_id: AccountId,
     ) -> Result<Vec<Transaction>, sqlx::Error> {
         let pool = &self.0;
-        let rows = sqlx::query(
-            "SELECT id, account_id, category_id, amount, original_amount, original_currency,
-                    merchant_name, description, posted_date,
-                    correlation_id, correlation_type, category_method, suggested_category,
-                    counterparty_name, counterparty_iban, counterparty_bic, bank_transaction_code,
-                    llm_justification, skip_correlation
+        let rows = sqlx::query(&format!(
+            "SELECT {TXN_COLUMNS}
              FROM transactions
-             WHERE account_id = $1",
-        )
+             WHERE account_id = $1"
+        ))
         .bind(account_id)
         .fetch_all(pool)
         .await?;
@@ -1419,25 +1441,12 @@ mod tests {
 
     fn make_transaction(account_id: AccountId) -> Transaction {
         Transaction {
-            id: TransactionId::new(),
             account_id,
-            category_id: None,
             amount: dec!(-42.50),
-            original_amount: None,
-            original_currency: None,
             merchant_name: "Coffee Shop".into(),
-            description: "Morning coffee".into(),
+            remittance_information: vec!["Morning coffee".into()],
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).unwrap(),
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-            counterparty_name: None,
-            counterparty_iban: None,
-            counterparty_bic: None,
-            bank_transaction_code: None,
-            llm_justification: None,
-            skip_correlation: false,
+            ..Default::default()
         }
     }
 
@@ -1546,7 +1555,7 @@ mod tests {
         assert_eq!(fetched.account_id, txn.account_id);
         assert_eq!(fetched.amount, dec!(-42.50));
         assert_eq!(fetched.merchant_name, "Coffee Shop");
-        assert_eq!(fetched.description, "Morning coffee");
+        assert_eq!(fetched.remittance_information, vec!["Morning coffee"]);
         assert_eq!(
             fetched.posted_date,
             NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()
@@ -2315,7 +2324,7 @@ mod tests {
     #[sqlx::test(migrations = false)]
     async fn test_text_to_uuid_migration_preserves_data(pool: PgPool) {
         // The UUID migration has version 20260227400000.
-        const UUID_MIGRATION_VERSION: i64 = 20260227400000;
+        const UUID_MIGRATION_VERSION: i64 = 20_260_227_400_000;
 
         let all = sqlx::migrate!("../../migrations");
 

@@ -194,7 +194,7 @@ private fun SectionCard(
       // Category items
       if (expanded) {
         for (item in section.categories) {
-          CategoryItem(item = item, sectionMode = section.mode)
+          CategoryItem(item = item)
         }
         Spacer(modifier = Modifier.height(8.dp))
       }
@@ -205,7 +205,7 @@ private fun SectionCard(
 // -- Individual category item ------------------------------------------------
 
 @Composable
-private fun CategoryItem(item: CategoryDisplayItem, sectionMode: BudgetMode?) {
+private fun CategoryItem(item: CategoryDisplayItem) {
   val startPadding = if (item.isChild) 40.dp else 16.dp
 
   Row(

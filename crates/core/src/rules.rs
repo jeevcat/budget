@@ -140,9 +140,10 @@ fn matches_condition(transaction: &Transaction, condition: &CompiledCondition) -
         (CompiledPattern::Regex(regex), MatchField::Merchant) => {
             regex.is_match(&transaction.merchant_name)
         }
-        (CompiledPattern::Regex(regex), MatchField::Description) => {
-            regex.is_match(&transaction.description)
-        }
+        (CompiledPattern::Regex(regex), MatchField::Description) => transaction
+            .remittance_information
+            .iter()
+            .any(|seg| regex.is_match(seg)),
         (CompiledPattern::Regex(regex), MatchField::CounterpartyName) => transaction
             .counterparty_name
             .as_ref()
@@ -318,25 +319,11 @@ mod tests {
 
     fn make_txn(merchant: &str, description: &str, amount: Decimal) -> Transaction {
         Transaction {
-            id: TransactionId::new(),
-            account_id: AccountId::new(),
-            category_id: None,
             amount,
-            original_amount: None,
-            original_currency: None,
             merchant_name: merchant.to_owned(),
-            description: description.to_owned(),
+            remittance_information: vec![description.to_owned()],
             posted_date: date(2025, 6, 15),
-            correlation_id: None,
-            correlation_type: None,
-            category_method: None,
-            suggested_category: None,
-            counterparty_name: None,
-            counterparty_iban: None,
-            counterparty_bic: None,
-            bank_transaction_code: None,
-            llm_justification: None,
-            skip_correlation: false,
+            ..Default::default()
         }
     }
 

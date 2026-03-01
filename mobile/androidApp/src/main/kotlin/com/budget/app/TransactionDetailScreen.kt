@@ -106,39 +106,23 @@ private data class DetailField(
     val value: String?,
 )
 
-/**
- * Parse a bank description into key-value pairs.
- *
- * Bank descriptions are built from remittance_information segments joined by " / ". Each segment
- * may be a "Key: Value" pair. This splits them into individual [DetailField] entries so they render
- * as a table instead of a raw colon-separated string.
- */
-private fun parseDescription(description: String): List<DetailField> {
-  val segments = description.split(" / ").map { it.trim() }.filter { it.isNotEmpty() }
-  if (segments.size <= 1 && !description.contains(": ")) {
-    // Plain text description — show as a single field
-    return listOf(DetailField("Description", description))
-  }
-  return segments.map { segment ->
-    val colonIndex = segment.indexOf(": ")
-    if (colonIndex > 0) {
-      DetailField(segment.substring(0, colonIndex), segment.substring(colonIndex + 2))
-    } else {
-      DetailField("Description", segment)
-    }
-  }
+private const val MAX_KEY_LENGTH = 39
+
+private fun splitRemittanceSegments(segments: List<String>): List<DetailField> {
+  return segments
+      .filter { it.isNotBlank() }
+      .map { segment ->
+        val colonIndex = segment.indexOf(": ")
+        if (colonIndex in 1..MAX_KEY_LENGTH) {
+          DetailField(segment.substring(0, colonIndex), segment.substring(colonIndex + 2))
+        } else {
+          DetailField("Info", segment)
+        }
+      }
 }
 
 private fun buildDetailFields(txn: Transaction): List<DetailField> {
-  val showDescription =
-      when {
-        txn.description.isEmpty() -> false
-        txn.merchantName.isEmpty() -> false // shown as hero title
-        txn.description == txn.merchantName -> false // duplicate
-        else -> true
-      }
-
-  val descriptionFields = if (showDescription) parseDescription(txn.description) else emptyList()
+  val remittanceFields = splitRemittanceSegments(txn.remittanceInformation)
 
   val originalAmount =
       if (txn.originalAmount != null) {
@@ -147,13 +131,37 @@ private fun buildDetailFields(txn: Transaction): List<DetailField> {
         null
       }
 
-  return descriptionFields +
+  val isoCode =
+      txn.bankTransactionCodeCode?.let { code ->
+        txn.bankTransactionCodeSubCode?.let { "$code-$it" } ?: code
+      }
+
+  val balanceAfter =
+      txn.balanceAfterTransaction?.let { amount ->
+        txn.balanceAfterTransactionCurrency?.let { "$amount $it" } ?: amount
+      }
+
+  return remittanceFields +
       listOf(
           DetailField("Counterparty", txn.counterpartyName),
           DetailField("IBAN", txn.counterpartyIban),
           DetailField("BIC", txn.counterpartyBic),
           DetailField("Original amount", originalAmount),
           DetailField("Bank code", txn.bankTransactionCode),
+          DetailField("MCC", txn.merchantCategoryCode),
+          DetailField("ISO 20022", isoCode),
+          DetailField("Reference", txn.referenceNumber),
+          DetailField("Note", txn.note),
+          DetailField(
+              "FX rate",
+              txn.exchangeRate?.let { rate ->
+                val unit = txn.exchangeRateUnitCurrency?.let { " $it" } ?: ""
+                val type = txn.exchangeRateType?.let { " ($it)" } ?: ""
+                "$rate$unit$type"
+              },
+          ),
+          DetailField("FX contract", txn.exchangeRateContractId),
+          DetailField("Balance after", balanceAfter),
           DetailField("Correlation", txn.correlationType),
       )
 }
@@ -263,7 +271,7 @@ fun TransactionDetailScreen(
 private fun AmountHeader(txn: Transaction) {
   val amount = txn.amount.toDoubleOrNull() ?: 0.0
   val amountColor = if (amount < 0) ExpenseColor else IncomeColor
-  val merchant = txn.merchantName.ifEmpty { txn.description }
+  val merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" }
 
   Column(
       modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),

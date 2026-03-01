@@ -434,14 +434,10 @@ function cleanMerchant(name) {
   return s;
 }
 
-function cleanDescription(desc) {
-  if (!desc) return null;
-  const m = desc.match(/remittanceinformation:(.*)/);
-  if (!m) return desc;
-  const info = m[1].trim();
-  if (!info) return null;
-  if (/^NR XXXX \d{4}\s/.test(info)) return null;
-  return info;
+/** Format remittance_information array into displayable segments. */
+function formatRemittanceInfo(segments) {
+  if (!segments || !segments.length) return null;
+  return segments.filter((s) => s?.trim());
 }
 
 function paceBadge(pace) {
@@ -1236,7 +1232,7 @@ function TxnDetail({
       el.showModal();
     }
   };
-  const desc = cleanDescription(txn.description);
+  const remittanceSegments = formatRemittanceInfo(txn.remittance_information);
 
   const canGenerateRule = txn.category_id && txn.category_method !== "rule";
 
@@ -1351,7 +1347,7 @@ function TxnDetail({
     <dialog ref=${ref} closedby="any">
       <form method="dialog">
         <header>
-          <h3>${cleanMerchant(txn.merchant_name || txn.description)}</h3>
+          <h3>${cleanMerchant(txn.merchant_name || txn.remittance_information?.[0] || "")}</h3>
         </header>
         <div>
           <dl class="txn-dl">
@@ -1412,10 +1408,14 @@ function TxnDetail({
                 : null
             }
             ${
-              desc
-                ? html`
-              <dt>Description</dt><dd>${desc}</dd>
-            `
+              remittanceSegments?.length
+                ? remittanceSegments.map((seg) => {
+                    const colon = seg.indexOf(": ");
+                    if (colon > 0 && colon < 40) {
+                      return html`<dt>${seg.slice(0, colon)}</dt><dd>${seg.slice(colon + 2)}</dd>`;
+                    }
+                    return html`<dt>Info</dt><dd>${seg}</dd>`;
+                  })
                 : null
             }
             ${
@@ -1443,6 +1443,55 @@ function TxnDetail({
               txn.bank_transaction_code
                 ? html`
               <dt>Bank code</dt><dd>${txn.bank_transaction_code}</dd>
+            `
+                : null
+            }
+            ${
+              txn.merchant_category_code
+                ? html`
+              <dt>MCC</dt><dd><code>${txn.merchant_category_code}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.bank_transaction_code_code
+                ? html`
+              <dt>ISO 20022</dt><dd><code>${txn.bank_transaction_code_code}${txn.bank_transaction_code_sub_code ? `-${txn.bank_transaction_code_sub_code}` : ""}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.reference_number
+                ? html`
+              <dt>Reference</dt><dd><code>${txn.reference_number}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.note
+                ? html`
+              <dt>Note</dt><dd>${txn.note}</dd>
+            `
+                : null
+            }
+            ${
+              txn.exchange_rate
+                ? html`
+              <dt>FX rate</dt><dd>${txn.exchange_rate}${txn.exchange_rate_unit_currency ? ` ${txn.exchange_rate_unit_currency}` : ""}${txn.exchange_rate_type ? ` (${txn.exchange_rate_type})` : ""}</dd>
+            `
+                : null
+            }
+            ${
+              txn.exchange_rate_contract_id
+                ? html`
+              <dt>FX contract</dt><dd><code>${txn.exchange_rate_contract_id}</code></dd>
+            `
+                : null
+            }
+            ${
+              txn.balance_after_transaction != null
+                ? html`
+              <dt>Balance after</dt><dd>${formatAmount(txn.balance_after_transaction)}${txn.balance_after_transaction_currency ? ` ${txn.balance_after_transaction_currency}` : ""}</dd>
             `
                 : null
             }
@@ -1641,7 +1690,7 @@ function TransactionTable({
                 onClick=${() => setSelected(t)}
               >
                 <td class="mono${compact ? " text-light" : ""}" style="${compact ? "width:7rem" : ""}">${formatDate(t.posted_date)}</td>
-                <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.description)}</td>
+                <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.remittance_information?.[0] || "")}</td>
                 <td class="${amountClass(t.amount)}" style="${compact ? "text-align:right" : ""}">${formatAmount(t.amount, compact ? { decimals: 0, sign: true } : { sign: true })}</td>
                 <td>
                   ${!compact && html`<${MethodDot} method=${t.category_method} />`}

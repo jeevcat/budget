@@ -18,7 +18,8 @@ pub struct CategorizeResult {
 pub struct TransactionSummary {
     pub merchant_name: String,
     pub amount: Decimal,
-    pub description: Option<String>,
+    /// Array of free-text payment detail lines from the bank.
+    pub remittance_information: Vec<String>,
     pub posted_date: NaiveDate,
     pub category: Option<String>,
 }
@@ -62,7 +63,8 @@ pub struct ProposedRule {
 pub struct CategorizeInput<'a> {
     pub merchant_name: &'a str,
     pub amount: Decimal,
-    pub description: Option<&'a str>,
+    /// Remittance information segments from the bank transaction.
+    pub remittance_information: &'a [String],
     pub existing_categories: &'a [String],
     pub bank_transaction_code: Option<&'a str>,
     pub counterparty_name: Option<&'a str>,
@@ -73,7 +75,8 @@ pub struct CategorizeInput<'a> {
 /// Full transaction context for per-transaction rule generation.
 pub struct RuleContext {
     pub merchant_name: String,
-    pub description: String,
+    /// Remittance information segments, joined for prompt display.
+    pub remittance_information: Vec<String>,
     pub amount: Decimal,
     pub posted_date: NaiveDate,
     pub category_name: String,

@@ -37,11 +37,7 @@ fn to_summary(
     TransactionSummary {
         merchant_name: txn.merchant_name.clone(),
         amount: txn.amount,
-        description: if txn.description.is_empty() {
-            None
-        } else {
-            Some(txn.description.clone())
-        },
+        remittance_information: txn.remittance_information.clone(),
         posted_date: txn.posted_date,
         category: txn
             .category_id

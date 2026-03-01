@@ -112,10 +112,12 @@ impl LlmProvider for GeminiProvider {
         let merchant_name = input.merchant_name;
         let amount = input.amount;
 
-        let desc_line = input
-            .description
-            .map(|d| format!("Description: {d}\n"))
-            .unwrap_or_default();
+        let desc_line = if input.remittance_information.is_empty() {
+            String::new()
+        } else {
+            let joined = input.remittance_information.join(" / ");
+            format!("Description: {joined}\n")
+        };
 
         let btc_line = input
             .bank_transaction_code
@@ -196,8 +198,16 @@ JSON response:"#
         txn_a: &TransactionSummary,
         txn_b: &TransactionSummary,
     ) -> Result<CorrelationResult, ProviderError> {
-        let desc_a = txn_a.description.as_deref().unwrap_or("(none)");
-        let desc_b = txn_b.description.as_deref().unwrap_or("(none)");
+        let desc_a = if txn_a.remittance_information.is_empty() {
+            "(none)".to_owned()
+        } else {
+            txn_a.remittance_information.join(" / ")
+        };
+        let desc_b = if txn_b.remittance_information.is_empty() {
+            "(none)".to_owned()
+        } else {
+            txn_b.remittance_information.join(" / ")
+        };
         let cat_a = txn_a.category.as_deref().unwrap_or("(none)");
         let cat_b = txn_b.category.as_deref().unwrap_or("(none)");
 
@@ -368,7 +378,7 @@ Respond with a JSON array of objects, each containing:
 
 Transaction:
 Merchant: {merchant}
-Description: {description}
+Description: {remittance_info}
 Amount: {amount}
 Date: {date}
 {cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}Category: {category}
@@ -381,7 +391,11 @@ Existing rules for this category (avoid duplicating these):
 
 JSON response:"#,
         merchant = context.merchant_name,
-        description = context.description,
+        remittance_info = if context.remittance_information.is_empty() {
+            "(none)".to_owned()
+        } else {
+            context.remittance_information.join(" / ")
+        },
         amount = context.amount,
         date = context.posted_date,
         category = context.category_name,
@@ -499,7 +513,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "WHOLE FOODS MARKET",
                 amount: dec!(72.34),
-                description: Some("Weekly groceries"),
+                remittance_information: &["Weekly groceries".to_owned()],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -530,7 +544,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "AMAZON",
                 amount: dec!(25.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -559,14 +573,14 @@ mod tests {
         let txn_a = TransactionSummary {
             merchant_name: "CHASE CREDIT CRD AUTOPAY".to_owned(),
             amount: dec!(-1500.00),
-            description: Some("Credit card payment".to_owned()),
+            remittance_information: vec!["Credit card payment".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).expect("valid date"),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT RECEIVED".to_owned(),
             amount: dec!(1500.00),
-            description: Some("Thank you".to_owned()),
+            remittance_information: vec!["Thank you".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).expect("valid date"),
             category: None,
         };
@@ -593,14 +607,14 @@ mod tests {
         let txn_a = TransactionSummary {
             merchant_name: "AMAZON".to_owned(),
             amount: dec!(-45.99),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 22).expect("valid date"),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "TARGET".to_owned(),
             amount: dec!(-65.00),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 21).expect("valid date"),
             category: None,
         };
@@ -623,7 +637,7 @@ mod tests {
 
         let context = RuleContext {
             merchant_name: "WHOLE FOODS MARKET".to_owned(),
-            description: "Groceries".to_owned(),
+            remittance_information: vec!["Groceries".to_owned()],
             amount: dec!(72.34),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).expect("valid date"),
             category_name: "Food:Groceries".to_owned(),
@@ -656,7 +670,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "TEST",
                 amount: dec!(10.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -684,7 +698,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "TEST",
                 amount: dec!(10.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -709,7 +723,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "TEST",
                 amount: dec!(10.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -736,7 +750,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "TEST",
                 amount: dec!(10.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -764,7 +778,7 @@ mod tests {
             .categorize(&CategorizeInput {
                 merchant_name: "TEST",
                 amount: dec!(10.00),
-                description: None,
+                remittance_information: &[],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -804,7 +818,7 @@ mod live_tests {
             .categorize(&CategorizeInput {
                 merchant_name: "WHOLE FOODS MARKET #10234",
                 amount: dec!(87.43),
-                description: Some("Groceries"),
+                remittance_information: &["Groceries".to_owned()],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -835,7 +849,7 @@ mod live_tests {
             .categorize(&CategorizeInput {
                 merchant_name: "NETFLIX.COM",
                 amount: dec!(15.99),
-                description: Some("Monthly subscription"),
+                remittance_information: &["Monthly subscription".to_owned()],
                 existing_categories: &[],
                 bank_transaction_code: None,
                 counterparty_name: None,
@@ -859,14 +873,14 @@ mod live_tests {
         let txn_a = TransactionSummary {
             merchant_name: "CHASE CREDIT CRD AUTOPAY".to_owned(),
             amount: dec!(-1500.00),
-            description: Some("Automatic payment to credit card".to_owned()),
+            remittance_information: vec!["Automatic payment to credit card".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT THANK YOU".to_owned(),
             amount: dec!(1500.00),
-            description: Some("Payment received".to_owned()),
+            remittance_information: vec!["Payment received".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
             category: None,
         };
@@ -887,7 +901,7 @@ mod live_tests {
         let provider = require_provider();
         let context = RuleContext {
             merchant_name: "TRADER JOE'S #123".to_owned(),
-            description: "Grocery purchase".to_owned(),
+            remittance_information: vec!["Grocery purchase".to_owned()],
             amount: dec!(58.12),
             posted_date: NaiveDate::from_ymd_opt(2025, 3, 15).expect("valid date"),
             category_name: "Food:Groceries".to_owned(),

@@ -210,7 +210,7 @@ mod tests {
         CategorizeInput {
             merchant_name,
             amount: dec!(0),
-            description: None,
+            remittance_information: &[],
             existing_categories: &[],
             bank_transaction_code: None,
             counterparty_name: None,
@@ -279,14 +279,14 @@ mod tests {
         let txn_a = TransactionSummary {
             merchant_name: "CHASE CREDIT CRD AUTOPAY".to_owned(),
             amount: dec!(-1500.00),
-            description: Some("Credit card payment".to_owned()),
+            remittance_information: vec!["Credit card payment".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).unwrap(),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "PAYMENT RECEIVED".to_owned(),
             amount: dec!(1500.00),
-            description: Some("Thank you for your payment".to_owned()),
+            remittance_information: vec!["Thank you for your payment".to_owned()],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 20).unwrap(),
             category: None,
         };
@@ -302,14 +302,14 @@ mod tests {
         let txn_a = TransactionSummary {
             merchant_name: "AMAZON.COM".to_owned(),
             amount: dec!(-45.99),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 22).unwrap(),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "TARGET".to_owned(),
             amount: dec!(-65.00),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 21).unwrap(),
             category: None,
         };
@@ -324,14 +324,14 @@ mod tests {
         let txn_a = TransactionSummary {
             merchant_name: "TRANSFER".to_owned(),
             amount: dec!(-500.00),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
             category: None,
         };
         let txn_b = TransactionSummary {
             merchant_name: "DEPOSIT".to_owned(),
             amount: dec!(500.00),
-            description: None,
+            remittance_information: vec![],
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
             category: None,
         };
@@ -347,7 +347,7 @@ mod tests {
         let provider = MockLlmProvider::new();
         let context = RuleContext {
             merchant_name: "WHOLE FOODS MARKET".to_owned(),
-            description: "Groceries".to_owned(),
+            remittance_information: vec!["Groceries".to_owned()],
             amount: dec!(72.34),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
             category_name: "Food:Groceries".to_owned(),

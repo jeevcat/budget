@@ -118,8 +118,7 @@ class CategoriesViewModel(
       // Every category that has a budget_mode set, grouped by that mode.
       // Categories without budget_mode and without a parent go into the null group.
       // Categories without budget_mode that have a parent are handled as nested children.
-      val topLevel =
-          categories.filter { it.budgetMode != null || it.parentId == null }
+      val topLevel = categories.filter { it.budgetMode != null || it.parentId == null }
 
       val grouped = topLevel.groupBy { it.budgetMode }
 
@@ -142,7 +141,8 @@ class CategoriesViewModel(
                     budgetAmount = cat.budgetAmount,
                     transactionCount = cat.transactionCount,
                     isChild = cat.parentId != null,
-                ))
+                )
+            )
             // Nest children that don't have their own budget_mode
             for (child in unbudgetedChildrenOf[cat.id].orEmpty()) {
               add(
@@ -154,7 +154,8 @@ class CategoriesViewModel(
                       budgetAmount = child.budgetAmount,
                       transactionCount = child.transactionCount,
                       isChild = true,
-                  ))
+                  )
+              )
             }
           }
         }
