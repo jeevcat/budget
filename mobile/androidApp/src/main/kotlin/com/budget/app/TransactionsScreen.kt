@@ -1,5 +1,6 @@
 package com.budget.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,22 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -79,10 +70,20 @@ private fun formatTransactionDate(dateStr: String): String =
 
 // -- Root screen -----------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsScreen(viewModel: TransactionsViewModel) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+  // Show detail screen when a transaction is selected
+  if (state.selectedTransaction != null) {
+    BackHandler { viewModel.selectTransaction(null) }
+    TransactionDetailScreen(
+        state = state,
+        viewModel = viewModel,
+        onBack = { viewModel.selectTransaction(null) },
+    )
+    return
+  }
 
   Box(modifier = Modifier.fillMaxSize()) {
     when {
@@ -125,17 +126,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel) {
             onSelect = viewModel::selectTransaction,
         )
       }
-    }
-
-    // Category picker bottom sheet
-    if (state.selectedTransaction != null) {
-      CategoryPickerSheet(
-          state = state,
-          filteredCategories = viewModel.filteredCategories(),
-          onSearchChange = viewModel::updateCategorySearch,
-          onCategorySelected = viewModel::categorize,
-          onDismiss = { viewModel.selectTransaction(null) },
-      )
     }
   }
 }
@@ -225,160 +215,15 @@ private fun TransactionCard(
           fontWeight = FontWeight.Medium,
       )
     }
-  }
 
-  // Show LLM suggestion if available
-  if (transaction.suggestedCategory != null) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    // Show LLM suggestion inside the card
+    if (transaction.suggestedCategory != null) {
       Text(
           text = "Suggestion: ${transaction.suggestedCategory}",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.primary,
+          modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
       )
-    }
-  }
-}
-
-// -- Category picker bottom sheet ------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CategoryPickerSheet(
-    state: TransactionsUiState,
-    filteredCategories: List<DisplayCategory>,
-    onSearchChange: (String) -> Unit,
-    onCategorySelected: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-  val txn = state.selectedTransaction ?: return
-
-  ModalBottomSheet(
-      onDismissRequest = onDismiss,
-      sheetState = sheetState,
-  ) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-    ) {
-      // Transaction summary
-      Text(
-          text = txn.merchantName.ifEmpty { txn.description },
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.Bold,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-      )
-      Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Text(
-            text = formatTransactionDate(txn.postedDate),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = formatTransactionAmount(txn.amount),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-      }
-
-      // Extra details
-      val counterpartyName = txn.counterpartyName
-      if (counterpartyName != null) {
-        Text(
-            text = counterpartyName,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-      if (txn.description.isNotEmpty() && txn.merchantName.isNotEmpty()) {
-        Text(
-            text = txn.description,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-      }
-
-      // LLM suggestion
-      if (txn.suggestedCategory != null) {
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "AI suggestion: ${txn.suggestedCategory}",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        val llmJustification = txn.llmJustification
-        if (llmJustification != null) {
-          Text(
-              text = llmJustification,
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              maxLines = 2,
-              overflow = TextOverflow.Ellipsis,
-          )
-        }
-      }
-
-      Spacer(modifier = Modifier.height(12.dp))
-      HorizontalDivider()
-      Spacer(modifier = Modifier.height(8.dp))
-
-      // Search field
-      OutlinedTextField(
-          value = state.categorySearch,
-          onValueChange = onSearchChange,
-          modifier = Modifier.fillMaxWidth(),
-          placeholder = { Text("Search categories") },
-          leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-          singleLine = true,
-      )
-
-      Spacer(modifier = Modifier.height(8.dp))
-
-      // Category list
-      if (state.categorizing) {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Spacer(modifier = Modifier.height(8.dp))
-      }
-
-      LazyColumn(
-          modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-      ) {
-        items(filteredCategories, key = { it.id }) { category ->
-          val isCurrentCategory = txn.categoryId == category.id
-          ListItem(
-              headlineContent = {
-                Text(
-                    text = category.name,
-                    fontWeight = if (category.depth == 0) FontWeight.Medium else FontWeight.Normal,
-                )
-              },
-              supportingContent = category.parentName?.let { name -> { Text(name) } },
-              leadingContent =
-                  if (category.depth > 0) {
-                    { Spacer(modifier = Modifier.width(24.dp)) }
-                  } else null,
-              trailingContent =
-                  if (isCurrentCategory) {
-                    { Icon(Icons.Default.Check, contentDescription = "Current") }
-                  } else null,
-              modifier =
-                  Modifier.clickable(enabled = !state.categorizing) {
-                    onCategorySelected(category.id)
-                  },
-          )
-        }
-      }
-
-      // Bottom padding for nav bar
-      Spacer(modifier = Modifier.height(16.dp))
     }
   }
 }
