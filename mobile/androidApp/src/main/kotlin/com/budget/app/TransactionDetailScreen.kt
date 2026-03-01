@@ -116,7 +116,7 @@ private fun splitRemittanceSegments(segments: List<String>): List<DetailField> {
         if (colonIndex in 1..MAX_KEY_LENGTH) {
           DetailField(segment.substring(0, colonIndex), segment.substring(colonIndex + 2))
         } else {
-          DetailField("Info", segment)
+          DetailField("Remittance", segment)
         }
       }
 }

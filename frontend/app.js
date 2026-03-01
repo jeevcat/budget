@@ -1414,7 +1414,7 @@ function TxnDetail({
                     if (colon > 0 && colon < 40) {
                       return html`<dt>${seg.slice(0, colon)}</dt><dd>${seg.slice(colon + 2)}</dd>`;
                     }
-                    return html`<dt>Info</dt><dd>${seg}</dd>`;
+                    return html`<dt>Remittance</dt><dd>${seg}</dd>`;
                   })
                 : null
             }
