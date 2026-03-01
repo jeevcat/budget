@@ -240,6 +240,18 @@ class TransactionsViewModel(
     }
   }
 
+  /** Accept the AI-suggested category for the currently selected transaction. */
+  fun acceptSuggestion() {
+    val txn = _uiState.value.selectedTransaction ?: return
+    val suggestion = txn.suggestedCategory ?: return
+    val categories = _uiState.value.categories
+    val match =
+        categories.find { it.displayName.equals(suggestion, ignoreCase = true) }
+            ?: categories.find { it.name.equals(suggestion, ignoreCase = true) }
+            ?: return
+    categorize(match.id)
+  }
+
   fun clearError() {
     _uiState.update { it.copy(error = null) }
   }
