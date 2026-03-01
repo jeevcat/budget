@@ -404,10 +404,7 @@ private fun CategorySection(
 ) {
   val categoryName = txn.categoryId?.let { id -> categories.find { it.id == id }?.displayName }
 
-  val methodText =
-      txn.categoryMethod?.let {
-        formatCategoryMethod(it)
-      }
+  val methodText = txn.categoryMethod?.let { formatCategoryMethod(it) }
 
   ElevatedCard(modifier = Modifier.fillMaxWidth()) {
     ListItem(
@@ -429,9 +426,7 @@ private fun CategorySection(
             }
           }
         },
-        trailingContent = {
-          Icon(Icons.Default.Edit, contentDescription = "Change category")
-        },
+        trailingContent = { Icon(Icons.Default.Edit, contentDescription = "Change category") },
         modifier = Modifier.clickable(onClick = onOpenPicker),
     )
   }
@@ -493,8 +488,7 @@ private fun DetailCategoryPickerSheet(
               headlineContent = {
                 Text(
                     text = category.name,
-                    fontWeight =
-                        if (category.depth == 0) FontWeight.Medium else FontWeight.Normal,
+                    fontWeight = if (category.depth == 0) FontWeight.Medium else FontWeight.Normal,
                 )
               },
               supportingContent = category.parentName?.let { name -> { Text(name) } },

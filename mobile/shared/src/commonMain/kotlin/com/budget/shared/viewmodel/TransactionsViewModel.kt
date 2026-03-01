@@ -305,8 +305,7 @@ class TransactionsViewModel(
                     name = child.name,
                     parentName = root.name,
                     depth = 1,
-                )
-            )
+                ))
           }
         }
       }
