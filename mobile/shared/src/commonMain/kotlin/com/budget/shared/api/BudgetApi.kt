@@ -110,6 +110,13 @@ class BudgetApi(private val baseUrl: String, private val apiKey: String) {
     return response.body()
   }
 
+  /** Fetch a single transaction by ID. */
+  suspend fun getTransaction(id: String): Transaction {
+    val response =
+        client.get(url("/api/transactions/$id")) { header("Authorization", "Bearer $apiKey") }
+    return response.body()
+  }
+
   /** Fetch all categories. */
   suspend fun getCategories(): List<Category> {
     val response = client.get(url("/api/categories")) { header("Authorization", "Bearer $apiKey") }

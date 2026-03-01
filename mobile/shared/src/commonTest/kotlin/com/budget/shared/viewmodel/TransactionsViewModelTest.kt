@@ -244,6 +244,15 @@ private class FakeTransactionsFetcher(
     return transactions
   }
 
+  override suspend fun fetchTransaction(
+      serverUrl: String,
+      apiKey: String,
+      id: String,
+  ): Transaction {
+    if (shouldThrow) throw RuntimeException("Test error")
+    return transactions.items.first { it.id == id }
+  }
+
   override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
     if (shouldThrow) throw RuntimeException("Test error")
     return categories

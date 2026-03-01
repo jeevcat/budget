@@ -199,7 +199,19 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
         startDestination = BudgetRoute,
         modifier = Modifier.padding(innerPadding),
     ) {
-      composable<BudgetRoute> { DashboardContent(viewModel = dashboardVm) }
+      composable<BudgetRoute> {
+        DashboardContent(
+            viewModel = dashboardVm,
+            onTransactionClick = { id ->
+              transactionsVm.selectTransactionById(id)
+              navController.navigate(TransactionsRoute) {
+                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = false
+              }
+            },
+        )
+      }
       composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
     }
   }
