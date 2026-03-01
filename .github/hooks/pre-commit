@@ -70,11 +70,54 @@ if git diff --cached --name-only | grep -q '^mobile/'; then
         fi
     }
 
+    # Standalone ktfmt fallback when Gradle is unavailable
+    KTFMT_VERSION="0.54"
+    KTFMT_JAR="${HOME}/.cache/ktfmt/ktfmt-${KTFMT_VERSION}.jar"
+    KTFMT_URL="https://repo1.maven.org/maven2/com/facebook/ktfmt/${KTFMT_VERSION}/ktfmt-${KTFMT_VERSION}-jar-with-dependencies.jar"
+
+    ktfmt_fallback() {
+        local reason="$1"
+        if ! command -v java &> /dev/null; then
+            echo -e "${RED}SKIPPED${NC} ($reason; no java for ktfmt fallback)"
+            return 0
+        fi
+        if [ ! -f "$KTFMT_JAR" ]; then
+            echo -ne "(downloading ktfmt ${KTFMT_VERSION}...) "
+            mkdir -p "$(dirname "$KTFMT_JAR")"
+            if ! curl -sfL -o "$KTFMT_JAR" "$KTFMT_URL"; then
+                rm -f "$KTFMT_JAR"
+                echo -e "${RED}SKIPPED${NC} ($reason; ktfmt download failed)"
+                return 0
+            fi
+        fi
+        local kt_files
+        kt_files=$(git diff --cached --name-only -- 'mobile/**/*.kt' | grep -v '/build/')
+        if [ -z "$kt_files" ]; then
+            echo -e "${GREEN}OK${NC} (ktfmt, no files)"
+            return 0
+        fi
+        # shellcheck disable=SC2086
+        local unformatted
+        unformatted=$(java -jar "$KTFMT_JAR" --dry-run $kt_files 2>/dev/null) || true
+        if [ -n "$unformatted" ]; then
+            echo -e "${RED}FAILED${NC} (ktfmt)"
+            echo "Files need formatting:"
+            echo "$unformatted"
+            echo ""
+            echo "To fix, run:"
+            # shellcheck disable=SC2086
+            echo "  java -jar $KTFMT_JAR $unformatted"
+            return 1
+        fi
+        echo -e "${GREEN}OK${NC} (ktfmt fallback)"
+        return 0
+    }
+
     echo -n "Checking Kotlin formatting (mobile)... "
     if output=$(cd mobile && ./gradlew spotlessCheck --console=plain --no-problems-report --no-daemon 2>&1); then
         echo -e "${GREEN}OK${NC}"
     elif reason=$(gradle_skip_reason "$output"); then
-        echo -e "${RED}SKIPPED${NC} ($reason)"
+        ktfmt_fallback "$reason" || exit 1
     else
         echo -e "${RED}FAILED${NC}"
         echo "$output"
