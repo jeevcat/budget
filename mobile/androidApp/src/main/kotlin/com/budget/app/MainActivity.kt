@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -48,13 +49,15 @@ import com.budget.shared.config.AndroidConfigStore
 import com.budget.shared.config.ServerConfig
 import com.budget.shared.viewmodel.DashboardViewModel
 import com.budget.shared.viewmodel.TransactionsViewModel
+import kotlinx.serialization.Serializable
 
-private const val BUDGET_ROUTE = "budget"
-private const val TRANSACTIONS_ROUTE = "transactions"
+@Serializable data object BudgetRoute
+
+@Serializable data object TransactionsRoute
 
 internal data class TopLevelRoute(
     val label: String,
-    val route: String,
+    val route: Any,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 )
@@ -125,10 +128,10 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
 
   val topLevelRoutes =
       listOf(
-          TopLevelRoute("Budget", BUDGET_ROUTE, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
+          TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
           TopLevelRoute(
               "Transactions",
-              TRANSACTIONS_ROUTE,
+              TransactionsRoute,
               Icons.Filled.Receipt,
               Icons.Outlined.Receipt,
           ),
@@ -142,8 +145,8 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
         TopAppBar(
             title = {
               val title =
-                  when (currentDestination?.route) {
-                    TRANSACTIONS_ROUTE -> "Transactions"
+                  when {
+                    currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
                     else -> "Budget"
                   }
               Text(title)
@@ -165,7 +168,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
       bottomBar = {
         NavigationBar {
           topLevelRoutes.forEach { route ->
-            val selected = currentDestination?.route == route.route
+            val selected = currentDestination?.hasRoute(route.route::class) == true
             NavigationBarItem(
                 selected = selected,
                 onClick = {
@@ -177,7 +180,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
                 },
                 icon = {
                   val icon = if (selected) route.selectedIcon else route.unselectedIcon
-                  if (route.route == TRANSACTIONS_ROUTE && transactionsState.total > 0) {
+                  if (route.route is TransactionsRoute && transactionsState.total > 0) {
                     BadgedBox(badge = { Badge { Text("${transactionsState.total}") } }) {
                       Icon(icon, contentDescription = route.label)
                     }
@@ -193,11 +196,11 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   ) { innerPadding ->
     NavHost(
         navController = navController,
-        startDestination = BUDGET_ROUTE,
+        startDestination = BudgetRoute,
         modifier = Modifier.padding(innerPadding),
     ) {
-      composable(BUDGET_ROUTE) { DashboardContent(viewModel = dashboardVm) }
-      composable(TRANSACTIONS_ROUTE) { TransactionsScreen(viewModel = transactionsVm) }
+      composable<BudgetRoute> { DashboardContent(viewModel = dashboardVm) }
+      composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
     }
   }
 }
