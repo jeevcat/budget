@@ -101,6 +101,23 @@ class CategoriesViewModel(
 
   companion object {
     /**
+     * Extract the leaf (display) name from a category name, stripping the parent prefix if present.
+     *
+     * Handles both naming conventions:
+     * - `"Groceries"` under parent `"Food"` → `"Groceries"`
+     * - `"Food:Groceries"` under parent `"Food"` → `"Groceries"`
+     */
+    fun leafName(name: String, parentName: String?): String {
+      if (parentName != null) {
+        val prefix = "$parentName:"
+        if (name.startsWith(prefix)) {
+          return name.removePrefix(prefix)
+        }
+      }
+      return name
+    }
+
+    /**
      * Group categories by budget mode with parent/child hierarchy.
      *
      * Each category's own [Category.budgetMode] determines its section. Children that have their
@@ -134,10 +151,11 @@ class CategoriesViewModel(
         val items = buildList {
           for (cat in sorted) {
             val parentName = cat.parentId?.let { byId[it]?.name }
+            val displayName = leafName(cat.name, parentName)
             add(
                 CategoryDisplayItem(
                     id = cat.id,
-                    name = cat.name,
+                    name = displayName,
                     parentName = parentName,
                     budgetMode = cat.budgetMode,
                     budgetAmount = cat.budgetAmount,
@@ -147,10 +165,11 @@ class CategoriesViewModel(
             )
             // Nest children that don't have their own budget_mode
             for (child in unbudgetedChildrenOf[cat.id].orEmpty()) {
+              val childDisplayName = leafName(child.name, cat.name)
               add(
                   CategoryDisplayItem(
                       id = child.id,
-                      name = child.name,
+                      name = childDisplayName,
                       parentName = cat.name,
                       budgetMode = null,
                       budgetAmount = child.budgetAmount,

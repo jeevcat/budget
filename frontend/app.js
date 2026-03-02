@@ -153,6 +153,11 @@ function categoryLabel(catMap, id) {
       : cat.name;
     return { parent, short };
   }
+  // Orphan child: parent_id set but parent not in map — still strip colon prefix
+  if (cat.name.includes(":")) {
+    const idx = cat.name.indexOf(":");
+    return { parent: cat.name.slice(0, idx), short: cat.name.slice(idx + 1) };
+  }
   return { parent: null, short: cat.name };
 }
 
@@ -160,6 +165,13 @@ function categoryName(catMap, id) {
   const label = categoryLabel(catMap, id);
   if (!label) return null;
   return label.parent ? `${label.parent} > ${label.short}` : label.short;
+}
+
+/** Build the colon-qualified name for a category (e.g. "Food:Groceries"). */
+function categoryQualifiedName(catMap, id) {
+  const label = categoryLabel(catMap, id);
+  if (!label) return null;
+  return label.parent ? `${label.parent}:${label.short}` : label.short;
 }
 
 function categoryBudgetMode(catMap, id) {
@@ -2010,12 +2022,14 @@ function Categories() {
     try {
       const createdParents = {};
       for (const catName of selectedSuggestions) {
-        const parts = catName.split(":");
+        const colonIdx = catName.indexOf(":");
         let parentIdForNew;
-        if (parts.length > 1) {
-          const parentName = parts.slice(0, -1).join(":");
+        let leafName = catName;
+        if (colonIdx !== -1) {
+          const parentName = catName.slice(0, colonIdx);
+          leafName = catName.slice(colonIdx + 1);
           const existingParent = (categories ?? []).find(
-            (c) => c.name === parentName,
+            (c) => c.name === parentName && !c.parent_id,
           );
           if (existingParent) {
             parentIdForNew = existingParent.id;
@@ -2028,7 +2042,7 @@ function Categories() {
           }
         }
         await api.post("/categories", {
-          name: catName,
+          name: leafName,
           parent_id: parentIdForNew,
         });
       }
@@ -2098,7 +2112,14 @@ function Categories() {
   if (!categories) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const existingNames = new Set(categories.map((c) => c.name));
+  // Build a set of all known names: both raw stored names and qualified "Parent:Child" forms.
+  // This ensures LLM suggestions that already exist (under either naming convention) are filtered out.
+  const existingNames = new Set(categories.flatMap((c) => {
+    const names = [c.name];
+    const q = categoryQualifiedName(catMap, c.id);
+    if (q && q !== c.name) names.push(q);
+    return names;
+  }));
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
 
   function withDepth(cats) {

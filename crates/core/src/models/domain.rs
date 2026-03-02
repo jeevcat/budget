@@ -176,6 +176,79 @@ pub struct BudgetMonth {
     pub salary_transactions_detected: i32,
 }
 
+impl Category {
+    /// Build the fully-qualified display name for this category using the
+    /// `"Parent:Child"` convention. If this category has a parent, the result
+    /// is `"ParentName:ChildName"` (using the child's stored `name` — stripping
+    /// any redundant parent prefix if the stored name already contains one).
+    /// Root categories return their `name` as-is.
+    ///
+    /// `parent_name` should be the `name` field of the parent [`Category`] when
+    /// `self.parent_id` is `Some`. Pass `None` for root categories.
+    #[must_use]
+    pub fn qualified_name(&self, parent_name: Option<&str>) -> String {
+        match parent_name {
+            Some(p) => {
+                let leaf = self.leaf_name(Some(p));
+                format!("{p}:{leaf}")
+            }
+            None => self.name.clone(),
+        }
+    }
+
+    /// Extract just the leaf (child) portion of this category's name.
+    ///
+    /// If the stored name already contains the parent prefix (e.g.
+    /// `"Food:Groceries"` with parent `"Food"`), the prefix is stripped.
+    /// Otherwise the name is returned as-is.
+    #[must_use]
+    pub fn leaf_name(&self, parent_name: Option<&str>) -> String {
+        if let Some(p) = parent_name {
+            let prefix = format!("{p}:");
+            if self.name.starts_with(&prefix) {
+                return self.name[prefix.len()..].to_owned();
+            }
+        }
+        self.name.clone()
+    }
+}
+
+/// Build a lookup from category ID to qualified name for a set of categories.
+///
+/// This handles both naming conventions: categories whose `name` already
+/// contains the parent prefix (`"Food:Groceries"`) and those that store only
+/// the leaf name (`"Groceries"` with `parent_id` pointing to `"Food"`).
+#[must_use]
+pub fn build_qualified_name_map(
+    categories: &[Category],
+) -> std::collections::HashMap<CategoryId, String> {
+    let by_id: std::collections::HashMap<CategoryId, &Category> =
+        categories.iter().map(|c| (c.id, c)).collect();
+    categories
+        .iter()
+        .map(|c| {
+            let parent_name = c
+                .parent_id
+                .and_then(|pid| by_id.get(&pid))
+                .map(|p| p.name.as_str());
+            (c.id, c.qualified_name(parent_name))
+        })
+        .collect()
+}
+
+/// Parse a colon-separated qualified category name into (parent, child) parts.
+///
+/// Returns `Some((parent, child))` if the name contains at least one colon
+/// (e.g. `"Food:Groceries"` → `Some(("Food", "Groceries"))`).
+/// Returns `None` for root-level names without a colon.
+///
+/// Multi-level names split at the *first* colon only:
+/// `"A:B:C"` → `Some(("A", "B:C"))`.
+#[must_use]
+pub fn parse_qualified_name(name: &str) -> Option<(&str, &str)> {
+    name.split_once(':')
+}
+
 /// Spending breakdown for a direct child of a project category.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectChildSpending {
@@ -199,4 +272,213 @@ pub struct BudgetStatus {
     /// Positive = over pace, negative = under pace.
     pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cat(id: u128, name: &str, parent_id: Option<u128>) -> Category {
+        Category {
+            id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
+            name: name.to_owned(),
+            parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
+            budget_mode: None,
+            budget_type: None,
+            budget_amount: None,
+            project_start_date: None,
+            project_end_date: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_qualified_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_qualified_name_with_colon() {
+        assert_eq!(
+            parse_qualified_name("Food:Groceries"),
+            Some(("Food", "Groceries"))
+        );
+    }
+
+    #[test]
+    fn parse_qualified_name_without_colon() {
+        assert_eq!(parse_qualified_name("Cash"), None);
+    }
+
+    #[test]
+    fn parse_qualified_name_empty_string() {
+        assert_eq!(parse_qualified_name(""), None);
+    }
+
+    #[test]
+    fn parse_qualified_name_multi_colon_splits_at_first() {
+        assert_eq!(parse_qualified_name("A:B:C"), Some(("A", "B:C")));
+    }
+
+    #[test]
+    fn parse_qualified_name_colon_at_start() {
+        assert_eq!(parse_qualified_name(":Child"), Some(("", "Child")));
+    }
+
+    #[test]
+    fn parse_qualified_name_colon_at_end() {
+        assert_eq!(parse_qualified_name("Parent:"), Some(("Parent", "")));
+    }
+
+    // -----------------------------------------------------------------------
+    // Category::leaf_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn leaf_name_strips_parent_prefix() {
+        let c = cat(1, "Food:Groceries", Some(2));
+        assert_eq!(c.leaf_name(Some("Food")), "Groceries");
+    }
+
+    #[test]
+    fn leaf_name_returns_raw_when_no_prefix() {
+        let c = cat(1, "Groceries", Some(2));
+        assert_eq!(c.leaf_name(Some("Food")), "Groceries");
+    }
+
+    #[test]
+    fn leaf_name_with_no_parent() {
+        let c = cat(1, "Cash", None);
+        assert_eq!(c.leaf_name(None), "Cash");
+    }
+
+    #[test]
+    fn leaf_name_parent_prefix_is_case_sensitive() {
+        let c = cat(1, "food:Groceries", Some(2));
+        // "Food" prefix doesn't match "food:..." → returns raw name
+        assert_eq!(c.leaf_name(Some("Food")), "food:Groceries");
+    }
+
+    // -----------------------------------------------------------------------
+    // Category::qualified_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn qualified_name_root_category() {
+        let c = cat(1, "Cash", None);
+        assert_eq!(c.qualified_name(None), "Cash");
+    }
+
+    #[test]
+    fn qualified_name_child_with_leaf_name() {
+        // Child stored as just "Groceries" under parent "Food"
+        let c = cat(1, "Groceries", Some(2));
+        assert_eq!(c.qualified_name(Some("Food")), "Food:Groceries");
+    }
+
+    #[test]
+    fn qualified_name_child_already_has_prefix() {
+        // Child stored as "Food:Groceries" under parent "Food"
+        let c = cat(1, "Food:Groceries", Some(2));
+        // Should still produce "Food:Groceries", not "Food:Food:Groceries"
+        assert_eq!(c.qualified_name(Some("Food")), "Food:Groceries");
+    }
+
+    // -----------------------------------------------------------------------
+    // build_qualified_name_map
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn qualified_map_root_only() {
+        let categories = vec![cat(1, "Cash", None), cat(2, "Income", None)];
+        let map = build_qualified_name_map(&categories);
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(1))],
+            "Cash"
+        );
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Income"
+        );
+    }
+
+    #[test]
+    fn qualified_map_parent_child_leaf_name() {
+        // Child stored as simple "Groceries"
+        let categories = vec![cat(1, "Food", None), cat(2, "Groceries", Some(1))];
+        let map = build_qualified_name_map(&categories);
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(1))],
+            "Food"
+        );
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Food:Groceries"
+        );
+    }
+
+    #[test]
+    fn qualified_map_parent_child_colon_name() {
+        // Child stored as "Food:Groceries" (legacy colon convention)
+        let categories = vec![cat(1, "Food", None), cat(2, "Food:Groceries", Some(1))];
+        let map = build_qualified_name_map(&categories);
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Food:Groceries"
+        );
+    }
+
+    #[test]
+    fn qualified_map_orphan_child_keeps_raw_name() {
+        // Child has parent_id but parent not in the list (e.g. deleted)
+        let categories = vec![cat(2, "Groceries", Some(99))];
+        let map = build_qualified_name_map(&categories);
+        // No parent found → falls back to raw name
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Groceries"
+        );
+    }
+
+    #[test]
+    fn qualified_map_multiple_children() {
+        let categories = vec![
+            cat(1, "Food", None),
+            cat(2, "Groceries", Some(1)),
+            cat(3, "Restaurants", Some(1)),
+            cat(4, "Cash", None),
+        ];
+        let map = build_qualified_name_map(&categories);
+        assert_eq!(map.len(), 4);
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Food:Groceries"
+        );
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(3))],
+            "Food:Restaurants"
+        );
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(4))],
+            "Cash"
+        );
+    }
+
+    #[test]
+    fn qualified_map_mixed_naming_conventions() {
+        // Mix of old (colon-stored) and new (leaf-stored) conventions
+        let categories = vec![
+            cat(1, "Food", None),
+            cat(2, "Food:Groceries", Some(1)), // old convention
+            cat(3, "Restaurants", Some(1)),    // new convention
+        ];
+        let map = build_qualified_name_map(&categories);
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(2))],
+            "Food:Groceries"
+        );
+        assert_eq!(
+            map[&CategoryId::from_uuid(uuid::Uuid::from_u128(3))],
+            "Food:Restaurants"
+        );
+    }
 }
