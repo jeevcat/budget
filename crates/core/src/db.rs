@@ -1440,8 +1440,9 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use crate::models::{
-        Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CorrelationType,
-        MatchField, Rule, RuleCondition, RuleId, RuleType, Transaction, TransactionId,
+        Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CategoryName,
+        CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType, Transaction,
+        TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1468,7 +1469,7 @@ mod tests {
     fn make_category(name: &str) -> Category {
         Category {
             id: CategoryId::new(),
-            name: name.into(),
+            name: CategoryName::new(name).expect("valid test category name"),
             parent_id: None,
             budget_mode: None,
             budget_type: None,
@@ -1912,7 +1913,7 @@ mod tests {
         let all = db.list_categories().await.unwrap();
         assert_eq!(all.len(), 2);
 
-        let names: Vec<_> = all.iter().map(|c| c.name.as_str()).collect();
+        let names: Vec<_> = all.iter().map(|c| c.name.as_ref()).collect();
         assert!(names.contains(&"Groceries"));
         assert!(names.contains(&"Transport"));
     }
@@ -2471,7 +2472,10 @@ mod tests {
 
         let cats = db.list_categories().await.unwrap();
         assert_eq!(cats.len(), 2);
-        let child = cats.iter().find(|c| c.name == "Restaurants").unwrap();
+        let child = cats
+            .iter()
+            .find(|c| c.name.as_ref() == "Restaurants")
+            .unwrap();
         assert_eq!(child.parent_id.unwrap().to_string(), cat_id);
 
         let (txns, total) = db

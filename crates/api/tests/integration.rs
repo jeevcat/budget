@@ -12,7 +12,8 @@ use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, Category, CategoryId, Rule, RuleCondition, Transaction,
+    Account, AccountId, AccountType, Category, CategoryId, CategoryName, Rule, RuleCondition,
+    Transaction,
 };
 
 /// Mirror of the paginated response from `GET /api/transactions`.
@@ -158,7 +159,7 @@ fn make_uncategorized_txn(account_id: AccountId, merchant: &str, day: u32) -> Tr
 fn make_category(name: &str) -> Category {
     Category {
         id: CategoryId::new(),
-        name: name.to_owned(),
+        name: CategoryName::new(name).expect("valid test category name"),
         parent_id: None,
         budget_mode: None,
         budget_type: None,

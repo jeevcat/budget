@@ -12,7 +12,7 @@ use sqlx::PgPool;
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, Category, CategoryId, Connection, ConnectionId,
+    Account, AccountId, AccountType, Category, CategoryId, CategoryName, Connection, ConnectionId,
     ConnectionStatus, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
     Transaction,
 };
@@ -89,7 +89,7 @@ async fn seed_credit_card_account(db: &Db) -> Account {
 async fn seed_category(db: &Db, name: &str) -> Category {
     let cat = Category {
         id: CategoryId::new(),
-        name: name.to_owned(),
+        name: CategoryName::new(name).expect("valid test category name"),
         parent_id: None,
         budget_mode: None,
         budget_type: None,
@@ -98,6 +98,22 @@ async fn seed_category(db: &Db, name: &str) -> Category {
         project_end_date: None,
     };
     db.insert_category(&cat).await.expect("seed category");
+    cat
+}
+
+/// Insert a child category under a parent and return the child.
+async fn seed_child_category(db: &Db, name: &str, parent: &Category) -> Category {
+    let cat = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new(name).expect("valid test category name"),
+        parent_id: Some(parent.id),
+        budget_mode: None,
+        budget_type: None,
+        budget_amount: None,
+        project_start_date: None,
+        project_end_date: None,
+    };
+    db.insert_category(&cat).await.expect("seed child category");
     cat
 }
 
@@ -434,7 +450,7 @@ async fn categorize_rule_based_assignment(pool: PgPool) {
     let (db, pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
 
-    let groceries_cat = seed_category(&db, "Food:Groceries").await;
+    let groceries_cat = seed_category(&db, "Groceries").await;
 
     // Insert a categorization rule that matches "WHOLE FOODS"
     let rule = Rule {
@@ -488,10 +504,12 @@ async fn categorize_llm_high_confidence_assigns_category(pool: PgPool) {
     let account = seed_checking_account(&db).await;
     let llm = make_llm_client();
 
-    // Create the category that the MockLlmProvider will propose
+    // Create the category hierarchy that the MockLlmProvider will propose.
     // MockLlmProvider returns "Food:Groceries" at 0.92 confidence for
-    // "WHOLE FOODS" -- above the 0.80 threshold.
-    let groceries_cat = seed_category(&db, "Food:Groceries").await;
+    // "WHOLE FOODS" — get_category_by_name resolves "Food:Groceries" by
+    // finding child "Groceries" under parent "Food".
+    let food_cat = seed_category(&db, "Food").await;
+    let groceries_cat = seed_child_category(&db, "Groceries", &food_cat).await;
 
     // No rules in the DB, so the per-txn handler calls LLM directly
     let txn = seed_transaction(
@@ -563,7 +581,7 @@ async fn categorize_no_uncategorized_transactions_is_noop(pool: PgPool) {
     let (db, pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
 
-    let cat = seed_category(&db, "Food:Groceries").await;
+    let cat = seed_category(&db, "Groceries").await;
 
     // Seed an already-categorized transaction
     seed_transaction(

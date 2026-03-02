@@ -2114,12 +2114,14 @@ function Categories() {
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
   // Build a set of all known names: both raw stored names and qualified "Parent:Child" forms.
   // This ensures LLM suggestions that already exist (under either naming convention) are filtered out.
-  const existingNames = new Set(categories.flatMap((c) => {
-    const names = [c.name];
-    const q = categoryQualifiedName(catMap, c.id);
-    if (q && q !== c.name) names.push(q);
-    return names;
-  }));
+  const existingNames = new Set(
+    categories.flatMap((c) => {
+      const names = [c.name];
+      const q = categoryQualifiedName(catMap, c.id);
+      if (q && q !== c.name) names.push(q);
+      return names;
+    }),
+  );
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
 
   function withDepth(cats) {

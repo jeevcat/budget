@@ -300,7 +300,7 @@ async fn generate_rule(
         remittance_information: txn.remittance_information,
         amount: txn.amount,
         posted_date: txn.posted_date,
-        category_name: category.name.clone(),
+        category_name: category.name.to_string(),
         sibling_merchants,
         existing_rule_patterns,
         counterparty_name: txn.counterparty_name,
@@ -319,7 +319,7 @@ async fn generate_rule(
 
     Ok(Json(GenerateRuleResponse {
         target_category_id: category_id.to_string(),
-        category_name: category.name,
+        category_name: category.name.to_string(),
         proposals,
     }))
 }
