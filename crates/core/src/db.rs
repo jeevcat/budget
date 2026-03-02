@@ -890,19 +890,22 @@ impl Db {
             .collect()
     }
 
-    /// List all distinct category names currently in the categories table.
+    /// List all category names in fully-qualified `"Parent:Child"` format.
     ///
     /// Used to pass existing categories to the LLM so it maps to known names.
+    /// Handles both naming conventions: categories whose `name` already
+    /// contains the parent prefix and those that store only the leaf name
+    /// with a `parent_id` reference.
     ///
     /// # Errors
     ///
     /// Returns `sqlx::Error` if the query fails.
     pub async fn list_category_names(&self) -> Result<Vec<String>, sqlx::Error> {
-        let pool = &self.0;
-        let rows = sqlx::query("SELECT name FROM categories ORDER BY name")
-            .fetch_all(pool)
-            .await?;
-        rows.iter().map(|row| row.try_get("name")).collect()
+        let categories = self.list_categories().await?;
+        let qualified = crate::models::build_qualified_name_map(&categories);
+        let mut names: Vec<String> = qualified.into_values().collect();
+        names.sort();
+        Ok(names)
     }
 
     /// List all transactions belonging to a specific account.
@@ -1059,15 +1062,24 @@ impl Db {
         row.as_ref().map(row_to_category).transpose()
     }
 
-    /// Find a category by its exact name.
+    /// Find a category by name, supporting both storage conventions.
     ///
-    /// Returns `None` if no category with the given name exists.
+    /// Resolution order:
+    /// 1. Exact match on `name` (handles categories stored as `"Food:Groceries"`).
+    /// 2. If `name` contains a colon (e.g. `"Food:Groceries"`), look for a child
+    ///    named `"Groceries"` whose parent is named `"Food"`.
+    /// 3. If `name` contains a colon, also try matching the qualified name built
+    ///    from `parent.name:child.name` for categories stored with a `parent_id`.
+    ///
+    /// Returns `None` if no match is found.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `sqlx::Error` if a database query fails.
     pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
+
+        // 1. Exact match on stored name
         let row = sqlx::query(
             "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date
              FROM categories WHERE name = $1",
@@ -1075,7 +1087,30 @@ impl Db {
         .bind(name)
         .fetch_optional(pool)
         .await?;
-        row.as_ref().map(row_to_category).transpose()
+
+        if let Some(r) = row.as_ref() {
+            return row_to_category(r).map(Some);
+        }
+
+        // 2. Colon-qualified lookup: "Parent:Child" → find child under parent
+        if let Some((parent_name, child_name)) = crate::models::parse_qualified_name(name) {
+            let row = sqlx::query(
+                "SELECT c.id, c.name, c.parent_id, c.budget_mode, c.budget_type, c.budget_amount, c.project_start_date, c.project_end_date
+                 FROM categories c
+                 JOIN categories p ON c.parent_id = p.id
+                 WHERE p.name = $1 AND c.name = $2",
+            )
+            .bind(parent_name)
+            .bind(child_name)
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(r) = row.as_ref() {
+                return row_to_category(r).map(Some);
+            }
+        }
+
+        Ok(None)
     }
 
     /// Delete a category by its ID, clearing all foreign-key references first.

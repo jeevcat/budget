@@ -183,6 +183,114 @@ class CategoriesViewModelTest {
     assertEquals(BudgetMode.PROJECT, sections[2].mode)
     assertNull(sections[3].mode)
   }
+  // -----------------------------------------------------------------------
+  // Category name parsing / display tests
+  // -----------------------------------------------------------------------
+
+  @Test
+  fun childWithLeafNameShowsParentName() = runTest {
+    // Child stored as "Groceries" under parent "Food" (new convention)
+    val categories =
+        listOf(
+            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
+            Category(id = "groc", name = "Groceries", parentId = "food", transactionCount = 5),
+        )
+    val sections = CategoriesViewModel.buildSections(categories)
+    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
+    val grocItem = monthly.categories.find { it.id == "groc" }!!
+    assertEquals("Food", grocItem.parentName)
+    assertEquals("Groceries", grocItem.name)
+    assertTrue(grocItem.isChild)
+  }
+
+  @Test
+  fun childWithColonNameStripsParentPrefix() = runTest {
+    // Child stored as "Food:Groceries" under parent "Food" (legacy convention)
+    val categories =
+        listOf(
+            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
+            Category(id = "groc", name = "Food:Groceries", parentId = "food", transactionCount = 5),
+        )
+    val sections = CategoriesViewModel.buildSections(categories)
+    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
+    val grocItem = monthly.categories.find { it.id == "groc" }!!
+    assertEquals("Food", grocItem.parentName)
+    // The parent prefix should be stripped so display shows "Food > Groceries" not "Food > Food:Groceries"
+    assertEquals("Groceries", grocItem.name)
+    assertTrue(grocItem.isChild)
+  }
+
+  @Test
+  fun mixedNamingConventionsInSameParent() = runTest {
+    // One child uses leaf name, another uses colon prefix — both under same parent
+    val categories =
+        listOf(
+            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
+            Category(id = "groc", name = "Groceries", parentId = "food", transactionCount = 5),
+            Category(id = "rest", name = "Food:Restaurants", parentId = "food", transactionCount = 3),
+        )
+    val sections = CategoriesViewModel.buildSections(categories)
+    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
+    // Both children should be nested under Food with consistent display names
+    val groc = monthly.categories.find { it.id == "groc" }!!
+    val rest = monthly.categories.find { it.id == "rest" }!!
+    assertEquals("Food", groc.parentName)
+    assertEquals("Food", rest.parentName)
+    assertEquals("Groceries", groc.name)
+    assertEquals("Restaurants", rest.name) // "Food:" prefix stripped
+    assertTrue(groc.isChild)
+    assertTrue(rest.isChild)
+  }
+
+  @Test
+  fun rootCategoryWithColonInNameHasNoParent() = runTest {
+    // A root category whose name happens to contain a colon (no parent_id set)
+    val categories =
+        listOf(
+            Category(id = "misc", name = "Misc:Other", transactionCount = 2),
+        )
+    val sections = CategoriesViewModel.buildSections(categories)
+    val unbudgeted = sections.first { it.mode == null }
+    val item = unbudgeted.categories.first()
+    assertNull(item.parentName)
+    assertFalse(item.isChild)
+    assertEquals("Misc:Other", item.name)
+  }
+
+  // -----------------------------------------------------------------------
+  // leafName helper tests
+  // -----------------------------------------------------------------------
+
+  @Test
+  fun leafNameStripsParentPrefix() {
+    assertEquals("Groceries", CategoriesViewModel.leafName("Food:Groceries", "Food"))
+  }
+
+  @Test
+  fun leafNameReturnsRawWhenNoPrefix() {
+    assertEquals("Groceries", CategoriesViewModel.leafName("Groceries", "Food"))
+  }
+
+  @Test
+  fun leafNameReturnsRawWhenNoParent() {
+    assertEquals("Cash", CategoriesViewModel.leafName("Cash", null))
+  }
+
+  @Test
+  fun leafNameIsCaseSensitive() {
+    // "food:" prefix doesn't match parent "Food"
+    assertEquals("food:Groceries", CategoriesViewModel.leafName("food:Groceries", "Food"))
+  }
+
+  @Test
+  fun leafNameHandlesMultipleColons() {
+    assertEquals("Sub:Detail", CategoriesViewModel.leafName("Parent:Sub:Detail", "Parent"))
+  }
+
+  @Test
+  fun leafNameEmptyParent() {
+    assertEquals("Child", CategoriesViewModel.leafName(":Child", ""))
+  }
 }
 
 // -- Test doubles -----------------------------------------------------------
