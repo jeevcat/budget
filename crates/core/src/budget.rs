@@ -354,7 +354,7 @@ fn compute_monthly_status(
 
     BudgetStatus {
         category_id: category.id,
-        category_name: category.name.clone(),
+        category_name: category.name.to_string(),
         budget_amount,
         spent,
         remaining,
@@ -401,7 +401,7 @@ fn compute_annual_status(
 
     BudgetStatus {
         category_id: category.id,
-        category_name: category.name.clone(),
+        category_name: category.name.to_string(),
         budget_amount,
         spent,
         remaining,
@@ -494,7 +494,7 @@ fn compute_project_status(
 
     BudgetStatus {
         category_id: category.id,
-        category_name: category.name.clone(),
+        category_name: category.name.to_string(),
         budget_amount,
         spent,
         remaining,
@@ -610,7 +610,7 @@ pub fn compute_project_child_breakdowns(
                 let subtree = collect_category_subtree(c.id, categories)
                     .into_iter()
                     .collect();
-                (c.id, c.name.as_str(), subtree)
+                (c.id, c.name.as_ref(), subtree)
             })
             .collect();
 
@@ -667,7 +667,7 @@ pub fn compute_project_child_breakdowns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::CategoryId;
+    use crate::models::{CategoryId, CategoryName};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -693,7 +693,7 @@ mod tests {
     fn make_category(id: u128, name: &str, parent_id: Option<u128>) -> Category {
         Category {
             id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
-            name: name.to_owned(),
+            name: CategoryName::new(name).expect("valid test category name"),
             parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
             budget_mode: None,
             budget_type: None,

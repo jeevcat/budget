@@ -165,8 +165,10 @@ pub async fn handle_correlate_transaction_job(
 
     // Build category lookup for LLM summaries
     let all_categories = db.list_categories().await?;
-    let category_map: HashMap<CategoryId, String> =
-        all_categories.into_iter().map(|c| (c.id, c.name)).collect();
+    let category_map: HashMap<CategoryId, String> = all_categories
+        .into_iter()
+        .map(|c| (c.id, c.name.to_string()))
+        .collect();
 
     // Find candidates: uncorrelated transactions with opposite amount within date window
     let candidates = db

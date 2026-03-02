@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::models::{BudgetMode, BudgetType, Category, CategoryId};
+use budget_core::models::{BudgetMode, BudgetType, Category, CategoryId, CategoryName};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -190,6 +190,11 @@ async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateCategory>,
 ) -> Result<(StatusCode, Json<Category>), AppError> {
+    let budget = parse_budget_fields(&body)?;
+
+    let name = CategoryName::new(body.name)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+
     let parent_id = body
         .parent_id
         .as_deref()
@@ -200,11 +205,9 @@ async fn create(
         })
         .transpose()?;
 
-    let budget = parse_budget_fields(&body)?;
-
     let category = Category {
         id: CategoryId::new(),
-        name: body.name,
+        name,
         parent_id,
         budget_mode: budget.mode,
         budget_type: budget.budget_type,
@@ -231,6 +234,11 @@ async fn update(
     let uuid =
         Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
+    let budget = parse_budget_fields(&body)?;
+
+    let name = CategoryName::new(body.name)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+
     let parent_id = body
         .parent_id
         .as_deref()
@@ -241,11 +249,9 @@ async fn update(
         })
         .transpose()?;
 
-    let budget = parse_budget_fields(&body)?;
-
     let category = Category {
         id: CategoryId::from_uuid(uuid),
-        name: body.name,
+        name,
         parent_id,
         budget_mode: budget.mode,
         budget_type: budget.budget_type,

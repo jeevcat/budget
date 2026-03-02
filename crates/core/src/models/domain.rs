@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -7,6 +9,131 @@ use super::enums::{
     MatchField, PaceIndicator, RuleType,
 };
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
+use crate::error::Error;
+
+/// Maximum length for a category name (UTF-8 bytes).
+const MAX_CATEGORY_NAME_LEN: usize = 100;
+
+/// A validated category name.
+///
+/// Invariants enforced at construction:
+/// - Non-empty after trimming
+/// - No leading or trailing whitespace (callers must trim first, or the
+///   constructor rejects it so the error is visible rather than silently lost)
+/// - No colons — hierarchy is expressed via `parent_id`, not embedded in names
+/// - At most [`MAX_CATEGORY_NAME_LEN`] UTF-8 bytes
+/// - No control characters (U+0000–U+001F, U+007F–U+009F)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct CategoryName(String);
+
+impl CategoryName {
+    /// Create a new `CategoryName`, validating all invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCategoryName`] if the name is empty, has
+    /// leading/trailing whitespace, contains colons or control characters,
+    /// or exceeds [`MAX_CATEGORY_NAME_LEN`] bytes.
+    pub fn new(name: impl Into<String>) -> Result<Self, Error> {
+        let name = name.into();
+
+        if name.is_empty() {
+            return Err(Error::InvalidCategoryName("name is empty".into()));
+        }
+
+        if name != name.trim() {
+            return Err(Error::InvalidCategoryName(
+                "name has leading or trailing whitespace".into(),
+            ));
+        }
+
+        if name.contains(':') {
+            return Err(Error::InvalidCategoryName(
+                "name contains a colon — use parent_id for hierarchy".into(),
+            ));
+        }
+
+        if name.len() > MAX_CATEGORY_NAME_LEN {
+            return Err(Error::InvalidCategoryName(format!(
+                "name exceeds {MAX_CATEGORY_NAME_LEN} bytes"
+            )));
+        }
+
+        if name.chars().any(char::is_control) {
+            return Err(Error::InvalidCategoryName(
+                "name contains control characters".into(),
+            ));
+        }
+
+        Ok(Self(name))
+    }
+}
+
+impl fmt::Display for CategoryName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl PartialEq<&str> for CategoryName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl AsRef<str> for CategoryName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CategoryName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        CategoryName::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for CategoryName {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CategoryName::new(s)
+    }
+}
+
+// sqlx support — delegates to the inner String (TEXT column)
+
+impl sqlx::Type<sqlx::Postgres> for CategoryName {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for CategoryName {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <String as sqlx::Encode<'_, sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CategoryName {
+    /// Decode from Postgres TEXT without validation — the DB may contain legacy
+    /// colon-names that will be cleaned up by migration.
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        Ok(Self(s))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -33,7 +160,7 @@ pub struct Connection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Category {
     pub id: CategoryId,
-    pub name: String,
+    pub name: CategoryName,
     pub parent_id: Option<CategoryId>,
     pub budget_mode: Option<BudgetMode>,
     pub budget_type: Option<BudgetType>,
@@ -192,7 +319,7 @@ impl Category {
                 let leaf = self.leaf_name(Some(p));
                 format!("{p}:{leaf}")
             }
-            None => self.name.clone(),
+            None => self.name.as_ref().to_owned(),
         }
     }
 
@@ -203,13 +330,14 @@ impl Category {
     /// Otherwise the name is returned as-is.
     #[must_use]
     pub fn leaf_name(&self, parent_name: Option<&str>) -> String {
+        let name = self.name.as_ref();
         if let Some(p) = parent_name {
             let prefix = format!("{p}:");
-            if self.name.starts_with(&prefix) {
-                return self.name[prefix.len()..].to_owned();
+            if name.starts_with(&prefix) {
+                return name[prefix.len()..].to_owned();
             }
         }
-        self.name.clone()
+        name.to_owned()
     }
 }
 
@@ -230,7 +358,7 @@ pub fn build_qualified_name_map(
             let parent_name = c
                 .parent_id
                 .and_then(|pid| by_id.get(&pid))
-                .map(|p| p.name.as_str());
+                .map(|p| p.name.as_ref());
             (c.id, c.qualified_name(parent_name))
         })
         .collect()
@@ -278,10 +406,12 @@ pub struct BudgetStatus {
 mod tests {
     use super::*;
 
+    /// Build a test category. Accepts any string including colon-names for
+    /// testing legacy compat — bypasses `CategoryName` validation.
     fn cat(id: u128, name: &str, parent_id: Option<u128>) -> Category {
         Category {
             id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
-            name: name.to_owned(),
+            name: CategoryName(name.to_owned()),
             parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
             budget_mode: None,
             budget_type: None,
@@ -480,5 +610,386 @@ mod tests {
             map[&CategoryId::from_uuid(uuid::Uuid::from_u128(3))],
             "Food:Restaurants"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // CategoryName — construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_name_valid_simple() {
+        let name = CategoryName::new("Groceries").unwrap();
+        assert_eq!(name.to_string(), "Groceries");
+    }
+
+    #[test]
+    fn category_name_valid_with_spaces() {
+        let name = CategoryName::new("Bank Fees").unwrap();
+        assert_eq!(name.to_string(), "Bank Fees");
+    }
+
+    #[test]
+    fn category_name_valid_single_char() {
+        let name = CategoryName::new("X").unwrap();
+        assert_eq!(name.to_string(), "X");
+    }
+
+    #[test]
+    fn category_name_valid_at_max_length() {
+        let s = "A".repeat(MAX_CATEGORY_NAME_LEN);
+        let name = CategoryName::new(s.clone()).unwrap();
+        assert_eq!(name.to_string(), s);
+    }
+
+    #[test]
+    fn category_name_valid_unicode() {
+        let name = CategoryName::new("Lebensmittel").unwrap();
+        assert_eq!(name.to_string(), "Lebensmittel");
+    }
+
+    #[test]
+    fn category_name_valid_unicode_emoji() {
+        // Emoji are valid non-control characters
+        let name = CategoryName::new("Food 🍕").unwrap();
+        assert_eq!(name.to_string(), "Food 🍕");
+    }
+
+    #[test]
+    fn category_name_valid_unicode_cjk() {
+        let name = CategoryName::new("食料品").unwrap();
+        assert_eq!(name.to_string(), "食料品");
+    }
+
+    #[test]
+    fn category_name_valid_with_hyphens_and_ampersand() {
+        let name = CategoryName::new("Health & Well-being").unwrap();
+        assert_eq!(name.to_string(), "Health & Well-being");
+    }
+
+    #[test]
+    fn category_name_valid_with_parentheses() {
+        let name = CategoryName::new("Tax (2025)").unwrap();
+        assert_eq!(name.to_string(), "Tax (2025)");
+    }
+
+    #[test]
+    fn category_name_valid_with_numbers() {
+        let name = CategoryName::new("Q4 2025 Budget").unwrap();
+        assert_eq!(name.to_string(), "Q4 2025 Budget");
+    }
+
+    #[test]
+    fn category_name_valid_with_slash() {
+        let name = CategoryName::new("Food/Drink").unwrap();
+        assert_eq!(name.to_string(), "Food/Drink");
+    }
+
+    // -----------------------------------------------------------------------
+    // CategoryName — rejection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_name_rejects_empty() {
+        let err = CategoryName::new("").unwrap_err();
+        assert!(err.to_string().contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_colon() {
+        let err = CategoryName::new("Food:Groceries").unwrap_err();
+        assert!(err.to_string().contains("colon"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_colon_at_start() {
+        let err = CategoryName::new(":Groceries").unwrap_err();
+        assert!(err.to_string().contains("colon"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_colon_at_end() {
+        let err = CategoryName::new("Food:").unwrap_err();
+        assert!(err.to_string().contains("colon"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_multiple_colons() {
+        let err = CategoryName::new("A:B:C").unwrap_err();
+        assert!(err.to_string().contains("colon"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_just_a_colon() {
+        let err = CategoryName::new(":").unwrap_err();
+        assert!(err.to_string().contains("colon"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_leading_space() {
+        let err = CategoryName::new(" Groceries").unwrap_err();
+        assert!(err.to_string().contains("whitespace"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_trailing_space() {
+        let err = CategoryName::new("Groceries ").unwrap_err();
+        assert!(err.to_string().contains("whitespace"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_leading_and_trailing_spaces() {
+        let err = CategoryName::new("  Groceries  ").unwrap_err();
+        assert!(err.to_string().contains("whitespace"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_whitespace_only() {
+        let err = CategoryName::new("   ").unwrap_err();
+        assert!(err.to_string().contains("whitespace"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_tab() {
+        let err = CategoryName::new("\tGroceries").unwrap_err();
+        // Tab is both leading whitespace and a control character
+        assert!(
+            err.to_string().contains("whitespace") || err.to_string().contains("control"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn category_name_rejects_newline() {
+        let err = CategoryName::new("Foo\nBar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_carriage_return() {
+        let err = CategoryName::new("Foo\rBar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_null_byte() {
+        let err = CategoryName::new("Foo\0Bar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_bell() {
+        let err = CategoryName::new("Foo\x07Bar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_escape() {
+        let err = CategoryName::new("Foo\x1BBar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_delete_char() {
+        let err = CategoryName::new("Foo\x7FBar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_c1_control_char() {
+        // U+0080 is a C1 control character
+        let err = CategoryName::new("Foo\u{0080}Bar").unwrap_err();
+        assert!(err.to_string().contains("control"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_exceeding_max_length() {
+        let s = "A".repeat(MAX_CATEGORY_NAME_LEN + 1);
+        let err = CategoryName::new(s).unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "got: {err}");
+    }
+
+    #[test]
+    fn category_name_rejects_way_over_max_length() {
+        let s = "B".repeat(10_000);
+        let err = CategoryName::new(s).unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "got: {err}");
+    }
+
+    // -----------------------------------------------------------------------
+    // CategoryName — trait impls
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_name_display() {
+        let name = CategoryName::new("Groceries").unwrap();
+        assert_eq!(format!("{name}"), "Groceries");
+    }
+
+    #[test]
+    fn category_name_as_ref_str() {
+        let name = CategoryName::new("Groceries").unwrap();
+        let s: &str = name.as_ref();
+        assert_eq!(s, "Groceries");
+    }
+
+    #[test]
+    fn category_name_partial_eq_str() {
+        let name = CategoryName::new("Cash").unwrap();
+        assert_eq!(name, "Cash");
+    }
+
+    #[test]
+    fn category_name_partial_eq_str_negative() {
+        let name = CategoryName::new("Cash").unwrap();
+        assert_ne!(name, "Food");
+    }
+
+    #[test]
+    fn category_name_eq_between_instances() {
+        let a = CategoryName::new("Cash").unwrap();
+        let b = CategoryName::new("Cash").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn category_name_ne_between_instances() {
+        let a = CategoryName::new("Cash").unwrap();
+        let b = CategoryName::new("Food").unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn category_name_clone() {
+        let name = CategoryName::new("Rent").unwrap();
+        let cloned = name.clone();
+        assert_eq!(name, cloned);
+    }
+
+    #[test]
+    fn category_name_debug() {
+        let name = CategoryName::new("Rent").unwrap();
+        let debug = format!("{name:?}");
+        assert!(debug.contains("Rent"), "got: {debug}");
+    }
+
+    #[test]
+    fn category_name_hash_consistent() {
+        use std::collections::HashSet;
+        let a = CategoryName::new("Cash").unwrap();
+        let b = CategoryName::new("Cash").unwrap();
+        let mut set = HashSet::new();
+        set.insert(a);
+        set.insert(b);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn category_name_from_str() {
+        let name: CategoryName = "Transport".parse().unwrap();
+        assert_eq!(name, "Transport");
+    }
+
+    #[test]
+    fn category_name_from_str_rejects_invalid() {
+        let result: Result<CategoryName, _> = "A:B".parse();
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // CategoryName — serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_name_serde_roundtrip() {
+        let name = CategoryName::new("Groceries").unwrap();
+        let json = serde_json::to_string(&name).unwrap();
+        assert_eq!(json, "\"Groceries\"");
+        let back: CategoryName = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, name);
+    }
+
+    #[test]
+    fn category_name_serde_serialize_transparent() {
+        let name = CategoryName::new("Cash").unwrap();
+        let val = serde_json::to_value(&name).unwrap();
+        assert_eq!(val, serde_json::Value::String("Cash".into()));
+    }
+
+    #[test]
+    fn category_name_serde_deserialize_rejects_colon() {
+        let result: Result<CategoryName, _> = serde_json::from_str("\"A:B\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn category_name_serde_deserialize_rejects_empty() {
+        let result: Result<CategoryName, _> = serde_json::from_str("\"\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn category_name_serde_deserialize_rejects_whitespace_only() {
+        let result: Result<CategoryName, _> = serde_json::from_str("\"   \"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn category_name_serde_in_category_struct() {
+        let c = Category {
+            id: CategoryId::from_uuid(uuid::Uuid::from_u128(42)),
+            name: CategoryName::new("Food").unwrap(),
+            parent_id: None,
+            budget_mode: None,
+            budget_type: None,
+            budget_amount: None,
+            project_start_date: None,
+            project_end_date: None,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"name\":\"Food\""));
+        let back: Category = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "Food");
+    }
+
+    // -----------------------------------------------------------------------
+    // CategoryName — edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_name_multibyte_at_max_boundary() {
+        // 'é' is 2 UTF-8 bytes. Fill to exactly MAX_CATEGORY_NAME_LEN bytes.
+        let count = MAX_CATEGORY_NAME_LEN / 2;
+        let s = "é".repeat(count);
+        assert_eq!(s.len(), MAX_CATEGORY_NAME_LEN);
+        let name = CategoryName::new(s.clone()).unwrap();
+        assert_eq!(name.to_string(), s);
+    }
+
+    #[test]
+    fn category_name_multibyte_over_max_boundary() {
+        // One more 'é' puts us over
+        let count = (MAX_CATEGORY_NAME_LEN / 2) + 1;
+        let s = "é".repeat(count);
+        assert!(s.len() > MAX_CATEGORY_NAME_LEN);
+        assert!(CategoryName::new(s).is_err());
+    }
+
+    #[test]
+    fn category_name_inner_whitespace_preserved() {
+        // Multiple internal spaces are fine
+        let name = CategoryName::new("Bank  Fees").unwrap();
+        assert_eq!(name.to_string(), "Bank  Fees");
+    }
+
+    #[test]
+    fn category_name_just_numbers() {
+        let name = CategoryName::new("12345").unwrap();
+        assert_eq!(name.to_string(), "12345");
+    }
+
+    #[test]
+    fn category_name_special_punctuation() {
+        let name = CategoryName::new("Food & Drink - Misc.").unwrap();
+        assert_eq!(name.to_string(), "Food & Drink - Misc.");
     }
 }

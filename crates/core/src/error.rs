@@ -31,4 +31,7 @@ pub enum Error {
 
     #[error("invalid rule pattern: {0}")]
     InvalidRulePattern(String),
+
+    #[error("invalid category name: {0}")]
+    InvalidCategoryName(String),
 }
