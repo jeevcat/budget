@@ -270,15 +270,22 @@ impl std::str::FromStr for BudgetType {
     }
 }
 
-/// Budget status pace indicator
+/// Budget status pace indicator.
+///
+/// Fixed categories can only produce: `Pending`, `OnTrack`, `OverBudget`.
+/// Variable categories can only produce: `UnderBudget`, `OnTrack`, `AbovePace`, `OverBudget`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaceIndicator {
     /// Fixed category: payment hasn't arrived yet
     Pending,
+    /// Variable: spending well below expected pace
     UnderBudget,
-    OnTarget,
+    /// Spending is healthy (fixed: payment landed within budget; variable: within ±5% of expected)
     OnTrack,
+    /// Variable only: spending above expected pace but still within total budget
+    AbovePace,
+    /// Spending exceeds the budget
     OverBudget,
 }
 
@@ -358,12 +365,17 @@ mod tests {
     }
 
     #[test]
-    fn pace_indicator_pending_serde() {
-        assert_eq!(
-            serde_json::to_string(&PaceIndicator::Pending).unwrap(),
-            "\"pending\""
-        );
-        let parsed: PaceIndicator = serde_json::from_str("\"pending\"").unwrap();
-        assert_eq!(parsed, PaceIndicator::Pending);
+    fn pace_indicator_serde() {
+        for (variant, expected) in [
+            (PaceIndicator::Pending, "\"pending\""),
+            (PaceIndicator::UnderBudget, "\"under_budget\""),
+            (PaceIndicator::OnTrack, "\"on_track\""),
+            (PaceIndicator::AbovePace, "\"above_pace\""),
+            (PaceIndicator::OverBudget, "\"over_budget\""),
+        ] {
+            assert_eq!(serde_json::to_string(&variant).unwrap(), expected);
+            let parsed: PaceIndicator = serde_json::from_str(expected).unwrap();
+            assert_eq!(parsed, variant);
+        }
     }
 }

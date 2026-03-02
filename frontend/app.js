@@ -443,8 +443,8 @@ function formatRemittanceInfo(segments) {
 function paceBadge(pace) {
   if (pace === "pending") return "secondary";
   if (pace === "under_budget") return "success";
-  if (pace === "on_target") return "primary";
-  if (pace === "on_track") return "warning";
+  if (pace === "on_track") return "primary";
+  if (pace === "above_pace") return "warning";
   return "danger";
 }
 
@@ -458,12 +458,15 @@ function paceLabel(pace, delta) {
       ? "Pending"
       : pace === "under_budget"
         ? "Under pace"
-        : pace === "on_target"
-          ? "On target"
-          : pace === "on_track"
-            ? "On track"
-            : "Over pace";
-  if (delta != null && (pace === "under_budget" || pace === "over_budget"))
+        : pace === "on_track"
+          ? "On track"
+          : pace === "above_pace"
+            ? "Above pace"
+            : "Over budget";
+  if (
+    delta != null &&
+    (pace === "under_budget" || pace === "over_budget" || pace === "above_pace")
+  )
     return `${base} (${formatAmount(delta, { decimals: 0, sign: true })})`;
   return base;
 }
@@ -478,10 +481,10 @@ function ProgressRing({ spent, budget, pace, size = 48 }) {
       ? "var(--danger)"
       : pace === "pending"
         ? "var(--text-light)"
-        : pace === "on_target"
-          ? "var(--primary)"
+        : pace === "above_pace"
+          ? "var(--warning)"
           : pace === "on_track"
-            ? "var(--warning)"
+            ? "var(--primary)"
             : "var(--success)";
 
   return html`

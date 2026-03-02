@@ -81,16 +81,16 @@ private val EuroCurrencyFormat: NumberFormat =
 
 private val PendingColor = Color(0xFF938AA9)
 private val UnderBudgetColor = Color(0xFF76946A)
-private val OnTargetColor = Color(0xFF7E9CD8)
-private val OnTrackColor = Color(0xFFDCA561)
+private val OnTrackColor = Color(0xFF7E9CD8)
+private val AbovePaceColor = Color(0xFFDCA561)
 private val OverBudgetColor = Color(0xFFC34043)
 
 private fun paceColor(pace: PaceIndicator): Color =
     when (pace) {
       PaceIndicator.PENDING -> PendingColor
       PaceIndicator.UNDER_BUDGET -> UnderBudgetColor
-      PaceIndicator.ON_TARGET -> OnTargetColor
       PaceIndicator.ON_TRACK -> OnTrackColor
+      PaceIndicator.ABOVE_PACE -> AbovePaceColor
       PaceIndicator.OVER_BUDGET -> OverBudgetColor
     }
 
@@ -99,11 +99,12 @@ private fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
       when (pace) {
         PaceIndicator.PENDING -> "Pending"
         PaceIndicator.UNDER_BUDGET -> "Under pace"
-        PaceIndicator.ON_TARGET -> "On target"
         PaceIndicator.ON_TRACK -> "On track"
-        PaceIndicator.OVER_BUDGET -> "Over pace"
+        PaceIndicator.ABOVE_PACE -> "Above pace"
+        PaceIndicator.OVER_BUDGET -> "Over budget"
       }
-  if (delta != null && (pace == PaceIndicator.UNDER_BUDGET || pace == PaceIndicator.OVER_BUDGET)) {
+  val showDelta = pace != PaceIndicator.PENDING && pace != PaceIndicator.ON_TRACK
+  if (delta != null && showDelta) {
     return "$base (${formatAmount(delta, showSign = true)})"
   }
   return base
@@ -372,7 +373,7 @@ private fun MonthNavigator(
       Text(
           text = "$uncategorizedCount uncategorized",
           style = MaterialTheme.typography.labelSmall,
-          color = OnTrackColor,
+          color = AbovePaceColor,
       )
     }
   }
