@@ -19,10 +19,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -79,7 +81,11 @@ private fun formatBudgetAmount(value: String?): String {
 // -- Root screen -------------------------------------------------------------
 
 @Composable
-fun CategoriesScreen(viewModel: CategoriesViewModel) {
+fun CategoriesScreen(
+    viewModel: CategoriesViewModel,
+    onAddCategory: () -> Unit = {},
+    onEditCategory: (String) -> Unit = {},
+) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
   Box(modifier = Modifier.fillMaxSize()) {
@@ -113,8 +119,15 @@ fun CategoriesScreen(viewModel: CategoriesViewModel) {
             sections = state.sections,
             expandedSections = state.expandedSections,
             onToggleSection = viewModel::toggleSection,
+            onCategoryClick = onEditCategory,
         )
       }
+    }
+    FloatingActionButton(
+        onClick = onAddCategory,
+        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+    ) {
+      Icon(Icons.Default.Add, contentDescription = "Add category")
     }
   }
 }
@@ -126,10 +139,11 @@ private fun CategoriesContent(
     sections: List<CategorySection>,
     expandedSections: Set<BudgetMode?>,
     onToggleSection: (BudgetMode?) -> Unit,
+    onCategoryClick: (String) -> Unit,
 ) {
   LazyColumn(
       modifier = Modifier.fillMaxSize(),
-      contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+      contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 80.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     for (section in sections) {
@@ -139,6 +153,7 @@ private fun CategoriesContent(
             section = section,
             expanded = expanded,
             onToggle = { onToggleSection(section.mode) },
+            onCategoryClick = onCategoryClick,
         )
       }
     }
@@ -152,6 +167,7 @@ private fun SectionCard(
     section: CategorySection,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onCategoryClick: (String) -> Unit,
 ) {
   val color = modeColor(section.mode)
 
@@ -194,7 +210,7 @@ private fun SectionCard(
       // Category items
       if (expanded) {
         for (item in section.categories) {
-          CategoryItem(item = item)
+          CategoryItem(item = item, onClick = { onCategoryClick(item.id) })
         }
         Spacer(modifier = Modifier.height(8.dp))
       }
@@ -205,12 +221,13 @@ private fun SectionCard(
 // -- Individual category item ------------------------------------------------
 
 @Composable
-private fun CategoryItem(item: CategoryDisplayItem) {
+private fun CategoryItem(item: CategoryDisplayItem, onClick: () -> Unit) {
   val startPadding = if (item.isChild) 40.dp else 16.dp
 
   Row(
       modifier =
           Modifier.fillMaxWidth()
+              .clickable(onClick = onClick)
               .padding(start = startPadding, end = 16.dp, top = 6.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
   ) {

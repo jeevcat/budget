@@ -7,6 +7,7 @@ import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
@@ -120,6 +121,28 @@ class BudgetApi(private val baseUrl: String, private val apiKey: String) {
   /** Fetch all categories. */
   suspend fun getCategories(): List<Category> {
     val response = client.get(url("/api/categories")) { header("Authorization", "Bearer $apiKey") }
+    return response.body()
+  }
+
+  /** Create a new category. Returns the created category. */
+  suspend fun createCategory(request: CategoryRequest): Category {
+    val response =
+        client.post(url("/api/categories")) {
+          header("Authorization", "Bearer $apiKey")
+          contentType(ContentType.Application.Json)
+          setBody(request)
+        }
+    return response.body()
+  }
+
+  /** Update an existing category. Returns the updated category. */
+  suspend fun updateCategory(id: String, request: CategoryRequest): Category {
+    val response =
+        client.put(url("/api/categories/$id")) {
+          header("Authorization", "Bearer $apiKey")
+          contentType(ContentType.Application.Json)
+          setBody(request)
+        }
     return response.body()
   }
 
