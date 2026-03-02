@@ -34,6 +34,7 @@ data class CategoriesUiState(
     val error: String? = null,
     val sections: List<CategorySection> = emptyList(),
     val expandedSections: Set<BudgetMode?> = emptySet(),
+    val categories: List<Category> = emptyList(),
 )
 
 /** Abstraction over [BudgetApi] fetches so the ViewModel is unit-testable. */
@@ -77,6 +78,7 @@ class CategoriesViewModel(
               loading = false,
               sections = sections,
               expandedSections = allModes,
+              categories = categories,
           )
         }
       } catch (e: Exception) {

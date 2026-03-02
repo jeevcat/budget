@@ -69,3 +69,13 @@ data class Category(
 data class CategorizeRequest(
     @SerialName("category_id") val categoryId: String,
 )
+
+@Serializable
+data class CategoryRequest(
+    val name: String,
+    @SerialName("parent_id") val parentId: String? = null,
+    @SerialName("budget_mode") val budgetMode: String? = null,
+    @SerialName("budget_amount") val budgetAmount: String? = null,
+    @SerialName("project_start_date") val projectStartDate: String? = null,
+    @SerialName("project_end_date") val projectEndDate: String? = null,
+)
