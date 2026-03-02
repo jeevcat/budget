@@ -6,9 +6,9 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use crate::models::{
-    Account, AccountId, AccountType, BudgetMode, Category, CategoryId, CategoryMethod, Connection,
-    ConnectionId, ConnectionStatus, CorrelationType, Rule, RuleCondition, RuleId, RuleType,
-    Transaction, TransactionId,
+    Account, AccountId, AccountType, BudgetMode, BudgetType, Category, CategoryId, CategoryMethod,
+    Connection, ConnectionId, ConnectionStatus, CorrelationType, Rule, RuleCondition, RuleId,
+    RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,7 @@ fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
         name: row.try_get("name")?,
         parent_id: row.try_get("parent_id")?,
         budget_mode: parse_enum_opt::<BudgetMode>(row, "budget_mode")?,
+        budget_type: parse_enum_opt::<BudgetType>(row, "budget_type")?,
         budget_amount: row.try_get("budget_amount")?,
         project_start_date: row.try_get("project_start_date")?,
         project_end_date: row.try_get("project_end_date")?,
@@ -960,13 +961,14 @@ impl Db {
     pub async fn insert_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "INSERT INTO categories (id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO categories (id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(category.id)
         .bind(&category.name)
         .bind(category.parent_id)
         .bind(category.budget_mode.map(|m| m.to_string()))
+        .bind(category.budget_type.map(|t| t.to_string()))
         .bind(category.budget_amount)
         .bind(category.project_start_date)
         .bind(category.project_end_date)
@@ -983,13 +985,14 @@ impl Db {
     pub async fn update_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE categories SET name = $1, parent_id = $2, budget_mode = $3, budget_amount = $4,
-                    project_start_date = $5, project_end_date = $6
-             WHERE id = $7",
+            "UPDATE categories SET name = $1, parent_id = $2, budget_mode = $3, budget_type = $4,
+                    budget_amount = $5, project_start_date = $6, project_end_date = $7
+             WHERE id = $8",
         )
         .bind(&category.name)
         .bind(category.parent_id)
         .bind(category.budget_mode.map(|m| m.to_string()))
+        .bind(category.budget_type.map(|t| t.to_string()))
         .bind(category.budget_amount)
         .bind(category.project_start_date)
         .bind(category.project_end_date)
@@ -1007,7 +1010,7 @@ impl Db {
     pub async fn list_categories(&self) -> Result<Vec<Category>, sqlx::Error> {
         let pool = &self.0;
         let rows = sqlx::query(
-            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date FROM categories ORDER BY name",
+            "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date FROM categories ORDER BY name",
         )
         .fetch_all(pool)
         .await?;
@@ -1047,7 +1050,7 @@ impl Db {
     pub async fn get_category(&self, id: CategoryId) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date
+            "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date
              FROM categories WHERE id = $1",
         )
         .bind(id)
@@ -1066,7 +1069,7 @@ impl Db {
     pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, sqlx::Error> {
         let pool = &self.0;
         let row = sqlx::query(
-            "SELECT id, name, parent_id, budget_mode, budget_amount, project_start_date, project_end_date
+            "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date
              FROM categories WHERE name = $1",
         )
         .bind(name)
@@ -1433,6 +1436,7 @@ mod tests {
             name: name.into(),
             parent_id: None,
             budget_mode: None,
+            budget_type: None,
             budget_amount: None,
             project_start_date: None,
             project_end_date: None,

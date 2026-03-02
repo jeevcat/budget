@@ -79,6 +79,7 @@ private val EuroCurrencyFormat: NumberFormat =
 
 // -- Pace colors -----------------------------------------------------------
 
+private val PendingColor = Color(0xFF938AA9)
 private val UnderBudgetColor = Color(0xFF76946A)
 private val OnTargetColor = Color(0xFF7E9CD8)
 private val OnTrackColor = Color(0xFFDCA561)
@@ -86,6 +87,7 @@ private val OverBudgetColor = Color(0xFFC34043)
 
 private fun paceColor(pace: PaceIndicator): Color =
     when (pace) {
+      PaceIndicator.PENDING -> PendingColor
       PaceIndicator.UNDER_BUDGET -> UnderBudgetColor
       PaceIndicator.ON_TARGET -> OnTargetColor
       PaceIndicator.ON_TRACK -> OnTrackColor
@@ -95,12 +97,13 @@ private fun paceColor(pace: PaceIndicator): Color =
 private fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
   val base =
       when (pace) {
+        PaceIndicator.PENDING -> "Pending"
         PaceIndicator.UNDER_BUDGET -> "Under pace"
         PaceIndicator.ON_TARGET -> "On target"
         PaceIndicator.ON_TRACK -> "On track"
         PaceIndicator.OVER_BUDGET -> "Over pace"
       }
-  if (delta != null && pace != PaceIndicator.ON_TARGET && pace != PaceIndicator.ON_TRACK) {
+  if (delta != null && (pace == PaceIndicator.UNDER_BUDGET || pace == PaceIndicator.OVER_BUDGET)) {
     return "$base (${formatAmount(delta, showSign = true)})"
   }
   return base

@@ -1,6 +1,7 @@
 package com.budget.shared.viewmodel
 
 import com.budget.shared.api.BudgetMode
+import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryRequest
 import kotlin.test.AfterTest
@@ -41,6 +42,7 @@ class CategoryEditViewModelTest {
     assertEquals("", state.name)
     assertNull(state.parentId)
     assertNull(state.budgetMode)
+    assertEquals(BudgetType.VARIABLE, state.budgetType)
     assertEquals("", state.budgetAmount)
     assertFalse(state.saving)
     assertFalse(state.saved)
@@ -294,6 +296,82 @@ class CategoryEditViewModelTest {
     assertEquals("monthly", CategoryEditViewModel.modeToString(BudgetMode.MONTHLY))
     assertEquals("annual", CategoryEditViewModel.modeToString(BudgetMode.ANNUAL))
     assertEquals("project", CategoryEditViewModel.modeToString(BudgetMode.PROJECT))
+  }
+
+  @Test
+  fun typeToStringConversions() {
+    assertEquals("fixed", CategoryEditViewModel.typeToString(BudgetType.FIXED))
+    assertEquals("variable", CategoryEditViewModel.typeToString(BudgetType.VARIABLE))
+  }
+
+  @Test
+  fun updateBudgetTypeMutatesState() = runTest {
+    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    assertEquals(BudgetType.VARIABLE, vm.uiState.value.budgetType)
+
+    vm.updateBudgetType(BudgetType.FIXED)
+    assertEquals(BudgetType.FIXED, vm.uiState.value.budgetType)
+  }
+
+  @Test
+  fun editingFixedCategoryPopulatesBudgetType() = runTest {
+    val category =
+        Category(
+            id = "cat-1",
+            name = "Mortgage",
+            budgetMode = BudgetMode.MONTHLY,
+            budgetType = BudgetType.FIXED,
+            budgetAmount = "2000",
+            transactionCount = 5,
+        )
+    val vm =
+        CategoryEditViewModel(
+            "https://example.com",
+            "key",
+            editingCategory = category,
+            saver = FakeCategorySaver(),
+        )
+
+    assertEquals(BudgetType.FIXED, vm.uiState.value.budgetType)
+  }
+
+  @Test
+  fun buildRequestIncludesBudgetType() {
+    val state =
+        CategoryEditUiState(
+            name = "Mortgage",
+            budgetMode = BudgetMode.MONTHLY,
+            budgetType = BudgetType.FIXED,
+            budgetAmount = "2000",
+        )
+    val request = CategoryEditViewModel.buildRequest(state, "Mortgage")
+
+    assertEquals("fixed", request.budgetType)
+  }
+
+  @Test
+  fun buildRequestOmitsBudgetTypeWhenNoMode() {
+    val state =
+        CategoryEditUiState(
+            name = "Test",
+            budgetType = BudgetType.FIXED,
+        )
+    val request = CategoryEditViewModel.buildRequest(state, "Test")
+
+    assertNull(request.budgetType)
+  }
+
+  @Test
+  fun buildRequestDefaultsToVariableBudgetType() {
+    val state =
+        CategoryEditUiState(
+            name = "Groceries",
+            budgetMode = BudgetMode.MONTHLY,
+            budgetAmount = "500",
+        )
+    val request = CategoryEditViewModel.buildRequest(state, "Groceries")
+
+    assertEquals("variable", request.budgetType)
   }
 
   @Test

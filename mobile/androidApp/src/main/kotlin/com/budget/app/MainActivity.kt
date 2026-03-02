@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -213,53 +214,67 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
         }
       },
   ) { innerPadding ->
-    NavHost(
+    AppNavHost(
         navController = navController,
-        startDestination = BudgetRoute,
+        config = config,
+        dashboardVm = dashboardVm,
+        transactionsVm = transactionsVm,
+        categoriesVm = categoriesVm,
         modifier = Modifier.padding(innerPadding),
-    ) {
-      composable<BudgetRoute> {
-        DashboardContent(
-            viewModel = dashboardVm,
-            onTransactionClick = { id ->
-              transactionsVm.selectTransactionById(id)
-              navController.navigate(TransactionsRoute) {
-                popUpTo(navController.graph.startDestinationId) { saveState = true }
-                launchSingleTop = true
-                restoreState = false
-              }
-            },
-        )
-      }
-      composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
-      composable<CategoriesRoute> {
-        CategoriesScreen(
-            viewModel = categoriesVm,
-            onAddCategory = {
-              navController.navigate(CategoryEditRoute())
-            },
-            onEditCategory = { id ->
-              navController.navigate(CategoryEditRoute(categoryId = id))
-            },
-        )
-      }
-      composable<CategoryEditRoute> { backStackEntry ->
-        val route = backStackEntry.toRoute<CategoryEditRoute>()
-        val editingCategory =
-            route.categoryId?.let { id ->
-              categoriesVm.uiState.value.categories.find { it.id == id }
+    )
+  }
+}
+
+@Composable
+private fun AppNavHost(
+    navController: NavHostController,
+    config: ServerConfig,
+    dashboardVm: DashboardViewModel,
+    transactionsVm: TransactionsViewModel,
+    categoriesVm: CategoriesViewModel,
+    modifier: Modifier = Modifier,
+) {
+  NavHost(
+      navController = navController,
+      startDestination = BudgetRoute,
+      modifier = modifier,
+  ) {
+    composable<BudgetRoute> {
+      DashboardContent(
+          viewModel = dashboardVm,
+          onTransactionClick = { id ->
+            transactionsVm.selectTransactionById(id)
+            navController.navigate(TransactionsRoute) {
+              popUpTo(navController.graph.startDestinationId) { saveState = true }
+              launchSingleTop = true
+              restoreState = false
             }
-        val editVm: CategoryEditViewModel = viewModel(key = route.categoryId ?: "new") {
-          CategoryEditViewModel(config.serverUrl, config.apiKey, editingCategory)
-        }
-        CategoryEditScreen(
-            viewModel = editVm,
-            onBack = {
-              navController.popBackStack()
-              categoriesVm.refresh()
-            },
-        )
-      }
+          },
+      )
+    }
+    composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
+    composable<CategoriesRoute> {
+      CategoriesScreen(
+          viewModel = categoriesVm,
+          onAddCategory = { navController.navigate(CategoryEditRoute()) },
+          onEditCategory = { id -> navController.navigate(CategoryEditRoute(categoryId = id)) },
+      )
+    }
+    composable<CategoryEditRoute> { backStackEntry ->
+      val route = backStackEntry.toRoute<CategoryEditRoute>()
+      val editingCategory =
+          route.categoryId?.let { id -> categoriesVm.uiState.value.categories.find { it.id == id } }
+      val editVm: CategoryEditViewModel =
+          viewModel(key = route.categoryId ?: "new") {
+            CategoryEditViewModel(config.serverUrl, config.apiKey, editingCategory)
+          }
+      CategoryEditScreen(
+          viewModel = editVm,
+          onBack = {
+            navController.popBackStack()
+            categoriesVm.refresh()
+          },
+      )
     }
   }
 }

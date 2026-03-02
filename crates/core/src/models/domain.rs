@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use super::enums::{
-    AccountType, BudgetMode, CategoryMethod, ConnectionStatus, CorrelationType, MatchField,
-    PaceIndicator, RuleType,
+    AccountType, BudgetMode, BudgetType, CategoryMethod, ConnectionStatus, CorrelationType,
+    MatchField, PaceIndicator, RuleType,
 };
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
 
@@ -36,6 +36,7 @@ pub struct Category {
     pub name: String,
     pub parent_id: Option<CategoryId>,
     pub budget_mode: Option<BudgetMode>,
+    pub budget_type: Option<BudgetType>,
     pub budget_amount: Option<Decimal>,
     pub project_start_date: Option<NaiveDate>,
     pub project_end_date: Option<NaiveDate>,

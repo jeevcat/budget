@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::models::{BudgetMode, Category, CategoryId};
+use budget_core::models::{BudgetMode, BudgetType, Category, CategoryId};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -21,6 +21,8 @@ pub struct CreateCategory {
     pub parent_id: Option<String>,
     /// Budget mode: "monthly", "annual", or "project". Null for no budget.
     pub budget_mode: Option<String>,
+    /// Budget type: "fixed" or "variable". Null defaults to variable.
+    pub budget_type: Option<String>,
     /// Budget amount as a decimal string (e.g. "500.00").
     pub budget_amount: Option<String>,
     /// Project start date (YYYY-MM-DD). Only used when `budget_mode` is "project".
@@ -111,6 +113,7 @@ async fn suggestions(
 /// Parsed budget fields from a create/update request.
 struct BudgetFields {
     mode: Option<BudgetMode>,
+    budget_type: Option<BudgetType>,
     amount: Option<Decimal>,
     start: Option<NaiveDate>,
     end: Option<NaiveDate>,
@@ -156,8 +159,20 @@ fn parse_budget_fields(body: &CreateCategory) -> Result<BudgetFields, AppError> 
         })
         .transpose()?;
 
+    let budget_type = body
+        .budget_type
+        .as_deref()
+        .map(|s| {
+            s.parse::<BudgetType>()
+                .map_err(|e: budget_core::error::Error| {
+                    AppError(StatusCode::BAD_REQUEST, e.to_string())
+                })
+        })
+        .transpose()?;
+
     Ok(BudgetFields {
         mode,
+        budget_type,
         amount,
         start,
         end,
@@ -192,6 +207,7 @@ async fn create(
         name: body.name,
         parent_id,
         budget_mode: budget.mode,
+        budget_type: budget.budget_type,
         budget_amount: budget.amount,
         project_start_date: budget.start,
         project_end_date: budget.end,
@@ -232,6 +248,7 @@ async fn update(
         name: body.name,
         parent_id,
         budget_mode: budget.mode,
+        budget_type: budget.budget_type,
         budget_amount: budget.amount,
         project_start_date: budget.start,
         project_end_date: budget.end,

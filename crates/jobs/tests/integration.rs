@@ -92,6 +92,7 @@ async fn seed_category(db: &Db, name: &str) -> Category {
         name: name.to_owned(),
         parent_id: None,
         budget_mode: None,
+        budget_type: None,
         budget_amount: None,
         project_start_date: None,
         project_end_date: None,

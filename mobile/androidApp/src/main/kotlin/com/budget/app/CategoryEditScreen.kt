@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.budget.shared.api.BudgetMode
+import com.budget.shared.api.BudgetType
 import com.budget.shared.viewmodel.CategoryEditViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,9 +54,7 @@ fun CategoryEditScreen(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-  LaunchedEffect(state.saved) {
-    if (state.saved) onBack()
-  }
+  LaunchedEffect(state.saved) { if (state.saved) onBack() }
 
   Scaffold(
       topBar = {
@@ -113,6 +112,11 @@ fun CategoryEditScreen(
 
       // Budget mode chips
       item { BudgetModeSelector(viewModel = viewModel) }
+
+      // Budget type chips (shown when a mode is selected)
+      if (state.budgetMode != null) {
+        item { BudgetTypeSelector(viewModel = viewModel) }
+      }
 
       // Budget amount (shown when a mode is selected)
       if (state.budgetMode != null) {
@@ -252,7 +256,12 @@ private fun ParentPickerSheet(
 @Composable
 private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  val modes = listOf(BudgetMode.MONTHLY to "Monthly", BudgetMode.ANNUAL to "Annual", BudgetMode.PROJECT to "Project")
+  val modes =
+      listOf(
+          BudgetMode.MONTHLY to "Monthly",
+          BudgetMode.ANNUAL to "Annual",
+          BudgetMode.PROJECT to "Project",
+      )
 
   Column {
     Text(
@@ -265,9 +274,32 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
       for ((mode, label) in modes) {
         FilterChip(
             selected = state.budgetMode == mode,
-            onClick = {
-              viewModel.updateBudgetMode(if (state.budgetMode == mode) null else mode)
-            },
+            onClick = { viewModel.updateBudgetMode(if (state.budgetMode == mode) null else mode) },
+            label = { Text(label) },
+            enabled = !state.saving,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun BudgetTypeSelector(viewModel: CategoryEditViewModel) {
+  val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val types = listOf(BudgetType.VARIABLE to "Variable", BudgetType.FIXED to "Fixed")
+
+  Column {
+    Text(
+        text = "Budget type",
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      for ((type, label) in types) {
+        FilterChip(
+            selected = state.budgetType == type,
+            onClick = { viewModel.updateBudgetType(type) },
             label = { Text(label) },
             enabled = !state.saving,
         )

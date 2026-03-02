@@ -11,7 +11,14 @@ enum class BudgetMode {
 }
 
 @Serializable
+enum class BudgetType {
+  @SerialName("fixed") FIXED,
+  @SerialName("variable") VARIABLE,
+}
+
+@Serializable
 enum class PaceIndicator {
+  @SerialName("pending") PENDING,
   @SerialName("under_budget") UNDER_BUDGET,
   @SerialName("on_target") ON_TARGET,
   @SerialName("on_track") ON_TRACK,

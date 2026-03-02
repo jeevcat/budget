@@ -441,6 +441,7 @@ function formatRemittanceInfo(segments) {
 }
 
 function paceBadge(pace) {
+  if (pace === "pending") return "secondary";
   if (pace === "under_budget") return "success";
   if (pace === "on_target") return "primary";
   if (pace === "on_track") return "warning";
@@ -453,14 +454,16 @@ function paceBadge(pace) {
 
 function paceLabel(pace, delta) {
   const base =
-    pace === "under_budget"
-      ? "Under pace"
-      : pace === "on_target"
-        ? "On target"
-        : pace === "on_track"
-          ? "On track"
-          : "Over pace";
-  if (delta != null && pace !== "on_track" && pace !== "on_target")
+    pace === "pending"
+      ? "Pending"
+      : pace === "under_budget"
+        ? "Under pace"
+        : pace === "on_target"
+          ? "On target"
+          : pace === "on_track"
+            ? "On track"
+            : "Over pace";
+  if (delta != null && (pace === "under_budget" || pace === "over_budget"))
     return `${base} (${formatAmount(delta, { decimals: 0, sign: true })})`;
   return base;
 }
@@ -473,11 +476,13 @@ function ProgressRing({ spent, budget, pace, size = 48 }) {
   const color =
     pace === "over_budget"
       ? "var(--danger)"
-      : pace === "on_target"
-        ? "var(--primary)"
-        : pace === "on_track"
-          ? "var(--warning)"
-          : "var(--success)";
+      : pace === "pending"
+        ? "var(--text-light)"
+        : pace === "on_target"
+          ? "var(--primary)"
+          : pace === "on_track"
+            ? "var(--warning)"
+            : "var(--success)";
 
   return html`
     <svg
@@ -2039,6 +2044,7 @@ function Categories() {
       name: cat.name,
       parent_id: cat.parent_id ?? "",
       budget_mode: cat.budget_mode ?? "",
+      budget_type: cat.budget_type ?? "",
       budget_amount: cat.budget_amount ?? "",
       project_start_date: cat.project_start_date ?? "",
       project_end_date: cat.project_end_date ?? "",
@@ -2062,6 +2068,9 @@ function Categories() {
         name: editForm.name,
         parent_id: editForm.parent_id || null,
         budget_mode: editForm.budget_mode || null,
+        budget_type: editForm.budget_mode
+          ? editForm.budget_type || "variable"
+          : null,
         budget_amount: editForm.budget_amount || null,
         project_start_date: editForm.project_start_date || null,
         project_end_date: editForm.project_end_date || null,
@@ -2322,6 +2331,16 @@ function Categories() {
             ${
               editForm.budget_mode &&
               html`
+              <div data-field>
+                <label>Type</label>
+                <select
+                  value=${editForm.budget_type || "variable"}
+                  onChange=${(e) => setEditField("budget_type", e.target.value)}
+                >
+                  <option value="variable">Variable</option>
+                  <option value="fixed">Fixed</option>
+                </select>
+              </div>
               <label data-field>
                 Amount
                 <input

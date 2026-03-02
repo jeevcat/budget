@@ -8,6 +8,9 @@ pub enum Error {
     #[error("invalid budget mode: {0}")]
     InvalidBudgetMode(String),
 
+    #[error("invalid budget type: {0}")]
+    InvalidBudgetType(String),
+
     #[error("invalid rule type: {0}")]
     InvalidRuleType(String),
 

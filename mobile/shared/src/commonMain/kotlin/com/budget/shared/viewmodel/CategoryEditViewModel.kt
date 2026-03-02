@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.budget.shared.api.BudgetApi
 import com.budget.shared.api.BudgetMode
+import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryRequest
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ data class CategoryEditUiState(
     val name: String = "",
     val parentId: String? = null,
     val budgetMode: BudgetMode? = null,
+    val budgetType: BudgetType = BudgetType.VARIABLE,
     val budgetAmount: String = "",
     val projectStartDate: String = "",
     val projectEndDate: String = "",
@@ -100,6 +102,7 @@ class CategoryEditViewModel(
             name = editingCategory.name,
             parentId = editingCategory.parentId,
             budgetMode = editingCategory.budgetMode,
+            budgetType = editingCategory.budgetType ?: BudgetType.VARIABLE,
             budgetAmount = editingCategory.budgetAmount ?: "",
             projectStartDate = editingCategory.projectStartDate ?: "",
             projectEndDate = editingCategory.projectEndDate ?: "",
@@ -135,6 +138,10 @@ class CategoryEditViewModel(
 
   fun updateBudgetMode(mode: BudgetMode?) {
     _uiState.update { it.copy(budgetMode = mode, error = null) }
+  }
+
+  fun updateBudgetType(type: BudgetType) {
+    _uiState.update { it.copy(budgetType = type, error = null) }
   }
 
   fun updateBudgetAmount(amount: String) {
@@ -180,7 +187,10 @@ class CategoryEditViewModel(
           name = name,
           parentId = state.parentId,
           budgetMode = budgetMode?.let { modeToString(it) },
-          budgetAmount = if (budgetMode != null && state.budgetAmount.isNotBlank()) state.budgetAmount.trim() else null,
+          budgetType = if (budgetMode != null) typeToString(state.budgetType) else null,
+          budgetAmount =
+              if (budgetMode != null && state.budgetAmount.isNotBlank()) state.budgetAmount.trim()
+              else null,
           projectStartDate =
               if (budgetMode == BudgetMode.PROJECT && state.projectStartDate.isNotBlank())
                   state.projectStartDate.trim()
@@ -197,6 +207,12 @@ class CategoryEditViewModel(
           BudgetMode.MONTHLY -> "monthly"
           BudgetMode.ANNUAL -> "annual"
           BudgetMode.PROJECT -> "project"
+        }
+
+    fun typeToString(type: BudgetType): String =
+        when (type) {
+          BudgetType.FIXED -> "fixed"
+          BudgetType.VARIABLE -> "variable"
         }
   }
 }

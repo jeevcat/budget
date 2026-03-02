@@ -236,10 +236,46 @@ impl std::str::FromStr for CategoryMethod {
     }
 }
 
+/// Whether a budgeted category represents a fixed or variable expense.
+///
+/// Fixed expenses (rent, mortgage) hit the budget predictably in a lump sum.
+/// Variable expenses (groceries, dining) are spread over the period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetType {
+    /// Expense that hits the budget predictably (rent, mortgage, subscriptions)
+    Fixed,
+    /// Expense you want to spread and minimize (groceries, dining)
+    Variable,
+}
+
+impl fmt::Display for BudgetType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed => write!(f, "fixed"),
+            Self::Variable => write!(f, "variable"),
+        }
+    }
+}
+
+impl std::str::FromStr for BudgetType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "fixed" => Ok(Self::Fixed),
+            "variable" => Ok(Self::Variable),
+            _ => Err(Error::InvalidBudgetType(s.to_owned())),
+        }
+    }
+}
+
 /// Budget status pace indicator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaceIndicator {
+    /// Fixed category: payment hasn't arrived yet
+    Pending,
     UnderBudget,
     OnTarget,
     OnTrack,
@@ -294,5 +330,40 @@ mod tests {
             serde_json::to_string(&CategoryMethod::Llm).unwrap(),
             "\"llm\""
         );
+    }
+
+    #[test]
+    fn budget_type_display_roundtrip() {
+        for (variant, expected) in [
+            (BudgetType::Fixed, "fixed"),
+            (BudgetType::Variable, "variable"),
+        ] {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<BudgetType>().unwrap(), variant);
+        }
+    }
+
+    #[test]
+    fn budget_type_from_str_invalid() {
+        assert!("unknown".parse::<BudgetType>().is_err());
+    }
+
+    #[test]
+    fn budget_type_serde_roundtrip() {
+        for variant in [BudgetType::Fixed, BudgetType::Variable] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let deserialized: BudgetType = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
+
+    #[test]
+    fn pace_indicator_pending_serde() {
+        assert_eq!(
+            serde_json::to_string(&PaceIndicator::Pending).unwrap(),
+            "\"pending\""
+        );
+        let parsed: PaceIndicator = serde_json::from_str("\"pending\"").unwrap();
+        assert_eq!(parsed, PaceIndicator::Pending);
     }
 }
