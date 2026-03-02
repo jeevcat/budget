@@ -13,6 +13,7 @@ enum class BudgetMode {
 @Serializable
 enum class PaceIndicator {
   @SerialName("under_budget") UNDER_BUDGET,
+  @SerialName("on_target") ON_TARGET,
   @SerialName("on_track") ON_TRACK,
   @SerialName("over_budget") OVER_BUDGET,
 }
@@ -34,6 +35,7 @@ data class BudgetStatus(
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long,
     val pace: PaceIndicator,
+    @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
 )
 
@@ -53,6 +55,7 @@ data class ProjectStatusEntry(
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long,
     val pace: PaceIndicator,
+    @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ProjectChildSpending> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,

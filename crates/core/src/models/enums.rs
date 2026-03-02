@@ -241,6 +241,7 @@ impl std::str::FromStr for CategoryMethod {
 #[serde(rename_all = "snake_case")]
 pub enum PaceIndicator {
     UnderBudget,
+    OnTarget,
     OnTrack,
     OverBudget,
 }

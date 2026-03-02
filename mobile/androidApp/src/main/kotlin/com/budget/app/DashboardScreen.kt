@@ -80,22 +80,31 @@ private val EuroCurrencyFormat: NumberFormat =
 // -- Pace colors -----------------------------------------------------------
 
 private val UnderBudgetColor = Color(0xFF76946A)
+private val OnTargetColor = Color(0xFF7E9CD8)
 private val OnTrackColor = Color(0xFFDCA561)
 private val OverBudgetColor = Color(0xFFC34043)
 
 private fun paceColor(pace: PaceIndicator): Color =
     when (pace) {
       PaceIndicator.UNDER_BUDGET -> UnderBudgetColor
+      PaceIndicator.ON_TARGET -> OnTargetColor
       PaceIndicator.ON_TRACK -> OnTrackColor
       PaceIndicator.OVER_BUDGET -> OverBudgetColor
     }
 
-private fun paceLabel(pace: PaceIndicator): String =
-    when (pace) {
-      PaceIndicator.UNDER_BUDGET -> "Under"
-      PaceIndicator.ON_TRACK -> "On track"
-      PaceIndicator.OVER_BUDGET -> "Over"
-    }
+private fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
+  val base =
+      when (pace) {
+        PaceIndicator.UNDER_BUDGET -> "Under pace"
+        PaceIndicator.ON_TARGET -> "On target"
+        PaceIndicator.ON_TRACK -> "On track"
+        PaceIndicator.OVER_BUDGET -> "Over pace"
+      }
+  if (delta != null && pace != PaceIndicator.ON_TARGET && pace != PaceIndicator.ON_TRACK) {
+    return "$base (${formatAmount(delta, showSign = true)})"
+  }
+  return base
+}
 
 // -- Formatting helpers ----------------------------------------------------
 
@@ -254,6 +263,7 @@ private fun DashboardTabContent(
                 budget = status.budgetAmount,
                 remaining = status.remaining,
                 pace = status.pace,
+                paceDelta = status.paceDelta,
                 barMax = state.monthlySummary.barMax,
                 selected = false,
                 onClick = { viewModel.selectCategory(status.categoryId) },
@@ -279,6 +289,7 @@ private fun DashboardTabContent(
                 budget = status.budgetAmount,
                 remaining = status.remaining,
                 pace = status.pace,
+                paceDelta = status.paceDelta,
                 barMax = state.annualSummary.barMax,
                 selected = false,
                 onClick = { viewModel.selectCategory(status.categoryId) },
@@ -298,6 +309,7 @@ private fun DashboardTabContent(
                 budget = project.budgetAmount,
                 remaining = project.remaining,
                 pace = project.pace,
+                paceDelta = project.paceDelta,
                 barMax = state.projectSummary.barMax,
                 selected = false,
                 onClick = { viewModel.selectCategory(project.categoryId) },
@@ -462,6 +474,7 @@ private fun CategoryRow(
     budget: Double,
     remaining: Double,
     pace: PaceIndicator,
+    paceDelta: Double,
     barMax: Double,
     selected: Boolean,
     onClick: () -> Unit,
@@ -534,7 +547,7 @@ private fun CategoryRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          PaceBadge(pace = pace)
+          PaceBadge(pace = pace, delta = paceDelta)
           Text(
               text = formatAmount(remaining, showSign = true),
               style = MaterialTheme.typography.labelMedium,
@@ -601,10 +614,10 @@ private fun SpendBar(
 // -- Pace badge ------------------------------------------------------------
 
 @Composable
-private fun PaceBadge(pace: PaceIndicator) {
+private fun PaceBadge(pace: PaceIndicator, delta: Double? = null) {
   val color = paceColor(pace)
   Text(
-      text = paceLabel(pace),
+      text = paceLabel(pace, delta),
       style = MaterialTheme.typography.labelSmall,
       color = color,
       modifier =
@@ -690,6 +703,7 @@ private data class CategoryInfo(
     val budget: Double,
     val remaining: Double,
     val pace: PaceIndicator,
+    val paceDelta: Double,
     val barMax: Double,
 )
 
@@ -704,6 +718,7 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
               s.budgetAmount,
               s.remaining,
               s.pace,
+              s.paceDelta,
               state.monthlySummary.barMax,
           )
     }
@@ -716,6 +731,7 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
               s.budgetAmount,
               s.remaining,
               s.pace,
+              s.paceDelta,
               state.annualSummary.barMax,
           )
     }
@@ -728,6 +744,7 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
               p.budgetAmount,
               p.remaining,
               p.pace,
+              p.paceDelta,
               state.projectSummary.barMax,
           )
     }
@@ -839,7 +856,7 @@ private fun CategoryDetailHeader(info: CategoryInfo) {
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
-        PaceBadge(pace = info.pace)
+        PaceBadge(pace = info.pace, delta = info.paceDelta)
       }
 
       Spacer(modifier = Modifier.height(8.dp))

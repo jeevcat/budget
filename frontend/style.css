@@ -330,6 +330,10 @@ dialog > form > div {
   background: var(--success);
   opacity: 0.7;
 }
+.spend-bar-on_target {
+  background: var(--primary);
+  opacity: 0.7;
+}
 .spend-bar-on_track {
   background: var(--warning);
   opacity: 0.8;

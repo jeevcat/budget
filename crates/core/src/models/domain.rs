@@ -194,5 +194,8 @@ pub struct BudgetStatus {
     /// Monthly = days left, Annual = months left, Project = days left (-1 if open-ended)
     pub time_left: i64,
     pub pace: PaceIndicator,
+    /// Signed deviation from pro-rata expected spend (`spent - expected`).
+    /// Positive = over pace, negative = under pace.
+    pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
 }

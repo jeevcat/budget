@@ -231,20 +231,36 @@ pub fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
 }
 
 /// Compare actual spending to a pro-rata linear budget over elapsed/total periods.
-fn compute_pace(spent: Decimal, budget: Decimal, elapsed: i64, total: i64) -> PaceIndicator {
+///
+/// Returns the pace indicator and the signed delta (`spent - expected_spend`).
+/// Positive delta = over pace, negative = under pace.
+fn compute_pace(
+    spent: Decimal,
+    budget: Decimal,
+    elapsed: i64,
+    total: i64,
+) -> (PaceIndicator, Decimal) {
     if total <= 0 || budget == Decimal::ZERO {
+        let delta = spent - budget;
         if spent > budget {
-            PaceIndicator::OverBudget
+            (PaceIndicator::OverBudget, delta)
+        } else if spent == budget && budget > Decimal::ZERO {
+            (PaceIndicator::OnTarget, Decimal::ZERO)
         } else {
-            PaceIndicator::OnTrack
+            (PaceIndicator::OnTrack, delta)
         }
     } else {
         let fraction = Decimal::from(elapsed) / Decimal::from(total);
         let expected_spend = budget * fraction;
-        if spent > expected_spend {
-            PaceIndicator::OverBudget
+        let delta = spent - expected_spend;
+        let upper = expected_spend * Decimal::new(102, 2);
+        let lower = expected_spend * Decimal::new(98, 2);
+        if spent > upper {
+            (PaceIndicator::OverBudget, delta)
+        } else if spent >= lower {
+            (PaceIndicator::OnTarget, delta)
         } else {
-            PaceIndicator::UnderBudget
+            (PaceIndicator::UnderBudget, delta)
         }
     }
 }
@@ -299,7 +315,7 @@ fn compute_monthly_status(
 
     let total_days = (end_date - current_month.start_date).num_days();
     let elapsed_days = (today - current_month.start_date).num_days().max(0);
-    let pace = compute_pace(spent, budget_amount, elapsed_days, total_days);
+    let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_days, total_days);
 
     BudgetStatus {
         category_id: category.id,
@@ -309,6 +325,7 @@ fn compute_monthly_status(
         remaining,
         time_left,
         pace,
+        pace_delta,
         budget_mode: BudgetMode::Monthly,
     }
 }
@@ -343,7 +360,7 @@ fn compute_annual_status(
         });
     let time_left = (total_year_months - elapsed_months).max(0);
 
-    let pace = compute_pace(spent, budget_amount, elapsed_months, total_year_months);
+    let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_months, total_year_months);
 
     BudgetStatus {
         category_id: category.id,
@@ -353,6 +370,7 @@ fn compute_annual_status(
         remaining,
         time_left,
         pace,
+        pace_delta,
         budget_mode: BudgetMode::Annual,
     }
 }
@@ -424,18 +442,16 @@ fn compute_project_status(
     let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
-    let (time_left, pace) = match (start, end) {
+    let (time_left, pace, pace_delta) = match (start, end) {
         (Some(s), Some(e)) if budget_amount > Decimal::ZERO => {
             let total_days = (e - s).num_days();
             let elapsed_days = (today - s).num_days().max(0);
             let tl = (e - today).num_days().max(0);
-            (
-                tl,
-                compute_pace(spent, budget_amount, elapsed_days, total_days),
-            )
+            let (p, d) = compute_pace(spent, budget_amount, elapsed_days, total_days);
+            (tl, p, d)
         }
         // Open-ended or no budget: can't compute pace
-        _ => (-1, PaceIndicator::OnTrack),
+        _ => (-1, PaceIndicator::OnTrack, Decimal::ZERO),
     };
 
     BudgetStatus {
@@ -446,6 +462,7 @@ fn compute_project_status(
         remaining,
         time_left,
         pace,
+        pace_delta,
         budget_mode: BudgetMode::Project,
     }
 }
@@ -923,6 +940,10 @@ mod tests {
         assert_eq!(status.remaining, dec!(400));
         assert_eq!(status.budget_amount, dec!(500));
         assert_eq!(status.pace, PaceIndicator::UnderBudget);
+        assert!(
+            status.pace_delta < Decimal::ZERO,
+            "under-pace delta should be negative"
+        );
         assert!(status.time_left > 0);
         assert_eq!(status.budget_mode, BudgetMode::Monthly);
     }
@@ -949,6 +970,10 @@ mod tests {
         assert_eq!(status.spent, dec!(250));
         assert_eq!(status.remaining, dec!(-50));
         assert_eq!(status.pace, PaceIndicator::OverBudget);
+        assert!(
+            status.pace_delta > Decimal::ZERO,
+            "over-pace delta should be positive"
+        );
         assert_eq!(status.budget_mode, BudgetMode::Monthly);
     }
 
@@ -1127,6 +1152,7 @@ mod tests {
         assert_eq!(status.spent, dec!(1000));
         assert_eq!(status.time_left, -1);
         assert_eq!(status.pace, PaceIndicator::OnTrack);
+        assert_eq!(status.pace_delta, Decimal::ZERO);
     }
 
     #[test]
@@ -1437,5 +1463,53 @@ mod tests {
         // Net: -5000 + -3000 + 800 = -7200, negated → 7200
         assert_eq!(status.spent, dec!(7200));
         assert_eq!(status.remaining, dec!(2800));
+    }
+
+    #[test]
+    fn pace_exactly_at_expected_is_on_target() {
+        // Spending exactly at the pro-rata expected amount → OnTarget
+        let (pace, delta) = compute_pace(dec!(250), dec!(500), 15, 30);
+        assert_eq!(pace, PaceIndicator::OnTarget);
+        assert_eq!(delta, Decimal::ZERO);
+    }
+
+    #[test]
+    fn pace_within_tolerance_band_is_on_target() {
+        // 99% of expected (500 * 15/30 = 250, 99% = 247.5) → OnTarget
+        let (pace, delta) = compute_pace(dec!(247.5), dec!(500), 15, 30);
+        assert_eq!(pace, PaceIndicator::OnTarget);
+        assert!(
+            delta < Decimal::ZERO,
+            "delta should be negative (under expected)"
+        );
+    }
+
+    #[test]
+    fn pace_above_tolerance_band_is_over_budget() {
+        // 103% of expected (500 * 15/30 = 250, 102% = 255) → OverBudget
+        let (pace, delta) = compute_pace(dec!(257.5), dec!(500), 15, 30);
+        assert_eq!(pace, PaceIndicator::OverBudget);
+        assert!(
+            delta > Decimal::ZERO,
+            "delta should be positive (over expected)"
+        );
+        assert_eq!(delta, dec!(7.5));
+    }
+
+    #[test]
+    fn pace_well_below_expected_is_under_budget() {
+        // Well below the 98% lower band → UnderBudget
+        let (pace, delta) = compute_pace(dec!(100), dec!(500), 15, 30);
+        assert_eq!(pace, PaceIndicator::UnderBudget);
+        assert!(delta < Decimal::ZERO, "delta should be negative");
+        assert_eq!(delta, dec!(-150));
+    }
+
+    #[test]
+    fn pace_zero_budget_spent_equals_budget_is_on_target() {
+        // total=0 branch: spent == budget && budget > 0 → OnTarget
+        let (pace, delta) = compute_pace(dec!(500), dec!(500), 0, 0);
+        assert_eq!(pace, PaceIndicator::OnTarget);
+        assert_eq!(delta, Decimal::ZERO);
     }
 }

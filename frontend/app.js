@@ -442,6 +442,7 @@ function formatRemittanceInfo(segments) {
 
 function paceBadge(pace) {
   if (pace === "under_budget") return "success";
+  if (pace === "on_target") return "primary";
   if (pace === "on_track") return "warning";
   return "danger";
 }
@@ -450,10 +451,18 @@ function paceBadge(pace) {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-function paceLabel(pace) {
-  if (pace === "under_budget") return "Under";
-  if (pace === "on_track") return "On track";
-  return "Over";
+function paceLabel(pace, delta) {
+  const base =
+    pace === "under_budget"
+      ? "Under pace"
+      : pace === "on_target"
+        ? "On target"
+        : pace === "on_track"
+          ? "On track"
+          : "Over pace";
+  if (delta != null && pace !== "on_track" && pace !== "on_target")
+    return `${base} (${formatAmount(delta, { decimals: 0, sign: true })})`;
+  return base;
 }
 
 function ProgressRing({ spent, budget, pace, size = 48 }) {
@@ -464,9 +473,11 @@ function ProgressRing({ spent, budget, pace, size = 48 }) {
   const color =
     pace === "over_budget"
       ? "var(--danger)"
-      : pace === "on_track"
-        ? "var(--warning)"
-        : "var(--success)";
+      : pace === "on_target"
+        ? "var(--primary)"
+        : pace === "on_track"
+          ? "var(--warning)"
+          : "var(--success)";
 
   return html`
     <svg
@@ -622,7 +633,7 @@ function BudgetSection({
                 </div>
                 <div class="vstack dash-cat-end">
                   <span class="badge small ${paceBadge(s.pace)}"
-                    >${paceLabel(s.pace)}</span
+                    >${paceLabel(s.pace, s.pace_delta)}</span
                   >
                   <span
                     class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
@@ -695,7 +706,7 @@ function ProjectDrillDown({
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Status</span>
         <span class="dash-stat-value">
-          <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace)}</span>
+          <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace, project.pace_delta)}</span>
         </span>
       </article>
     </div>

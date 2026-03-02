@@ -204,6 +204,7 @@ private fun makeFetchResult(
                       remaining = 250.0,
                       timeLeft = 10,
                       pace = PaceIndicator.UNDER_BUDGET,
+                      paceDelta = -83.33,
                       budgetMode = BudgetMode.MONTHLY,
                   ),
               ),
