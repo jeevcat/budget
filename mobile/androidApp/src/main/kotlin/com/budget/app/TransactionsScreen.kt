@@ -1,21 +1,17 @@
 package com.budget.app
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,8 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.budget.shared.api.Transaction
@@ -95,6 +89,8 @@ private fun TransactionList(
     state: TransactionsUiState,
     onSelect: (Transaction) -> Unit,
 ) {
+  val categoryMap = state.categories.associateBy { it.id }
+
   LazyColumn(
       modifier = Modifier.fillMaxSize(),
       contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
@@ -114,75 +110,23 @@ private fun TransactionList(
     }
 
     items(state.transactions, key = { it.id }) { txn ->
-      TransactionCard(
-          transaction = txn,
-          categories = state.categories,
+      val catName = resolveCategoryName(txn, categoryMap)
+      TransactionRow(
+          merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
+          date = formatShortDate(txn.postedDate),
+          amount = formatTransactionAmount(txn.amount),
+          categoryName = catName,
+          suggestion = txn.suggestedCategory,
           onClick = { onSelect(txn) },
       )
     }
   }
 }
 
-// -- Transaction card ------------------------------------------------------
-
-@Composable
-private fun TransactionCard(
-    transaction: Transaction,
-    categories: List<DisplayCategory>,
-    onClick: () -> Unit,
-) {
-  val merchant =
-      transaction.merchantName.ifEmpty { transaction.remittanceInformation.firstOrNull() ?: "" }
-  val subtitle = buildString {
-    append(formatShortDate(transaction.postedDate))
-    if (transaction.categoryMethod != null) {
-      val catName = categories.find { it.id == transaction.categoryId }?.displayName
-      if (catName != null) append(" · $catName")
-    }
-  }
-
-  ElevatedCard(
-      modifier = Modifier.fillMaxWidth(),
-  ) {
-    Row(
-        modifier =
-            Modifier.clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-            text = merchant,
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-      }
-      Spacer(modifier = Modifier.width(12.dp))
-      Text(
-          text = formatTransactionAmount(transaction.amount),
-          style = MaterialTheme.typography.bodyLarge,
-          fontWeight = FontWeight.Medium,
-      )
-    }
-
-    // Show LLM suggestion inside the card
-    if (transaction.suggestedCategory != null) {
-      Text(
-          text = "Suggestion: ${transaction.suggestedCategory}",
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.primary,
-          modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-      )
-    }
-  }
+private fun resolveCategoryName(
+    txn: Transaction,
+    categoryMap: Map<String, DisplayCategory>,
+): String? {
+  if (txn.categoryMethod == null) return null
+  return txn.categoryId?.let { categoryMap[it]?.displayName }
 }

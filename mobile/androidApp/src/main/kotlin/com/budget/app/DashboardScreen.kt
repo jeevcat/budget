@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -45,7 +44,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,7 +61,7 @@ import com.budget.shared.viewmodel.DashboardUiState
 import com.budget.shared.viewmodel.DashboardViewModel
 import kotlin.math.abs
 
-private const val MAX_VISIBLE_TRANSACTIONS = 50
+private const val UNBUDGETED_CATEGORY_ID = "__unbudgeted__"
 
 // -- Pace colors -----------------------------------------------------------
 
@@ -158,7 +156,6 @@ fun DashboardContent(
         DashboardTabContent(
             state = state,
             viewModel = viewModel,
-            onTransactionClick = onTransactionClick,
         )
       }
     }
@@ -172,7 +169,6 @@ fun DashboardContent(
 private fun DashboardTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
-    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   val tabs = buildList {
     add(BudgetMode.MONTHLY)
@@ -212,24 +208,9 @@ private fun DashboardTabContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       when (state.selectedTab) {
-        BudgetMode.MONTHLY ->
-            monthlyTabContent(
-                state = state,
-                viewModel = viewModel,
-                onTransactionClick = onTransactionClick,
-            )
-        BudgetMode.ANNUAL ->
-            annualTabContent(
-                state = state,
-                viewModel = viewModel,
-                onTransactionClick = onTransactionClick,
-            )
-        BudgetMode.PROJECT ->
-            projectTabContent(
-                state = state,
-                viewModel = viewModel,
-                onTransactionClick = onTransactionClick,
-            )
+        BudgetMode.MONTHLY -> monthlyTabContent(state = state, viewModel = viewModel)
+        BudgetMode.ANNUAL -> annualTabContent(state = state, viewModel = viewModel)
+        BudgetMode.PROJECT -> projectTabContent(state = state, viewModel = viewModel)
       }
     }
   }
@@ -240,7 +221,6 @@ private fun DashboardTabContent(
 private fun LazyListScope.monthlyTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
-    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   item {
     MonthNavigator(
@@ -249,7 +229,6 @@ private fun LazyListScope.monthlyTabContent(
         isCurrentMonth = state.isCurrentMonth,
         hasPrev = state.hasPrevMonth,
         hasNext = state.hasNextMonth,
-        uncategorizedCount = state.uncategorizedCount,
         onPrev = viewModel::goToPreviousMonth,
         onNext = viewModel::goToNextMonth,
     )
@@ -273,19 +252,15 @@ private fun LazyListScope.monthlyTabContent(
       UnbudgetedRow(
           spent = state.unbudgetedSpent,
           count = state.unbudgetedTransactions.size,
+          onClick = { viewModel.selectCategory(UNBUDGETED_CATEGORY_ID) },
       )
     }
   }
-  transactionSection(
-      transactions = state.monthlyTransactions,
-      onTransactionClick = onTransactionClick,
-  )
 }
 
 private fun LazyListScope.annualTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
-    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   item {
     AnnualHeader(
@@ -307,16 +282,11 @@ private fun LazyListScope.annualTabContent(
         onClick = { viewModel.selectCategory(status.categoryId) },
     )
   }
-  transactionSection(
-      transactions = state.annualTransactions,
-      onTransactionClick = onTransactionClick,
-  )
 }
 
 private fun LazyListScope.projectTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
-    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   item { SummaryCards(summary = state.projectSummary) }
   items(state.projects, key = { it.categoryId }) { project ->
@@ -332,10 +302,6 @@ private fun LazyListScope.projectTabContent(
         onClick = { viewModel.selectCategory(project.categoryId) },
     )
   }
-  transactionSection(
-      transactions = state.projectTransactions,
-      onTransactionClick = onTransactionClick,
-  )
 }
 
 // -- Month navigator -------------------------------------------------------
@@ -347,7 +313,6 @@ private fun MonthNavigator(
     isCurrentMonth: Boolean,
     hasPrev: Boolean,
     hasNext: Boolean,
-    uncategorizedCount: Int,
     onPrev: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -376,14 +341,6 @@ private fun MonthNavigator(
     }
     IconButton(onClick = onNext, enabled = hasNext) {
       Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next month")
-    }
-    if (uncategorizedCount > 0) {
-      Spacer(modifier = Modifier.width(4.dp))
-      Text(
-          text = "$uncategorizedCount uncategorized",
-          style = MaterialTheme.typography.labelSmall,
-          color = AbovePaceColor,
-      )
     }
   }
 }
@@ -414,10 +371,10 @@ private fun AnnualHeader(budgetYear: Int, timeLabel: String) {
 // -- Unbudgeted row --------------------------------------------------------
 
 @Composable
-private fun UnbudgetedRow(spent: Double, count: Int) {
+private fun UnbudgetedRow(spent: Double, count: Int, onClick: () -> Unit) {
   ElevatedCard(modifier = Modifier.fillMaxWidth()) {
     Row(
-        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+        modifier = Modifier.clickable(onClick = onClick).padding(12.dp).fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -671,72 +628,22 @@ private fun PaceBadge(pace: PaceIndicator, delta: Double? = null) {
   )
 }
 
-// -- Transaction section ---------------------------------------------------
+// -- Category name map (for badges) ----------------------------------------
 
-private fun LazyListScope.transactionSection(
-    transactions: List<TransactionEntry>,
-    onTransactionClick: ((String) -> Unit)? = null,
-) {
-  if (transactions.isEmpty()) return
-
-  item {
-    Spacer(modifier = Modifier.height(4.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Text(
-          text = "Transactions",
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.Bold,
-      )
-      Text(
-          text = "${transactions.size}",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
+private fun buildCategoryNameMap(state: DashboardUiState): Map<String, String> {
+  val map = mutableMapOf<String, String>()
+  for (s in state.monthlyStatuses) {
+    map[s.categoryId] = s.categoryName
+    for (c in s.children) map[c.categoryId] = c.categoryName
   }
-
-  items(transactions.take(MAX_VISIBLE_TRANSACTIONS), key = { it.id }) { txn ->
-    TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+  for (s in state.annualStatuses) {
+    map[s.categoryId] = s.categoryName
+    for (c in s.children) map[c.categoryId] = c.categoryName
   }
-}
-
-@Composable
-private fun TransactionRow(txn: TransactionEntry, onClick: (() -> Unit)? = null) {
-  val modifier =
-      if (onClick != null) {
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp)
-      } else {
-        Modifier.fillMaxWidth().padding(vertical = 6.dp)
-      }
-  Row(
-      modifier = modifier,
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Text(
-          text = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
-          style = MaterialTheme.typography.bodyMedium,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-      )
-      Text(
-          text = formatShortDate(txn.postedDate),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
-    Text(
-        text = formatAmount(txn.amount),
-        style = MaterialTheme.typography.bodyMedium,
-        fontWeight = FontWeight.Medium,
-        textAlign = TextAlign.End,
-    )
+  for (p in state.projects) {
+    map[p.categoryId] = p.categoryName
   }
+  return map
 }
 
 // -- Category transactions detail screen ------------------------------------
@@ -752,6 +659,17 @@ private data class CategoryInfo(
 )
 
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
+  if (categoryId == UNBUDGETED_CATEGORY_ID) {
+    return CategoryInfo(
+        name = "Unbudgeted",
+        spent = state.unbudgetedSpent,
+        budget = 0.0,
+        remaining = 0.0,
+        pace = PaceIndicator.PENDING,
+        paceDelta = 0.0,
+        barMax = state.unbudgetedSpent,
+    )
+  }
   when (state.selectedTab) {
     BudgetMode.MONTHLY -> {
       val s = state.monthlyStatuses.find { it.categoryId == categoryId }
@@ -810,6 +728,9 @@ private fun resolveTransactions(
     state: DashboardUiState,
     categoryId: String,
 ): List<TransactionEntry> {
+  if (categoryId == UNBUDGETED_CATEGORY_ID) {
+    return state.unbudgetedTransactions
+  }
   val all =
       when (state.selectedTab) {
         BudgetMode.MONTHLY -> state.monthlyTransactions
@@ -835,6 +756,7 @@ private fun CategoryTransactionsContent(
   val transactions = resolveTransactions(state, categoryId)
   val status = resolveBudgetStatus(state, categoryId)
   val hasChildren = status?.hasChildren == true
+  val categoryNames = remember(state) { buildCategoryNameMap(state) }
 
   LazyColumn(
       modifier = modifier.fillMaxSize(),
@@ -884,7 +806,13 @@ private fun CategoryTransactionsContent(
       )
     } else {
       items(transactions, key = { it.id }) { txn ->
-        TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+        TransactionRow(
+            merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
+            date = formatShortDate(txn.postedDate),
+            amount = formatAmount(txn.amount),
+            categoryName = txn.categoryId?.let { categoryNames[it] },
+            onClick = onTransactionClick?.let { { it(txn.id) } },
+        )
       }
     }
   }
@@ -921,7 +849,12 @@ private fun LazyListScope.subcategoryTransactionSections(
       }
     }
     items(childTxns, key = { it.id }) { txn ->
-      TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+      TransactionRow(
+          merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
+          date = formatShortDate(txn.postedDate),
+          amount = formatAmount(txn.amount),
+          onClick = onTransactionClick?.let { { it(txn.id) } },
+      )
     }
   }
 
@@ -950,7 +883,12 @@ private fun LazyListScope.subcategoryTransactionSections(
       }
     }
     items(directTxns, key = { it.id }) { txn ->
-      TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+      TransactionRow(
+          merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
+          date = formatShortDate(txn.postedDate),
+          amount = formatAmount(txn.amount),
+          onClick = onTransactionClick?.let { { it(txn.id) } },
+      )
     }
   }
 }

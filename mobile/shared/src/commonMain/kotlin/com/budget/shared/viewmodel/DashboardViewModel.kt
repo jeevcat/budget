@@ -45,7 +45,6 @@ data class DashboardUiState(
     val selectedCategoryId: String? = null,
     val unbudgetedSpent: Double = 0.0,
     val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
-    val uncategorizedCount: Int = 0,
     val budgetYear: Int = 0,
     val monthlyTimeLabel: String = "",
     val annualTimeLabel: String = "",
@@ -163,11 +162,9 @@ class DashboardViewModel(
     activeMonthIndex = sortedMonths.indexOfFirst { it.id == activeMonth.id }
     val isCurrentMonth = activeMonth.endDate == null
 
-    val monthly =
-        resp.statuses.filter { it.budgetMode == BudgetMode.MONTHLY }.sortedByDescending { it.spent }
-    val annual =
-        resp.statuses.filter { it.budgetMode == BudgetMode.ANNUAL }.sortedByDescending { it.spent }
-    val projects = resp.projects.sortedByDescending { it.spent }
+    val monthly = sortByUrgency(resp.statuses.filter { it.budgetMode == BudgetMode.MONTHLY })
+    val annual = sortByUrgency(resp.statuses.filter { it.budgetMode == BudgetMode.ANNUAL })
+    val projects = sortByUrgency(resp.projects)
 
     val monthlyTimeLabel =
         if (monthly.isNotEmpty()) {
@@ -202,7 +199,6 @@ class DashboardViewModel(
               resp.unbudgetedTransactions.sortedByDescending { t -> t.postedDate },
           annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
           projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
-          uncategorizedCount = resp.uncategorizedCount,
           budgetYear = resp.budgetYear,
           monthlyTimeLabel = monthlyTimeLabel,
           annualTimeLabel = annualTimeLabel,
@@ -212,6 +208,18 @@ class DashboardViewModel(
       )
     }
   }
+
+  private fun paceOrdinal(pace: PaceIndicator): Int =
+      when (pace) {
+        PaceIndicator.OVER_BUDGET -> 0
+        PaceIndicator.ABOVE_PACE -> 1
+        PaceIndicator.ON_TRACK -> 2
+        PaceIndicator.UNDER_BUDGET -> 3
+        PaceIndicator.PENDING -> 4
+      }
+
+  private fun <T : Summarizable> sortByUrgency(items: List<T>): List<T> =
+      items.sortedWith(compareBy<T> { paceOrdinal(it.pace) }.thenByDescending { it.spent })
 
   private fun computeSummary(items: List<Summarizable>): BudgetSummary {
     val budget = items.sumOf { it.budgetAmount }

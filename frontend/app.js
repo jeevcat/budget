@@ -886,9 +886,25 @@ function Dashboard() {
     };
   };
 
-  const enriched = status
-    .map(enrichStatus)
-    .sort((a, b) => Number(b.spent) - Number(a.spent));
+  const paceOrdinal = (pace) => {
+    switch (pace) {
+      case "over_budget":
+        return 0;
+      case "above_pace":
+        return 1;
+      case "on_track":
+        return 2;
+      case "under_budget":
+        return 3;
+      default:
+        return 4;
+    }
+  };
+  const byUrgency = (a, b) =>
+    paceOrdinal(a.pace) - paceOrdinal(b.pace) ||
+    Number(b.spent) - Number(a.spent);
+
+  const enriched = status.map(enrichStatus).sort(byUrgency);
 
   // Split by budget mode
   const monthly = enriched.filter(
@@ -897,7 +913,7 @@ function Dashboard() {
   const annual = enriched.filter((s) => s.budgetMode === "annual");
   const projects = (statusResp.projects || [])
     .map(enrichStatus)
-    .sort((a, b) => Number(b.spent) - Number(a.spent));
+    .sort(byUrgency);
 
   // Per-group totals helper
   const groupTotals = (items) => {
@@ -918,7 +934,6 @@ function Dashboard() {
   const pTotals = groupTotals(projects);
 
   // All pre-computed by the backend — no client-side budget logic
-  const uncategorizedCount = statusResp.uncategorized_count;
   const monthBudgetTxns = statusResp.monthly_transactions;
   const annualBudgetTxns = statusResp.annual_transactions;
   const projectBudgetTxns = statusResp.project_transactions;
@@ -1076,18 +1091,6 @@ function Dashboard() {
               aria-label="Next month"
             >\u203A</button>
           </div>
-          ${
-            uncategorizedCount > 0 &&
-            html`
-              <a
-                href="#/transactions?cat=__none"
-                class="badge warning"
-                style="margin-left:auto;text-decoration:none"
-              >
-                ${uncategorizedCount} uncategorized
-              </a>
-            `
-          }
         </div>
         ${
           monthly.length > 0

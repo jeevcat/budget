@@ -58,12 +58,10 @@ struct StatusResponse {
     annual_transactions: Vec<Transaction>,
     /// Transactions contributing to project budgets.
     project_transactions: Vec<Transaction>,
-    /// Transactions in categories with no budget configuration, within the active month.
+    /// Transactions in categories with no budget config or with no category at all.
     unbudgeted_transactions: Vec<Transaction>,
-    /// Total spending on unbudgeted categories in the active month (positive = money spent).
+    /// Total spending on unbudgeted/uncategorized transactions (positive = money spent).
     unbudgeted_spent: Decimal,
-    /// Number of uncategorized, uncorrelated transactions in the active month.
-    uncategorized_count: u32,
     /// The budget year (calendar year of the January-anchored start).
     budget_year: i32,
 }
@@ -123,7 +121,6 @@ struct ClassifiedTransactions {
     project: Vec<Transaction>,
     unbudgeted: Vec<Transaction>,
     unbudgeted_spent: Decimal,
-    uncategorized_count: u32,
     budget_year: i32,
 }
 
@@ -180,7 +177,17 @@ fn classify_transactions(
         .map(|c| c.id)
         .collect();
 
-    let unbudgeted: Vec<Transaction> = budget_txns
+    let uncategorized: Vec<Transaction> = transactions
+        .iter()
+        .filter(|t| {
+            is_in_budget_month(t.posted_date, month)
+                && t.category_id.is_none()
+                && t.correlation.is_none()
+        })
+        .cloned()
+        .collect();
+
+    let mut unbudgeted: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
             t.category_id.is_some_and(|cid| none_cat_ids.contains(&cid))
@@ -188,6 +195,7 @@ fn classify_transactions(
         })
         .map(|t| (*t).clone())
         .collect();
+    unbudgeted.extend(uncategorized);
 
     let unbudgeted_spent = -unbudgeted
         .iter()
@@ -197,17 +205,6 @@ fn classify_transactions(
         .into_iter()
         .cloned()
         .collect();
-
-    let uncategorized_count: u32 = transactions
-        .iter()
-        .filter(|t| {
-            is_in_budget_month(t.posted_date, month)
-                && t.category_id.is_none()
-                && t.correlation.is_none()
-        })
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX);
 
     let budget_year = year_months.first().map_or_else(
         || chrono::Datelike::year(&month.start_date),
@@ -220,7 +217,6 @@ fn classify_transactions(
         project,
         unbudgeted,
         unbudgeted_spent,
-        uncategorized_count,
         budget_year,
     }
 }
@@ -369,7 +365,6 @@ async fn status(
         project_transactions: classified.project,
         unbudgeted_transactions: classified.unbudgeted,
         unbudgeted_spent: classified.unbudgeted_spent,
-        uncategorized_count: classified.uncategorized_count,
         budget_year: classified.budget_year,
     }))
 }
