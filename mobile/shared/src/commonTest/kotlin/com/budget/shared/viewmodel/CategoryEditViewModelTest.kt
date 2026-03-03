@@ -301,6 +301,123 @@ class CategoryEditViewModelTest {
   }
 
   @Test
+  fun editingSubcategoryIncludesCurrentParentInAvailableParents() = runTest {
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+            Category(id = "b", name = catName("Beta"), transactionCount = 0),
+            Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
+        )
+    val editing = Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0)
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+
+    val state = vm.uiState.value
+    assertEquals("a", state.parentId)
+    val parents = state.availableParents
+    // "a" and "b" are root categories, "c" excluded (self)
+    assertEquals(2, parents.size)
+    val parentNames = parents.map { it.name }.toSet()
+    assertTrue("Alpha" in parentNames)
+    assertTrue("Beta" in parentNames)
+    // Current parent resolves to a name (not "None")
+    val selectedName = parents.find { it.id == state.parentId }?.name
+    assertEquals("Alpha", selectedName)
+  }
+
+  @Test
+  fun editingNestedSubcategoryIncludesNonRootParent() = runTest {
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Root"), transactionCount = 0),
+            Category(id = "b", name = catName("Mid"), parentId = "a", transactionCount = 0),
+            Category(id = "c", name = catName("Leaf"), parentId = "b", transactionCount = 0),
+        )
+    val editing = Category(id = "c", name = catName("Leaf"), parentId = "b", transactionCount = 0)
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+
+    val state = vm.uiState.value
+    assertEquals("b", state.parentId)
+    // "b" has parentId != null but is included because it's the current parent
+    val selectedName = state.availableParents.find { it.id == state.parentId }?.name
+    assertEquals("Mid", selectedName)
+  }
+
+  @Test
+  fun newCategoryShowsAllRootCategoriesAsParents() = runTest {
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+            Category(id = "b", name = catName("Beta"), transactionCount = 0),
+            Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
+        )
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo)
+
+    val parents = vm.uiState.value.availableParents
+    // Only root categories shown; "c" excluded (has parent)
+    assertEquals(2, parents.size)
+    assertEquals("Alpha", parents[0].name)
+    assertEquals("Beta", parents[1].name)
+  }
+
+  @Test
+  fun editingSubcategoryDoesNotDuplicateCurrentParent() = runTest {
+    // Parent "a" is already a root category (parentId == null), so it qualifies
+    // both as a root and as the current parent — should not appear twice
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Food"), transactionCount = 0),
+            Category(id = "b", name = catName("Groceries"), parentId = "a", transactionCount = 0),
+        )
+    val editing =
+        Category(id = "b", name = catName("Groceries"), parentId = "a", transactionCount = 0)
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+
+    val parents = vm.uiState.value.availableParents
+    assertEquals(1, parents.size)
+    assertEquals("Food", parents[0].name)
+  }
+
+  @Test
+  fun editingRootCategoryExcludesSelfFromParents() = runTest {
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+            Category(id = "b", name = catName("Beta"), transactionCount = 0),
+        )
+    val editing = Category(id = "a", name = catName("Alpha"), transactionCount = 0)
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+
+    val state = vm.uiState.value
+    assertNull(state.parentId)
+    val parents = state.availableParents
+    assertEquals(1, parents.size)
+    assertEquals("Beta", parents[0].name)
+  }
+
+  @Test
+  fun editingSubcategoryWithDeletedParentShowsNone() = runTest {
+    // Parent "x" no longer exists in the categories list
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+        )
+    val editing = Category(id = "b", name = catName("Orphan"), parentId = "x", transactionCount = 0)
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+
+    val state = vm.uiState.value
+    assertEquals("x", state.parentId)
+    // Parent "x" doesn't exist, so it can't be resolved
+    val selectedName = state.availableParents.find { it.id == state.parentId }?.name
+    assertNull(selectedName)
+  }
+
+  @Test
   fun modeToStringConversions() {
     assertEquals("monthly", CategoryEditViewModel.modeToString(BudgetMode.MONTHLY))
     assertEquals("annual", CategoryEditViewModel.modeToString(BudgetMode.ANNUAL))

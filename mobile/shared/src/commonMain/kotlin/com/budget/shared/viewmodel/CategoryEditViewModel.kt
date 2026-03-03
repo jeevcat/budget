@@ -63,9 +63,12 @@ class CategoryEditViewModel(
     viewModelScope.launch {
       try {
         val categories = repository.getCategories()
+        val currentParentId = editingCategory?.parentId
         val parents =
             categories
-                .filter { it.parentId == null && it.id != editingCategory?.id }
+                .filter {
+                  (it.parentId == null || it.id == currentParentId) && it.id != editingCategory?.id
+                }
                 .sortedBy { it.name.value.lowercase() }
                 .map { ParentOption(id = it.id, name = it.name.value) }
         _uiState.update { it.copy(availableParents = parents) }
