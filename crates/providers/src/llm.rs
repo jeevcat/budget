@@ -11,6 +11,8 @@ pub struct CategorizeResult {
     pub confidence: f64,
     /// One-sentence explanation of why this category was chosen
     pub justification: String,
+    /// Optional: a new category the LLM wishes existed (for the suggestion histogram)
+    pub proposed_category: Option<String>,
 }
 
 /// Summary of a transaction, used as input for correlation proposals.

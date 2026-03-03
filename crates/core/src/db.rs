@@ -1121,6 +1121,21 @@ impl Db {
             if let Some(r) = row.as_ref() {
                 return row_to_category(r).map(Some);
             }
+
+            // 3. Fuzzy fallback: match just the child name (case-insensitive)
+            //    against any leaf category, ignoring the parent the LLM guessed.
+            //    e.g. "Housing:Utilities" resolves to "Utilities" under "House".
+            let row = sqlx::query(
+                "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date
+                 FROM categories WHERE LOWER(name) = LOWER($1)",
+            )
+            .bind(child_name)
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(r) = row.as_ref() {
+                return row_to_category(r).map(Some);
+            }
         }
 
         Ok(None)

@@ -140,35 +140,32 @@ impl LlmProvider for GeminiProvider {
             .unwrap_or_default();
 
         let categories_block = if input.existing_categories.is_empty() {
-            "Use hierarchical categories with \":\" as separator. Common examples:\n\
-             - Food:Groceries, Food:Restaurants, Food:Coffee\n\
-             - Housing:Rent, Housing:Utilities, Housing:Insurance\n\
-             - Transportation:Gas, Transportation:Public Transit, Transportation:Parking\n\
-             - Entertainment:Subscriptions, Entertainment:Movies\n\
-             - Shopping, Shopping:Clothing, Shopping:Electronics\n\
-             - Health:Pharmacy, Health:Doctor\n\
-             - Income:Salary, Income:Freelance\n\
-             - Transfers:P2P\n\
-             - Cash"
+            "No categories exist yet. Propose a category using \"Parent:Child\" format with \":\" as separator \
+             (e.g. \"Food:Groceries\", \"Transportation:Fuel\")."
                 .to_owned()
         } else {
             let list = input.existing_categories.join(", ");
             format!(
-                "You MUST use one of these existing categories: {list}\n\
-                 If none of these fit, you may propose a new hierarchical category using \":\" as separator, but prefer existing ones."
+                "You MUST choose exactly one of these existing categories for \"category_name\": {list}\n\
+                 Do NOT invent new categories for \"category_name\". If none fit perfectly, pick the closest match and use a low confidence score.\n\
+                 If you genuinely believe a new category is needed, set \"proposed_category\" to your suggestion using \"Parent:Child\" format — but \"category_name\" must still be one of the existing categories above."
             )
         };
 
         let prompt = format!(
             r#"You are a transaction categorization engine for a personal budgeting tool.
+Transaction descriptions and merchant names are very likely in German.
 
 Given a bank transaction, classify it into exactly one category.
+Negative amounts are expenses/debits. Positive amounts are income/credits. Choose expense categories for negative amounts and income categories for positive amounts.
+
 {categories_block}
 
 Respond with a JSON object containing:
-- "category_name": string — the category (use ":" for hierarchy)
+- "category_name": string — the category (MUST be from the existing list if one was provided)
 - "confidence": number — your confidence from 0.0 to 1.0
 - "justification": string — one brief sentence explaining why this category fits
+- "proposed_category": string or null — only set this if none of the existing categories fit well; suggest a new "Parent:Child" category name
 
 If you are unsure, use a low confidence score. Do not guess wildly.
 
@@ -190,6 +187,7 @@ JSON response:"#
             category_name: result.category_name,
             confidence: result.confidence.clamp(0.0, 1.0),
             justification: result.justification,
+            proposed_category: result.proposed_category.filter(|s| !s.is_empty()),
         })
     }
 
@@ -453,6 +451,8 @@ struct CategorizeResponse {
     confidence: f64,
     #[serde(default)]
     justification: String,
+    #[serde(default)]
+    proposed_category: Option<String>,
 }
 
 #[derive(Deserialize)]

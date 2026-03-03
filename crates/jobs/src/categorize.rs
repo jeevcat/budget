@@ -132,31 +132,42 @@ pub async fn handle_categorize_transaction_job(
 
     let justification = Some(result.justification.as_str());
 
+    // If the LLM proposed a new category, save it for the suggestion histogram
+    // so the user can decide whether to create it.
+    if let Some(proposed) = &result.proposed_category {
+        tracing::debug!(
+            txn_id = %txn_id,
+            proposed_category = %proposed,
+            "LLM proposed new category"
+        );
+        db.update_transaction_suggested_category(txn_id, proposed, justification)
+            .await?;
+    }
+
+    // Resolve the category name (exact match, then qualified "Parent:Child" lookup)
+    let resolved = db.get_category_by_name(&result.category_name).await?;
+
     if result.confidence < LLM_CONFIDENCE_THRESHOLD {
         tracing::debug!(
             txn_id = %txn_id,
             merchant = %txn.merchant_name,
             confidence = result.confidence,
             suggested = %result.category_name,
-            "LLM confidence below threshold, saving suggestion"
+            "LLM confidence below threshold"
         );
-        db.update_transaction_suggested_category(txn_id, &result.category_name, justification)
-            .await?;
         return Ok(());
     }
 
-    if let Some(category) = db.get_category_by_name(&result.category_name).await? {
+    if let Some(category) = resolved {
         db.update_transaction_category(txn_id, category.id, CategoryMethod::Llm, justification)
             .await?;
         tracing::debug!(txn_id = %txn_id, category = %result.category_name, "categorized by LLM");
     } else {
-        tracing::debug!(
+        tracing::warn!(
             txn_id = %txn_id,
             category_name = %result.category_name,
-            "LLM proposed unknown category, saving suggestion"
+            "LLM returned unknown category despite being given the list"
         );
-        db.update_transaction_suggested_category(txn_id, &result.category_name, justification)
-            .await?;
     }
 
     Ok(())
