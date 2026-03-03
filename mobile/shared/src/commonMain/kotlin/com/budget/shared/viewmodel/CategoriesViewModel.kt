@@ -11,29 +11,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** A category prepared for display with parent context and hierarchy info. */
-data class CategoryDisplayItem(
+/** A category prepared for display within a hierarchy tree. */
+data class CategoryTreeItem(
     val id: String,
     val name: String,
-    val parentName: String? = null,
     val budgetMode: BudgetMode? = null,
     val budgetAmount: String? = null,
     val transactionCount: Int = 0,
-    val isChild: Boolean = false,
-)
-
-/** A section grouping categories by budget mode. */
-data class CategorySection(
-    val mode: BudgetMode?,
-    val label: String,
-    val categories: List<CategoryDisplayItem>,
+    val depth: Int = 0,
+    val hasChildren: Boolean = false,
 )
 
 data class CategoriesUiState(
     val loading: Boolean = true,
     val error: String? = null,
-    val sections: List<CategorySection> = emptyList(),
-    val expandedSections: Set<BudgetMode?> = emptySet(),
+    val treeItems: List<CategoryTreeItem> = emptyList(),
+    val expandedParents: Set<String> = emptySet(),
     val categories: List<Category> = emptyList(),
 )
 
@@ -54,13 +47,13 @@ class CategoriesViewModel(
     viewModelScope.launch {
       try {
         val categories = repository.getCategories()
-        val sections = buildSections(categories)
-        val allModes = sections.map { it.mode }.toSet()
+        val tree = buildTree(categories)
+        val parentIds = tree.filter { it.hasChildren }.map { it.id }.toSet()
         _uiState.update {
           it.copy(
               loading = false,
-              sections = sections,
-              expandedSections = allModes,
+              treeItems = tree,
+              expandedParents = parentIds,
               categories = categories,
           )
         }
@@ -70,15 +63,15 @@ class CategoriesViewModel(
     }
   }
 
-  fun toggleSection(mode: BudgetMode?) {
+  fun toggleParent(id: String) {
     _uiState.update { state ->
       val expanded =
-          if (mode in state.expandedSections) {
-            state.expandedSections - mode
+          if (id in state.expandedParents) {
+            state.expandedParents - id
           } else {
-            state.expandedSections + mode
+            state.expandedParents + id
           }
-      state.copy(expandedSections = expanded)
+      state.copy(expandedParents = expanded)
     }
   }
 
@@ -105,82 +98,63 @@ class CategoriesViewModel(
         leafName(name.value, parentName)
 
     /**
-     * Group categories by budget mode with parent/child hierarchy.
-     *
-     * Each category's own [Category.budgetMode] determines its section. Children that have their
-     * own budget_mode appear as top-level entries in that section. Children without a budget_mode
-     * are nested under their parent in whichever section the parent belongs to.
+     * Build a flat list of [CategoryTreeItem] in pre-order (parent before children). Root
+     * categories (no parent) are sorted alphabetically, and children are sorted alphabetically
+     * under each parent. Each item carries its depth (0, 1, 2).
      */
-    fun buildSections(categories: List<Category>): List<CategorySection> {
+    fun buildTree(categories: List<Category>): List<CategoryTreeItem> {
       val byId = categories.associateBy { it.id }
-
-      // Children without their own budget_mode, keyed by parent ID
-      val unbudgetedChildrenOf =
+      val childrenOf =
           categories
-              .filter { it.parentId != null && it.budgetMode == null }
+              .filter { it.parentId != null }
               .groupBy { it.parentId }
               .mapValues { (_, v) -> v.sortedBy { it.name.value.lowercase() } }
 
-      // Every category that has a budget_mode set, grouped by that mode.
-      // Categories without budget_mode and without a parent go into the null group.
-      // Categories without budget_mode that have a parent are handled as nested children.
-      val topLevel = categories.filter { it.budgetMode != null || it.parentId == null }
+      val roots = categories.filter { it.parentId == null }.sortedBy { it.name.value.lowercase() }
 
-      val grouped = topLevel.groupBy { it.budgetMode }
-
-      val sectionOrder: List<BudgetMode?> =
-          listOf(BudgetMode.MONTHLY, BudgetMode.ANNUAL, BudgetMode.PROJECT, null)
-
-      return sectionOrder.mapNotNull { mode ->
-        val cats = grouped[mode] ?: return@mapNotNull null
-        val sorted = cats.sortedBy { it.name.value.lowercase() }
-
-        val items = buildList {
-          for (cat in sorted) {
-            val parentName = cat.parentId?.let { byId[it]?.name?.value }
-            val displayName = leafName(cat.name, parentName)
-            add(
-                CategoryDisplayItem(
-                    id = cat.id,
-                    name = displayName,
-                    parentName = parentName,
-                    budgetMode = cat.budgetMode,
-                    budgetAmount = cat.budgetAmount,
-                    transactionCount = cat.transactionCount,
-                    isChild = cat.parentId != null,
-                )
-            )
-            // Nest children that don't have their own budget_mode
-            for (child in unbudgetedChildrenOf[cat.id].orEmpty()) {
-              val childDisplayName = leafName(child.name, cat.name.value)
-              add(
-                  CategoryDisplayItem(
-                      id = child.id,
-                      name = childDisplayName,
-                      parentName = cat.name.value,
-                      budgetMode = null,
-                      budgetAmount = child.budgetAmount,
-                      transactionCount = child.transactionCount,
-                      isChild = true,
-                  )
+      return buildList {
+        fun visit(cat: Category, depth: Int) {
+          val parentName = cat.parentId?.let { byId[it]?.name?.value }
+          val displayName = leafName(cat.name, parentName)
+          val children = childrenOf[cat.id].orEmpty()
+          add(
+              CategoryTreeItem(
+                  id = cat.id,
+                  name = displayName,
+                  budgetMode = cat.budgetMode,
+                  budgetAmount = cat.budgetAmount,
+                  transactionCount = cat.transactionCount,
+                  depth = depth,
+                  hasChildren = children.isNotEmpty(),
               )
-            }
+          )
+          for (child in children) {
+            visit(child, depth + 1)
           }
         }
+        for (root in roots) {
+          visit(root, 0)
+        }
+      }
+    }
 
-        if (items.isEmpty()) return@mapNotNull null
-
-        CategorySection(
-            mode = mode,
-            label =
-                when (mode) {
-                  BudgetMode.MONTHLY -> "Monthly"
-                  BudgetMode.ANNUAL -> "Annual"
-                  BudgetMode.PROJECT -> "Project"
-                  null -> "Unbudgeted"
-                },
-            categories = items,
-        )
+    /**
+     * Filter [treeItems] to only include visible items based on [expandedParents]. When a parent is
+     * collapsed, all deeper descendants are hidden until a sibling at the same or lesser depth is
+     * reached.
+     */
+    fun visibleItems(
+        treeItems: List<CategoryTreeItem>,
+        expandedParents: Set<String>,
+    ): List<CategoryTreeItem> = buildList {
+      var skipUntilDepth = Int.MAX_VALUE
+      for (item in treeItems) {
+        if (item.depth > skipUntilDepth) continue
+        skipUntilDepth = Int.MAX_VALUE
+        add(item)
+        if (item.hasChildren && item.id !in expandedParents) {
+          skipUntilDepth = item.depth
+        }
       }
     }
   }

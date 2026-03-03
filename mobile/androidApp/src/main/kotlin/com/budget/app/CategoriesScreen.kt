@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
@@ -41,8 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.viewmodel.CategoriesViewModel
-import com.budget.shared.viewmodel.CategoryDisplayItem
-import com.budget.shared.viewmodel.CategorySection
+import com.budget.shared.viewmodel.CategoryTreeItem
 
 // -- Kanagawa palette colors for budget modes --------------------------------
 
@@ -58,6 +57,14 @@ private fun modeColor(mode: BudgetMode?): Color =
       null -> Color.Unspecified
     }
 
+private fun modeLabel(mode: BudgetMode?): String? =
+    when (mode) {
+      BudgetMode.MONTHLY -> "Monthly"
+      BudgetMode.ANNUAL -> "Annual"
+      BudgetMode.PROJECT -> "Project"
+      null -> null
+    }
+
 // -- Root screen -------------------------------------------------------------
 
 @Composable
@@ -71,10 +78,10 @@ fun CategoriesScreen(
 
   Box(modifier = modifier.fillMaxSize()) {
     when {
-      state.loading && state.sections.isEmpty() -> {
+      state.loading && state.treeItems.isEmpty() -> {
         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
       }
-      state.error != null && state.sections.isEmpty() -> {
+      state.error != null && state.treeItems.isEmpty() -> {
         Column(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -87,7 +94,7 @@ fun CategoriesScreen(
           TextButton(onClick = viewModel::refresh) { Text("Retry") }
         }
       }
-      state.sections.isEmpty() -> {
+      state.treeItems.isEmpty() -> {
         Text(
             text = "No categories found.",
             style = MaterialTheme.typography.bodyMedium,
@@ -96,10 +103,11 @@ fun CategoriesScreen(
         )
       }
       else -> {
+        val visible = CategoriesViewModel.visibleItems(state.treeItems, state.expandedParents)
         CategoriesContent(
-            sections = state.sections,
-            expandedSections = state.expandedSections,
-            onToggleSection = viewModel::toggleSection,
+            visibleItems = visible,
+            expandedParents = state.expandedParents,
+            onToggleParent = viewModel::toggleParent,
             onCategoryClick = onEditCategory,
         )
       }
@@ -117,81 +125,87 @@ fun CategoriesScreen(
 
 @Composable
 private fun CategoriesContent(
-    sections: List<CategorySection>,
-    expandedSections: Set<BudgetMode?>,
-    onToggleSection: (BudgetMode?) -> Unit,
+    visibleItems: List<CategoryTreeItem>,
+    expandedParents: Set<String>,
+    onToggleParent: (String) -> Unit,
     onCategoryClick: (String) -> Unit,
 ) {
+  val groups = buildList {
+    var current: MutableList<CategoryTreeItem>? = null
+    for (item in visibleItems) {
+      if (item.depth == 0) {
+        current = mutableListOf(item)
+        add(current)
+      } else {
+        current?.add(item)
+      }
+    }
+  }
+
   LazyColumn(
       modifier = Modifier.fillMaxSize(),
       contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 80.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    for (section in sections) {
-      val expanded = section.mode in expandedSections
-      item(key = "section-${section.mode}") {
-        SectionCard(
-            section = section,
-            expanded = expanded,
-            onToggle = { onToggleSection(section.mode) },
-            onCategoryClick = onCategoryClick,
-        )
-      }
+    items(groups, key = { it.first().id }) { group ->
+      val root = group.first()
+      CategoryGroupCard(
+          root = root,
+          children = group.drop(1),
+          expanded = root.id in expandedParents,
+          onToggle = { onToggleParent(root.id) },
+          onCategoryClick = onCategoryClick,
+      )
     }
   }
 }
 
-// -- Section card with header + collapsible items ----------------------------
+// -- Group card per root category --------------------------------------------
 
 @Composable
-private fun SectionCard(
-    section: CategorySection,
+private fun CategoryGroupCard(
+    root: CategoryTreeItem,
+    children: List<CategoryTreeItem>,
     expanded: Boolean,
     onToggle: () -> Unit,
     onCategoryClick: (String) -> Unit,
 ) {
-  val color = modeColor(section.mode)
-
   ElevatedCard(modifier = Modifier.fillMaxWidth().animateContentSize()) {
     Column {
-      // Section header
+      // Root header row
       Row(
           modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(16.dp),
           verticalAlignment = Alignment.CenterVertically,
       ) {
-        if (section.mode != null) {
-          Box(
-              modifier = Modifier.size(10.dp).clip(CircleShape).background(color),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-        }
         Text(
-            text = section.label,
+            text = root.name,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f),
         )
+        BudgetModeIndicator(mode = root.budgetMode)
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "${section.categories.size}",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier =
-                Modifier.clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            text = formatBudgetAmount(root.budgetAmount),
+            style = MaterialTheme.typography.bodyMedium,
+            color =
+                if (root.budgetAmount != null) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(modifier = Modifier.width(4.dp))
-        Icon(
-            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-            contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (root.hasChildren) {
+          Spacer(modifier = Modifier.width(4.dp))
+          Icon(
+              imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+              contentDescription = if (expanded) "Collapse" else "Expand",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
 
-      // Category items
+      // Child rows
       if (expanded) {
-        for (item in section.categories) {
-          CategoryItem(item = item, onClick = { onCategoryClick(item.id) })
+        for (child in children) {
+          CategoryTreeRow(item = child, onClick = { onCategoryClick(child.id) })
         }
         Spacer(modifier = Modifier.height(8.dp))
       }
@@ -199,11 +213,15 @@ private fun SectionCard(
   }
 }
 
-// -- Individual category item ------------------------------------------------
+// -- Individual tree row (depth >= 1) ----------------------------------------
 
 @Composable
-private fun CategoryItem(item: CategoryDisplayItem, onClick: () -> Unit) {
-  val startPadding = if (item.isChild) 40.dp else 16.dp
+private fun CategoryTreeRow(item: CategoryTreeItem, onClick: () -> Unit) {
+  val startPadding =
+      when (item.depth) {
+        1 -> 40.dp
+        else -> 64.dp
+      }
 
   Row(
       modifier =
@@ -212,39 +230,39 @@ private fun CategoryItem(item: CategoryDisplayItem, onClick: () -> Unit) {
               .padding(start = startPadding, end = 16.dp, top = 6.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
   ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        if (item.isChild && item.parentName != null) {
-          Text(
-              text = "${item.parentName} > ",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              maxLines = 1,
-          )
-        }
-        Text(
-            text = item.name,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-      }
-      Text(
-          text =
-              if (item.transactionCount == 1) "1 transaction"
-              else "${item.transactionCount} transactions",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
-
+    Text(
+        text = item.name,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+    )
+    BudgetModeIndicator(mode = item.budgetMode)
+    Spacer(modifier = Modifier.width(8.dp))
     Text(
         text = formatBudgetAmount(item.budgetAmount),
         style = MaterialTheme.typography.bodyMedium,
         color =
             if (item.budgetAmount != null) MaterialTheme.colorScheme.onSurface
             else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+// -- Budget mode dot + label -------------------------------------------------
+
+@Composable
+private fun BudgetModeIndicator(mode: BudgetMode?) {
+  val label = modeLabel(mode) ?: return
+  val color = modeColor(mode)
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
+    Spacer(modifier = Modifier.width(4.dp))
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
   }
 }

@@ -2131,59 +2131,43 @@ function Categories() {
   );
   const roots = categories.filter((c) => !c.parent_id || !catMap[c.parent_id]);
 
-  function withDepth(cats) {
-    const parentIds = new Set(
-      cats.filter((c) => !c.parent_id).map((c) => c.id),
-    );
-    const childMap = {};
-    for (const c of cats) {
-      if (c.parent_id && parentIds.has(c.parent_id)) {
-        if (!childMap[c.parent_id]) childMap[c.parent_id] = [];
-        childMap[c.parent_id].push(c);
-      }
+  // Build hierarchy tree: roots sorted alphabetically, children nested under parents
+  const childrenOf = {};
+  for (const c of categories) {
+    if (c.parent_id) {
+      if (!childrenOf[c.parent_id]) childrenOf[c.parent_id] = [];
+      childrenOf[c.parent_id].push(c);
     }
+  }
+  for (const k of Object.keys(childrenOf)) {
+    childrenOf[k].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function buildTree(parentId, depth) {
     const result = [];
-    for (const r of cats.filter(
-      (c) => !c.parent_id || !parentIds.has(c.parent_id),
-    )) {
-      const isRoot = !r.parent_id;
-      result.push({ ...r, depth: isRoot ? 0 : 1 });
-      if (isRoot) {
-        for (const ch of childMap[r.id] ?? []) {
-          result.push({ ...ch, depth: 1 });
-        }
-      }
+    const children = parentId
+      ? (childrenOf[parentId] ?? [])
+      : roots.sort((a, b) => a.name.localeCompare(b.name));
+    for (const c of children) {
+      const hasChildren = (childrenOf[c.id] ?? []).length > 0;
+      result.push({ ...c, depth, hasChildren });
+      result.push(...buildTree(c.id, depth + 1));
     }
     return result;
   }
 
-  const groups = [
-    { key: null, label: "Unbudgeted", desc: "No budget assigned yet" },
-    { key: "monthly", label: "Monthly", desc: null },
-    { key: "annual", label: "Annual", desc: null },
-    { key: "project", label: "Project", desc: null },
-  ];
+  const tree = buildTree(null, 0);
 
-  // Determine which budget group a category belongs to:
-  // - Own budget_mode if set, otherwise inherit from parent
-  function effectiveGroup(c) {
-    if (c.budget_mode) return c.budget_mode;
-    const parent = c.parent_id ? catMap[c.parent_id] : null;
-    return parent?.budget_mode ?? null;
-  }
-
-  const grouped = {};
-  for (const g of groups) {
-    const cats = categories.filter((c) => effectiveGroup(c) === g.key);
-    // Include unbudgeted parent categories whose children appear in this group
-    const catIds = new Set(cats.map((c) => c.id));
-    for (const c of cats) {
-      if (c.parent_id && !catIds.has(c.parent_id) && catMap[c.parent_id]) {
-        cats.push(catMap[c.parent_id]);
-        catIds.add(c.parent_id);
-      }
+  // Group tree items into root-level groups (each root + its descendants)
+  const rootGroups = [];
+  let currentGroup = null;
+  for (const item of tree) {
+    if (item.depth === 0) {
+      currentGroup = [item];
+      rootGroups.push(currentGroup);
+    } else if (currentGroup) {
+      currentGroup.push(item);
     }
-    grouped[g.key] = withDepth(cats);
   }
 
   const pendingSuggestions = (suggestions ?? []).filter(
@@ -2207,6 +2191,14 @@ function Categories() {
         ? formatAmount(cat.budget_amount, { decimals: 0 })
         : "?";
     return html`<span>${amt}</span>`;
+  }
+
+  function modeDot(mode) {
+    if (!mode) return null;
+    const cls = budgetModeColor(mode);
+    const label =
+      mode === "monthly" ? "Monthly" : mode === "annual" ? "Annual" : "Project";
+    return html`<span class="hstack" style="gap:0.3rem;align-items:center"><span class="method-dot ${cls}" style="cursor:default"></span><span class="text-light" style="font-size:0.8rem">${label}</span></span>`;
   }
 
   return html`
@@ -2274,47 +2266,42 @@ function Categories() {
       categories.length === 0
         ? html`<p class="text-light">No categories yet. Add one above.</p>`
         : html`
-          <table class="cat-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th style="text-align:right;width:4rem">Txns</th>
-                <th style="text-align:right;width:6rem">Budget</th>
-              </tr>
-            </thead>
-            ${groups
-              .filter((g) => grouped[g.key].length > 0)
-              .map(
-                (g) => html`
-              <tbody key=${g.key}>
-                <tr class="cat-group-header">
-                  <th colspan="3" class="${budgetModeColor(g.key)}">
-                    ${g.label}
-                    ${g.desc ? html`<span class="text-light" style="font-weight:normal;font-size:0.85rem;margin-left:0.5rem">${g.desc}</span>` : null}
-                  </th>
-                </tr>
-                ${grouped[g.key].map(
-                  (c) => html`
-                  <tr key=${c.id} class="clickable-row" onClick=${() => startEdit(c)}>
-                    <td>
-                      <span style="padding-left:${c.depth * 1.5}rem">
-                        ${
-                          c.depth > 0
-                            ? html`<span class="cat-parent">${catMap[c.parent_id]?.name}</span> `
-                            : null
-                        }
-                        ${c.name}
-                      </span>
-                    </td>
-                    <td class="text-light" style="text-align:right;font-size:0.85rem">${c.transaction_count || ""}</td>
-                    <td style="text-align:right">${budgetBadge(c)}</td>
-                  </tr>
-                `,
-                )}
-              </tbody>
-            `,
-              )}
-          </table>
+          <div class="vstack gap-3">
+            ${rootGroups.map((group) => {
+              const root = group[0];
+              const children = group.slice(1);
+              return html`
+                <details key=${root.id} open class="cat-group">
+                  <summary class="cat-group-summary clickable-row">
+                    <span style="font-weight:600">${root.name}</span>
+                    <span style="margin-left:auto" class="hstack gap-2" style="align-items:center">
+                      ${modeDot(root.budget_mode)}
+                      <span>${budgetBadge(root) ?? html`<span class="text-light">\u2014</span>`}</span>
+                    </span>
+                  </summary>
+                  ${
+                    children.length > 0 &&
+                    html`
+                    <div class="cat-group-children">
+                      ${children.map(
+                        (c) => html`
+                        <div key=${c.id} class="cat-tree-row clickable-row" style="padding-left:${c.depth * 1.5}rem" onClick=${() => startEdit(c)}>
+                          <span>${c.name}</span>
+                          <span class="hstack gap-2" style="margin-left:auto;align-items:center">
+                            ${modeDot(c.budget_mode)}
+                            <span class="text-light" style="font-size:0.85rem">${c.transaction_count || ""}</span>
+                            <span style="min-width:5rem;text-align:right">${budgetBadge(c) ?? html`<span class="text-light">\u2014</span>`}</span>
+                          </span>
+                        </div>
+                      `,
+                      )}
+                    </div>
+                  `
+                  }
+                </details>
+              `;
+            })}
+          </div>
         `
     }
 

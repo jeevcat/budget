@@ -41,6 +41,10 @@ class CategoriesViewModelTest {
     Dispatchers.resetMain()
   }
 
+  // -----------------------------------------------------------------------
+  // ViewModel integration tests
+  // -----------------------------------------------------------------------
+
   @Test
   fun initialLoadPopulatesState() = runTest {
     val repo = FakeCategoriesRepository(sampleCategories())
@@ -49,7 +53,7 @@ class CategoriesViewModelTest {
     val state = vm.uiState.value
     assertFalse(state.loading)
     assertNull(state.error)
-    assertTrue(state.sections.isNotEmpty())
+    assertTrue(state.treeItems.isNotEmpty())
   }
 
   @Test
@@ -60,58 +64,152 @@ class CategoriesViewModelTest {
     val state = vm.uiState.value
     assertFalse(state.loading)
     assertEquals("Network failure", state.error)
-    assertTrue(state.sections.isEmpty())
+    assertTrue(state.treeItems.isEmpty())
   }
 
   @Test
-  fun toggleSectionCollapsesAndExpands() = runTest {
+  fun toggleParentCollapsesAndExpands() = runTest {
     val repo = FakeCategoriesRepository(sampleCategories())
     val vm = CategoriesViewModel(repo)
 
-    assertTrue(BudgetMode.MONTHLY in vm.uiState.value.expandedSections)
+    // "Food" has a child, so it should be expanded by default
+    assertTrue("food" in vm.uiState.value.expandedParents)
 
-    vm.toggleSection(BudgetMode.MONTHLY)
-    assertFalse(BudgetMode.MONTHLY in vm.uiState.value.expandedSections)
+    vm.toggleParent("food")
+    assertFalse("food" in vm.uiState.value.expandedParents)
 
-    vm.toggleSection(BudgetMode.MONTHLY)
-    assertTrue(BudgetMode.MONTHLY in vm.uiState.value.expandedSections)
+    vm.toggleParent("food")
+    assertTrue("food" in vm.uiState.value.expandedParents)
   }
 
   @Test
-  fun categoriesGroupedByBudgetMode() = runTest {
-    val sections = CategoriesViewModel.buildSections(sampleCategories())
+  fun allParentsExpandedByDefault() = runTest {
+    val repo = FakeCategoriesRepository(sampleCategories())
+    val vm = CategoriesViewModel(repo)
 
-    assertEquals(3, sections.size)
-    assertEquals("Monthly", sections[0].label)
-    assertEquals("Annual", sections[1].label)
-    assertEquals("Unbudgeted", sections[2].label)
+    val state = vm.uiState.value
+    val parents = state.treeItems.filter { it.hasChildren }
+    for (parent in parents) {
+      assertTrue(
+          parent.id in state.expandedParents,
+          "Parent ${parent.name} should be expanded by default",
+      )
+    }
+  }
 
-    assertEquals(BudgetMode.MONTHLY, sections[0].mode)
-    assertEquals(BudgetMode.ANNUAL, sections[1].mode)
-    assertNull(sections[2].mode)
+  // -----------------------------------------------------------------------
+  // buildTree tests
+  // -----------------------------------------------------------------------
+
+  @Test
+  fun hierarchyPreservedRegardlessOfBudgetMode() = runTest {
+    val tree = CategoriesViewModel.buildTree(sampleCategories())
+
+    // "Dining Out" (unbudgeted child of Food) should appear directly after Food,
+    // not in a separate section
+    val names = tree.map { it.name }
+    val foodIdx = names.indexOf("Food")
+    val diningIdx = names.indexOf("Dining Out")
+    assertTrue(diningIdx == foodIdx + 1, "Dining Out should be right after its parent Food")
   }
 
   @Test
-  fun parentWithBudgetNestsUnbudgetedChildren() = runTest {
-    val sections = CategoriesViewModel.buildSections(sampleCategories())
-
-    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    // "Food" (monthly), then its unbudgeted child "Dining Out", then "Groceries" (monthly)
-    assertEquals(3, monthly.categories.size)
-    assertEquals("Food", monthly.categories[0].name)
-    assertFalse(monthly.categories[0].isChild)
-    assertEquals("Dining Out", monthly.categories[1].name)
-    assertTrue(monthly.categories[1].isChild)
-    assertEquals("Food", monthly.categories[1].parentName)
-    assertEquals("Groceries", monthly.categories[2].name)
-    assertFalse(monthly.categories[2].isChild)
+  fun rootsSortedAlphabetically() {
+    val tree = CategoriesViewModel.buildTree(sampleCategories())
+    val roots = tree.filter { it.depth == 0 }
+    assertEquals(
+        roots.map { it.name },
+        roots.sortedBy { it.name.lowercase() }.map { it.name },
+    )
   }
 
   @Test
-  fun childWithOwnBudgetModeAppearsInItsSection() = runTest {
+  fun childrenSortedAlphabeticallyUnderParent() {
+    val categories =
+        listOf(
+            Category(id = "parent", name = catName("Parent"), transactionCount = 0),
+            Category(
+                id = "c",
+                name = catName("Zulu"),
+                parentId = "parent",
+                transactionCount = 0,
+            ),
+            Category(
+                id = "b",
+                name = catName("Bravo"),
+                parentId = "parent",
+                transactionCount = 0,
+            ),
+            Category(
+                id = "a",
+                name = catName("Alpha"),
+                parentId = "parent",
+                transactionCount = 0,
+            ),
+        )
+    val tree = CategoriesViewModel.buildTree(categories)
+    val children = tree.filter { it.depth == 1 }
+    assertEquals(listOf("Alpha", "Bravo", "Zulu"), children.map { it.name })
+  }
+
+  @Test
+  fun threeLevelNestingProducesCorrectDepths() {
     val categories =
         listOf(
             Category(id = "house", name = catName("House"), transactionCount = 0),
+            Category(
+                id = "utilities",
+                name = catName("Utilities"),
+                parentId = "house",
+                transactionCount = 0,
+            ),
+            Category(
+                id = "electricity",
+                name = catName("Electricity"),
+                parentId = "utilities",
+                transactionCount = 0,
+            ),
+        )
+    val tree = CategoriesViewModel.buildTree(categories)
+
+    assertEquals(3, tree.size)
+    assertEquals(0, tree[0].depth) // House
+    assertEquals("House", tree[0].name)
+    assertEquals(1, tree[1].depth) // Utilities
+    assertEquals("Utilities", tree[1].name)
+    assertEquals(2, tree[2].depth) // Electricity
+    assertEquals("Electricity", tree[2].name)
+  }
+
+  @Test
+  fun hasChildrenFlagSetCorrectly() {
+    val categories =
+        listOf(
+            Category(id = "parent", name = catName("Parent"), transactionCount = 0),
+            Category(
+                id = "child",
+                name = catName("Child"),
+                parentId = "parent",
+                transactionCount = 0,
+            ),
+            Category(id = "leaf", name = catName("Leaf"), transactionCount = 0),
+        )
+    val tree = CategoriesViewModel.buildTree(categories)
+
+    assertTrue(tree.first { it.id == "parent" }.hasChildren)
+    assertFalse(tree.first { it.id == "child" }.hasChildren)
+    assertFalse(tree.first { it.id == "leaf" }.hasChildren)
+  }
+
+  @Test
+  fun budgetModePreservedOnEachItem() {
+    val categories =
+        listOf(
+            Category(
+                id = "house",
+                name = catName("House"),
+                transactionCount = 0,
+            ),
             Category(
                 id = "mortgage",
                 name = catName("Mortgage"),
@@ -121,108 +219,95 @@ class CategoriesViewModelTest {
                 transactionCount = 12,
             ),
             Category(
-                id = "cleaning",
-                name = catName("Cleaning"),
+                id = "reno",
+                name = catName("Renovation"),
                 parentId = "house",
+                budgetMode = BudgetMode.PROJECT,
                 transactionCount = 3,
             ),
         )
-    val sections = CategoriesViewModel.buildSections(categories)
+    val tree = CategoriesViewModel.buildTree(categories)
 
-    // Mortgage has its own budget_mode=monthly, so it appears in Monthly
-    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    assertEquals(1, monthly.categories.size)
-    assertEquals("Mortgage", monthly.categories[0].name)
-    assertTrue(monthly.categories[0].isChild)
-    assertEquals("House", monthly.categories[0].parentName)
-
-    // House (unbudgeted root) appears in Unbudgeted with Cleaning nested under it
-    val unbudgeted = sections.first { it.mode == null }
-    assertEquals(2, unbudgeted.categories.size)
-    assertEquals("House", unbudgeted.categories[0].name)
-    assertEquals("Cleaning", unbudgeted.categories[1].name)
-    assertTrue(unbudgeted.categories[1].isChild)
-  }
-
-  @Test
-  fun allSectionsExpandedByDefault() = runTest {
-    val repo = FakeCategoriesRepository(sampleCategories())
-    val vm = CategoriesViewModel(repo)
-
-    val state = vm.uiState.value
-    for (section in state.sections) {
-      assertTrue(
-          section.mode in state.expandedSections,
-          "Section ${section.label} should be expanded by default",
-      )
-    }
-  }
-
-  @Test
-  fun sectionOrderIsCorrect() = runTest {
-    val categories =
-        listOf(
-            Category(
-                id = "1",
-                name = catName("Rent"),
-                budgetMode = BudgetMode.MONTHLY,
-                budgetAmount = "1000",
-                transactionCount = 5,
-            ),
-            Category(
-                id = "2",
-                name = catName("Insurance"),
-                budgetMode = BudgetMode.ANNUAL,
-                budgetAmount = "500",
-                transactionCount = 2,
-            ),
-            Category(
-                id = "3",
-                name = catName("Renovation"),
-                budgetMode = BudgetMode.PROJECT,
-                budgetAmount = "5000",
-                transactionCount = 10,
-            ),
-            Category(id = "4", name = catName("Random"), transactionCount = 1),
-        )
-    val sections = CategoriesViewModel.buildSections(categories)
-
-    assertEquals(4, sections.size)
-    assertEquals(BudgetMode.MONTHLY, sections[0].mode)
-    assertEquals(BudgetMode.ANNUAL, sections[1].mode)
-    assertEquals(BudgetMode.PROJECT, sections[2].mode)
-    assertNull(sections[3].mode)
+    assertNull(tree.first { it.id == "house" }.budgetMode)
+    assertEquals(BudgetMode.MONTHLY, tree.first { it.id == "mortgage" }.budgetMode)
+    assertEquals(BudgetMode.PROJECT, tree.first { it.id == "reno" }.budgetMode)
   }
 
   // -----------------------------------------------------------------------
-  // Category name parsing / display tests
+  // visibleItems tests
   // -----------------------------------------------------------------------
 
   @Test
-  fun childWithLeafNameShowsParentName() = runTest {
-    // Child stored as "Groceries" under parent "Food"
+  fun collapseParentHidesChildren() {
+    val tree = CategoriesViewModel.buildTree(sampleCategories())
+    // Collapse "Food" — "Dining Out" should disappear
+    val expanded = tree.filter { it.hasChildren }.map { it.id }.toSet() - "food"
+    val visible = CategoriesViewModel.visibleItems(tree, expanded)
+
+    assertTrue(visible.any { it.id == "food" })
+    assertFalse(visible.any { it.id == "dining" })
+  }
+
+  @Test
+  fun expandParentShowsChildren() {
+    val tree = CategoriesViewModel.buildTree(sampleCategories())
+    val expanded = tree.filter { it.hasChildren }.map { it.id }.toSet()
+    val visible = CategoriesViewModel.visibleItems(tree, expanded)
+
+    assertTrue(visible.any { it.id == "food" })
+    assertTrue(visible.any { it.id == "dining" })
+  }
+
+  @Test
+  fun nestedCollapseHidesGrandchildren() {
     val categories =
         listOf(
+            Category(id = "house", name = catName("House"), transactionCount = 0),
             Category(
-                id = "food",
-                name = catName("Food"),
-                budgetMode = BudgetMode.MONTHLY,
-                budgetAmount = "400",
-                transactionCount = 10,
+                id = "utilities",
+                name = catName("Utilities"),
+                parentId = "house",
+                transactionCount = 0,
             ),
             Category(
-                id = "groc",
-                name = catName("Groceries"),
-                parentId = "food",
-                transactionCount = 5,
+                id = "electricity",
+                name = catName("Electricity"),
+                parentId = "utilities",
+                transactionCount = 0,
             ),
         )
-    val sections = CategoriesViewModel.buildSections(categories)
-    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    val grocItem = monthly.categories.find { it.id == "groc" }!!
-    assertEquals("Food", grocItem.parentName)
-    assertEquals("Groceries", grocItem.name)
-    assertTrue(grocItem.isChild)
+    val tree = CategoriesViewModel.buildTree(categories)
+
+    // Expand House but collapse Utilities
+    val expanded = setOf("house")
+    val visible = CategoriesViewModel.visibleItems(tree, expanded)
+
+    assertEquals(2, visible.size)
+    assertEquals("House", visible[0].name)
+    assertEquals("Utilities", visible[1].name)
+    assertFalse(visible.any { it.name == "Electricity" })
+  }
+
+  @Test
+  fun collapseDoesNotAffectSiblings() {
+    val categories =
+        listOf(
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+            Category(
+                id = "a1",
+                name = catName("A-Child"),
+                parentId = "a",
+                transactionCount = 0,
+            ),
+            Category(id = "b", name = catName("Beta"), transactionCount = 0),
+        )
+    val tree = CategoriesViewModel.buildTree(categories)
+
+    // Collapse Alpha — Beta should still be visible
+    val visible = CategoriesViewModel.visibleItems(tree, emptySet())
+    assertTrue(visible.any { it.name == "Alpha" })
+    assertFalse(visible.any { it.name == "A-Child" })
+    assertTrue(visible.any { it.name == "Beta" })
   }
 
   // -----------------------------------------------------------------------
@@ -242,6 +327,11 @@ class CategoriesViewModelTest {
   @Test
   fun leafNameCategoryNameOverload() {
     assertEquals("Groceries", CategoriesViewModel.leafName(catName("Groceries"), "Food"))
+  }
+
+  @Test
+  fun leafNameStripsColonPrefix() {
+    assertEquals("Groceries", CategoriesViewModel.leafName("Food:Groceries", "Food"))
   }
 }
 
