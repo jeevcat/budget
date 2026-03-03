@@ -37,6 +37,7 @@ data class ParentOption(
 class CategoryEditViewModel(
     private val repository: BudgetRepository,
     private val editingCategory: Category? = null,
+    allCategories: List<Category> = emptyList(),
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(CategoryEditUiState(isEditing = editingCategory != null))
@@ -56,26 +57,15 @@ class CategoryEditViewModel(
         )
       }
     }
-    loadParents()
-  }
-
-  private fun loadParents() {
-    viewModelScope.launch {
-      try {
-        val categories = repository.getCategories()
-        val currentParentId = editingCategory?.parentId
-        val parents =
-            categories
-                .filter {
-                  (it.parentId == null || it.id == currentParentId) && it.id != editingCategory?.id
-                }
-                .sortedBy { it.name.value.lowercase() }
-                .map { ParentOption(id = it.id, name = it.name.value) }
-        _uiState.update { it.copy(availableParents = parents) }
-      } catch (_: Exception) {
-        // Non-critical — form still works without parent picker
-      }
-    }
+    val currentParentId = editingCategory?.parentId
+    val parents =
+        allCategories
+            .filter {
+              (it.parentId == null || it.id == currentParentId) && it.id != editingCategory?.id
+            }
+            .sortedBy { it.name.value.lowercase() }
+            .map { ParentOption(id = it.id, name = it.name.value) }
+    _uiState.update { it.copy(availableParents = parents) }
   }
 
   fun updateName(name: String) {

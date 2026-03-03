@@ -271,6 +271,12 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
     )
     Spacer(modifier = Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      FilterChip(
+          selected = state.budgetMode == null,
+          onClick = { viewModel.updateBudgetMode(null) },
+          label = { Text("None") },
+          enabled = !state.saving,
+      )
       for ((mode, label) in modes) {
         FilterChip(
             selected = state.budgetMode == mode,

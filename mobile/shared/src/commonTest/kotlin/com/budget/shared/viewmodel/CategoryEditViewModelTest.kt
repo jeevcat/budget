@@ -290,8 +290,12 @@ class CategoryEditViewModelTest {
             Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
         )
     val editing = Category(id = "a", name = catName("Alpha"), transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val parents = vm.uiState.value.availableParents
     // "a" excluded (self), "c" excluded (has parent), only "b" remains
@@ -309,8 +313,12 @@ class CategoryEditViewModelTest {
             Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
         )
     val editing = Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val state = vm.uiState.value
     assertEquals("a", state.parentId)
@@ -334,8 +342,12 @@ class CategoryEditViewModelTest {
             Category(id = "c", name = catName("Leaf"), parentId = "b", transactionCount = 0),
         )
     val editing = Category(id = "c", name = catName("Leaf"), parentId = "b", transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val state = vm.uiState.value
     assertEquals("b", state.parentId)
@@ -352,8 +364,7 @@ class CategoryEditViewModelTest {
             Category(id = "b", name = catName("Beta"), transactionCount = 0),
             Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
         )
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo)
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository(), allCategories = categories)
 
     val parents = vm.uiState.value.availableParents
     // Only root categories shown; "c" excluded (has parent)
@@ -373,8 +384,12 @@ class CategoryEditViewModelTest {
         )
     val editing =
         Category(id = "b", name = catName("Groceries"), parentId = "a", transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val parents = vm.uiState.value.availableParents
     assertEquals(1, parents.size)
@@ -389,8 +404,12 @@ class CategoryEditViewModelTest {
             Category(id = "b", name = catName("Beta"), transactionCount = 0),
         )
     val editing = Category(id = "a", name = catName("Alpha"), transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val state = vm.uiState.value
     assertNull(state.parentId)
@@ -407,8 +426,12 @@ class CategoryEditViewModelTest {
             Category(id = "a", name = catName("Alpha"), transactionCount = 0),
         )
     val editing = Category(id = "b", name = catName("Orphan"), parentId = "x", transactionCount = 0)
-    val repo = FakeCategoryEditRepository(categories = categories)
-    val vm = CategoryEditViewModel(repo, editingCategory = editing)
+    val vm =
+        CategoryEditViewModel(
+            FakeCategoryEditRepository(),
+            editingCategory = editing,
+            allCategories = categories,
+        )
 
     val state = vm.uiState.value
     assertEquals("x", state.parentId)
@@ -514,7 +537,6 @@ private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThr
 // -- Test doubles -----------------------------------------------------------
 
 private class FakeCategoryEditRepository(
-    private val categories: List<Category> = emptyList(),
     private val saveError: String? = null,
 ) : BudgetRepository {
 
@@ -534,7 +556,7 @@ private class FakeCategoryEditRepository(
 
   override suspend fun getTransaction(id: String): Transaction = throw NotImplementedError()
 
-  override suspend fun getCategories(): List<Category> = categories
+  override suspend fun getCategories(): List<Category> = emptyList()
 
   override suspend fun categorizeTransaction(transactionId: String, categoryId: String) = true
 

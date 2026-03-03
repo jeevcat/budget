@@ -350,7 +350,11 @@ private fun AppNavHost(
           route.categoryId?.let { id -> categoriesVm.uiState.value.categories.find { it.id == id } }
       val editVm: CategoryEditViewModel =
           viewModel(key = route.categoryId ?: "new") {
-            CategoryEditViewModel(repository, editingCategory)
+            CategoryEditViewModel(
+                repository,
+                editingCategory,
+                categoriesVm.uiState.value.categories,
+            )
           }
       CategoryEditScreen(
           viewModel = editVm,
