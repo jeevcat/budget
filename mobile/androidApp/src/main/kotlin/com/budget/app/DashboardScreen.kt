@@ -158,8 +158,8 @@ fun DashboardScreen(config: ServerConfig) {
 @Composable
 fun DashboardContent(
     viewModel: DashboardViewModel,
-    onTransactionClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -772,8 +772,8 @@ private fun resolveTransactions(
 private fun CategoryTransactionsContent(
     state: DashboardUiState,
     categoryId: String,
-    onTransactionClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onTransactionClick: ((String) -> Unit)? = null,
 ) {
   val info = resolveCategoryInfo(state, categoryId)
   val transactions = resolveTransactions(state, categoryId)

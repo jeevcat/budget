@@ -83,9 +83,9 @@ private fun formatBudgetAmount(value: String?): String {
 @Composable
 fun CategoriesScreen(
     viewModel: CategoriesViewModel,
+    modifier: Modifier = Modifier,
     onAddCategory: () -> Unit = {},
     onEditCategory: (String) -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 

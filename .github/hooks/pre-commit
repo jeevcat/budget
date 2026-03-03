@@ -154,6 +154,20 @@ if git diff --cached --name-only | grep -q '^mobile/'; then
         echo "  cd mobile && ./gradlew compileDebugKotlin --console=plain --no-problems-report"
         exit 1
     fi
+
+    echo -n "Running Android lint (mobile)... "
+    if output=$(cd mobile && ./gradlew :androidApp:lint --console=plain --no-problems-report --no-daemon 2>&1); then
+        echo -e "${GREEN}OK${NC}"
+    elif reason=$(gradle_skip_reason "$output"); then
+        echo -e "${RED}SKIPPED${NC} ($reason)"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo "$output"
+        echo ""
+        echo "To see errors again, run:"
+        echo "  cd mobile && ./gradlew :androidApp:lint --console=plain --no-problems-report"
+        exit 1
+    fi
 fi
 
 echo -e "${GREEN}All pre-commit checks passed!${NC}"
