@@ -7,6 +7,7 @@ import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
+import com.budget.shared.api.Summarizable
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.repository.BudgetRepository
 import com.budget.shared.repository.DashboardData
@@ -42,6 +43,8 @@ data class DashboardUiState(
     val annualTransactions: List<TransactionEntry> = emptyList(),
     val projectTransactions: List<TransactionEntry> = emptyList(),
     val selectedCategoryId: String? = null,
+    val unbudgetedSpent: Double = 0.0,
+    val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
     val uncategorizedCount: Int = 0,
     val budgetYear: Int = 0,
     val monthlyTimeLabel: String = "",
@@ -189,8 +192,14 @@ class DashboardViewModel(
           projects = projects,
           monthlySummary = computeSummary(monthly),
           annualSummary = computeSummary(annual),
-          projectSummary = computeProjectSummary(projects),
-          monthlyTransactions = resp.monthlyTransactions.sortedByDescending { t -> t.postedDate },
+          projectSummary = computeSummary(projects),
+          monthlyTransactions =
+              (resp.monthlyTransactions + resp.unbudgetedTransactions).sortedByDescending { t ->
+                t.postedDate
+              },
+          unbudgetedSpent = resp.unbudgetedSpent,
+          unbudgetedTransactions =
+              resp.unbudgetedTransactions.sortedByDescending { t -> t.postedDate },
           annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
           projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
           uncategorizedCount = resp.uncategorizedCount,
@@ -204,15 +213,7 @@ class DashboardViewModel(
     }
   }
 
-  private fun computeSummary(items: List<BudgetStatus>): BudgetSummary {
-    val budget = items.sumOf { it.budgetAmount }
-    val spent = items.sumOf { it.spent }
-    val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
-    val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
-    return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
-  }
-
-  private fun computeProjectSummary(items: List<ProjectStatusEntry>): BudgetSummary {
+  private fun computeSummary(items: List<Summarizable>): BudgetSummary {
     val budget = items.sumOf { it.budgetAmount }
     val spent = items.sumOf { it.spent }
     val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }

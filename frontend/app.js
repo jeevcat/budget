@@ -923,6 +923,8 @@ function Dashboard() {
   const annualBudgetTxns = statusResp.annual_transactions;
   const projectBudgetTxns = statusResp.project_transactions;
   const budgetYear = statusResp.budget_year;
+  const unbudgetedSpent = Number(statusResp.unbudgeted_spent) || 0;
+  const unbudgetedTxns = statusResp.unbudgeted_transactions || [];
 
   // Time left label per mode
   const timeLeft = (items, unit) => {
@@ -1010,7 +1012,7 @@ function Dashboard() {
       ? projectBudgetTxns
       : activeTab === 1
         ? annualBudgetTxns
-        : monthBudgetTxns;
+        : [...monthBudgetTxns, ...unbudgetedTxns];
 
   // Collect category subtree IDs (UI-only: narrows the already-filtered
   // backend transaction lists when the user clicks a category bar)
@@ -1099,6 +1101,20 @@ function Dashboard() {
               onCategoryClick=${handleCategoryClick}
             />`
             : html`<p class="text-light">No monthly budgets.</p>`
+        }
+        ${
+          unbudgetedSpent > 0 &&
+          html`
+            <div class="card" style="margin-top:1rem">
+              <div class="hstack" style="justify-content:space-between;align-items:center">
+                <div class="hstack" style="gap:0.5rem;align-items:center">
+                  <span class="badge">Unbudgeted</span>
+                  <span class="text-light">${unbudgetedTxns.length} transaction${unbudgetedTxns.length !== 1 ? "s" : ""}</span>
+                </div>
+                <strong>${formatAmount(unbudgetedSpent, { decimals: 0 })}</strong>
+              </div>
+            </div>
+          `
         }
       </div>
       <div role="tabpanel">

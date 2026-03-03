@@ -212,87 +212,130 @@ private fun DashboardTabContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       when (state.selectedTab) {
-        BudgetMode.MONTHLY -> {
-          item {
-            MonthNavigator(
-                month = state.currentMonth,
-                timeLabel = state.monthlyTimeLabel,
-                isCurrentMonth = state.isCurrentMonth,
-                hasPrev = state.hasPrevMonth,
-                hasNext = state.hasNextMonth,
-                uncategorizedCount = state.uncategorizedCount,
-                onPrev = viewModel::goToPreviousMonth,
-                onNext = viewModel::goToNextMonth,
+        BudgetMode.MONTHLY ->
+            monthlyTabContent(
+                state = state,
+                viewModel = viewModel,
+                onTransactionClick = onTransactionClick,
             )
-          }
-          item { SummaryCards(summary = state.monthlySummary) }
-          items(state.monthlyStatuses, key = { it.categoryId }) { status ->
-            CategoryRow(
-                name = status.categoryName,
-                spent = status.spent,
-                budget = status.budgetAmount,
-                remaining = status.remaining,
-                pace = status.pace,
-                paceDelta = status.paceDelta,
-                barMax = state.monthlySummary.barMax,
-                selected = false,
-                onClick = { viewModel.selectCategory(status.categoryId) },
+        BudgetMode.ANNUAL ->
+            annualTabContent(
+                state = state,
+                viewModel = viewModel,
+                onTransactionClick = onTransactionClick,
             )
-          }
-          transactionSection(
-              transactions = state.monthlyTransactions,
-              onTransactionClick = onTransactionClick,
-          )
-        }
-        BudgetMode.ANNUAL -> {
-          item {
-            AnnualHeader(
-                budgetYear = state.budgetYear,
-                timeLabel = state.annualTimeLabel,
+        BudgetMode.PROJECT ->
+            projectTabContent(
+                state = state,
+                viewModel = viewModel,
+                onTransactionClick = onTransactionClick,
             )
-          }
-          item { SummaryCards(summary = state.annualSummary) }
-          items(state.annualStatuses, key = { it.categoryId }) { status ->
-            CategoryRow(
-                name = status.categoryName,
-                spent = status.spent,
-                budget = status.budgetAmount,
-                remaining = status.remaining,
-                pace = status.pace,
-                paceDelta = status.paceDelta,
-                barMax = state.annualSummary.barMax,
-                selected = false,
-                onClick = { viewModel.selectCategory(status.categoryId) },
-            )
-          }
-          transactionSection(
-              transactions = state.annualTransactions,
-              onTransactionClick = onTransactionClick,
-          )
-        }
-        BudgetMode.PROJECT -> {
-          item { SummaryCards(summary = state.projectSummary) }
-          items(state.projects, key = { it.categoryId }) { project ->
-            CategoryRow(
-                name = project.categoryName,
-                spent = project.spent,
-                budget = project.budgetAmount,
-                remaining = project.remaining,
-                pace = project.pace,
-                paceDelta = project.paceDelta,
-                barMax = state.projectSummary.barMax,
-                selected = false,
-                onClick = { viewModel.selectCategory(project.categoryId) },
-            )
-          }
-          transactionSection(
-              transactions = state.projectTransactions,
-              onTransactionClick = onTransactionClick,
-          )
-        }
       }
     }
   }
+}
+
+// -- Tab content sections --------------------------------------------------
+
+private fun LazyListScope.monthlyTabContent(
+    state: DashboardUiState,
+    viewModel: DashboardViewModel,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
+  item {
+    MonthNavigator(
+        month = state.currentMonth,
+        timeLabel = state.monthlyTimeLabel,
+        isCurrentMonth = state.isCurrentMonth,
+        hasPrev = state.hasPrevMonth,
+        hasNext = state.hasNextMonth,
+        uncategorizedCount = state.uncategorizedCount,
+        onPrev = viewModel::goToPreviousMonth,
+        onNext = viewModel::goToNextMonth,
+    )
+  }
+  item { SummaryCards(summary = state.monthlySummary) }
+  items(state.monthlyStatuses, key = { it.categoryId }) { status ->
+    CategoryRow(
+        name = status.categoryName,
+        spent = status.spent,
+        budget = status.budgetAmount,
+        remaining = status.remaining,
+        pace = status.pace,
+        paceDelta = status.paceDelta,
+        barMax = state.monthlySummary.barMax,
+        selected = false,
+        onClick = { viewModel.selectCategory(status.categoryId) },
+    )
+  }
+  if (state.unbudgetedSpent > 0) {
+    item {
+      UnbudgetedRow(
+          spent = state.unbudgetedSpent,
+          count = state.unbudgetedTransactions.size,
+      )
+    }
+  }
+  transactionSection(
+      transactions = state.monthlyTransactions,
+      onTransactionClick = onTransactionClick,
+  )
+}
+
+private fun LazyListScope.annualTabContent(
+    state: DashboardUiState,
+    viewModel: DashboardViewModel,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
+  item {
+    AnnualHeader(
+        budgetYear = state.budgetYear,
+        timeLabel = state.annualTimeLabel,
+    )
+  }
+  item { SummaryCards(summary = state.annualSummary) }
+  items(state.annualStatuses, key = { it.categoryId }) { status ->
+    CategoryRow(
+        name = status.categoryName,
+        spent = status.spent,
+        budget = status.budgetAmount,
+        remaining = status.remaining,
+        pace = status.pace,
+        paceDelta = status.paceDelta,
+        barMax = state.annualSummary.barMax,
+        selected = false,
+        onClick = { viewModel.selectCategory(status.categoryId) },
+    )
+  }
+  transactionSection(
+      transactions = state.annualTransactions,
+      onTransactionClick = onTransactionClick,
+  )
+}
+
+private fun LazyListScope.projectTabContent(
+    state: DashboardUiState,
+    viewModel: DashboardViewModel,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
+  item { SummaryCards(summary = state.projectSummary) }
+  items(state.projects, key = { it.categoryId }) { project ->
+    CategoryRow(
+        name = project.categoryName,
+        spent = project.spent,
+        budget = project.budgetAmount,
+        remaining = project.remaining,
+        pace = project.pace,
+        paceDelta = project.paceDelta,
+        barMax = state.projectSummary.barMax,
+        selected = false,
+        onClick = { viewModel.selectCategory(project.categoryId) },
+    )
+  }
+  transactionSection(
+      transactions = state.projectTransactions,
+      onTransactionClick = onTransactionClick,
+  )
 }
 
 // -- Month navigator -------------------------------------------------------
@@ -363,6 +406,37 @@ private fun AnnualHeader(budgetYear: Int, timeLabel: String) {
           text = timeLabel,
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+  }
+}
+
+// -- Unbudgeted row --------------------------------------------------------
+
+@Composable
+private fun UnbudgetedRow(spent: Double, count: Int) {
+  ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column {
+        Text(
+            text = "Unbudgeted",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = "$count transaction${if (count != 1) "s" else ""}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Text(
+          text = formatAmount(spent),
+          style = MaterialTheme.typography.bodyLarge,
+          fontWeight = FontWeight.Bold,
       )
     }
   }

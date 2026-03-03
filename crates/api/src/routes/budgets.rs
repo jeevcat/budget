@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::Utc;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -57,6 +58,10 @@ struct StatusResponse {
     annual_transactions: Vec<Transaction>,
     /// Transactions contributing to project budgets.
     project_transactions: Vec<Transaction>,
+    /// Transactions in categories with no budget configuration, within the active month.
+    unbudgeted_transactions: Vec<Transaction>,
+    /// Total spending on unbudgeted categories in the active month (positive = money spent).
+    unbudgeted_spent: Decimal,
     /// Number of uncategorized, uncorrelated transactions in the active month.
     uncategorized_count: u32,
     /// The budget year (calendar year of the January-anchored start).
@@ -116,6 +121,8 @@ struct ClassifiedTransactions {
     monthly: Vec<Transaction>,
     annual: Vec<Transaction>,
     project: Vec<Transaction>,
+    unbudgeted: Vec<Transaction>,
+    unbudgeted_spent: Decimal,
     uncategorized_count: u32,
     budget_year: i32,
 }
@@ -167,6 +174,25 @@ fn classify_transactions(
         .map(|t| (*t).clone())
         .collect();
 
+    let none_cat_ids: std::collections::HashSet<CategoryId> = categories
+        .iter()
+        .filter(|c| effective_budget_mode(c, categories).is_none())
+        .map(|c| c.id)
+        .collect();
+
+    let unbudgeted: Vec<Transaction> = budget_txns
+        .iter()
+        .filter(|t| {
+            t.category_id.is_some_and(|cid| none_cat_ids.contains(&cid))
+                && is_in_budget_month(t.posted_date, month)
+        })
+        .map(|t| (*t).clone())
+        .collect();
+
+    let unbudgeted_spent = -unbudgeted
+        .iter()
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+
     let project: Vec<Transaction> = filter_for_project(transactions, categories)
         .into_iter()
         .cloned()
@@ -192,6 +218,8 @@ fn classify_transactions(
         monthly,
         annual,
         project,
+        unbudgeted,
+        unbudgeted_spent,
         uncategorized_count,
         budget_year,
     }
@@ -339,6 +367,8 @@ async fn status(
         monthly_transactions: classified.monthly,
         annual_transactions: classified.annual,
         project_transactions: classified.project,
+        unbudgeted_transactions: classified.unbudgeted,
+        unbudgeted_spent: classified.unbudgeted_spent,
         uncategorized_count: classified.uncategorized_count,
         budget_year: classified.budget_year,
     }))

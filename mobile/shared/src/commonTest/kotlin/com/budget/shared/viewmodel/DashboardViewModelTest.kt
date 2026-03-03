@@ -197,6 +197,44 @@ class DashboardViewModelTest {
     repo.emitInvalidation(InvalidationEvent.TRANSACTIONS)
     assertTrue(repo.dashboardFetchCount > countBefore, "Expected re-fetch after invalidation")
   }
+
+  @Test
+  fun unbudgetedSpentFlowsThroughToUiState() = runTest {
+    val unbudgetedTxns =
+        listOf(
+            TransactionEntry(
+                id = "txn-ub-1",
+                categoryId = "cat-none",
+                amount = 30.0,
+                merchantName = "Coffee Shop",
+                postedDate = "2026-02-20",
+            ),
+            TransactionEntry(
+                id = "txn-ub-2",
+                categoryId = "cat-none",
+                amount = 15.0,
+                merchantName = "Bakery",
+                postedDate = "2026-02-22",
+            ),
+        )
+    val data =
+        makeDashboardData(
+            "month-1",
+            unbudgetedSpent = 45.0,
+            unbudgetedTransactions = unbudgetedTxns,
+        )
+    val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
+    val vm = DashboardViewModel(repo)
+
+    val state = vm.uiState.value
+    assertEquals(45.0, state.unbudgetedSpent)
+    assertEquals(2, state.unbudgetedTransactions.size)
+    // Unbudgeted transactions should be merged into monthlyTransactions
+    assertTrue(
+        state.monthlyTransactions.any { it.id == "txn-ub-1" },
+        "Expected unbudgeted transaction in monthlyTransactions",
+    )
+  }
 }
 
 // -- Test doubles -----------------------------------------------------------
@@ -245,6 +283,8 @@ private fun makeDashboardData(
     monthId: String,
     prevMonthId: String? = null,
     nextMonthId: String? = null,
+    unbudgetedSpent: Double = 0.0,
+    unbudgetedTransactions: List<TransactionEntry> = emptyList(),
 ): DashboardData {
   val months = buildList {
     if (prevMonthId != null) add(BudgetMonth(id = prevMonthId, startDate = "2026-01-28"))
@@ -278,6 +318,8 @@ private fun makeDashboardData(
                       postedDate = "2026-02-25",
                   ),
               ),
+          unbudgetedSpent = unbudgetedSpent,
+          unbudgetedTransactions = unbudgetedTransactions,
       )
   return DashboardData(status = status, months = months)
 }

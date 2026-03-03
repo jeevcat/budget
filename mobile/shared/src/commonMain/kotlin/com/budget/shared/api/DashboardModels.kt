@@ -39,20 +39,26 @@ data class ChildCategoryInfo(
     @SerialName("category_name") val categoryName: String,
 )
 
+interface Summarizable {
+  val budgetAmount: Double
+  val spent: Double
+  val pace: PaceIndicator
+}
+
 @Serializable
 data class BudgetStatus(
     @SerialName("category_id") val categoryId: String,
     @SerialName("category_name") val categoryName: String,
-    @SerialName("budget_amount") val budgetAmount: Double,
-    val spent: Double,
+    @SerialName("budget_amount") override val budgetAmount: Double,
+    override val spent: Double,
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long? = null,
-    val pace: PaceIndicator,
+    override val pace: PaceIndicator,
     @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ChildCategoryInfo> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
-)
+) : Summarizable
 
 @Serializable
 data class ProjectChildSpending(
@@ -65,16 +71,16 @@ data class ProjectChildSpending(
 data class ProjectStatusEntry(
     @SerialName("category_id") val categoryId: String,
     @SerialName("category_name") val categoryName: String,
-    @SerialName("budget_amount") val budgetAmount: Double,
-    val spent: Double,
+    @SerialName("budget_amount") override val budgetAmount: Double,
+    override val spent: Double,
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long? = null,
-    val pace: PaceIndicator,
+    override val pace: PaceIndicator,
     @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ProjectChildSpending> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
-)
+) : Summarizable
 
 @Serializable
 data class TransactionEntry(
@@ -96,6 +102,9 @@ data class StatusResponse(
     @SerialName("annual_transactions") val annualTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("project_transactions")
     val projectTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("unbudgeted_transactions")
+    val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("unbudgeted_spent") val unbudgetedSpent: Double = 0.0,
     @SerialName("uncategorized_count") val uncategorizedCount: Int = 0,
     @SerialName("budget_year") val budgetYear: Int = 0,
 )
