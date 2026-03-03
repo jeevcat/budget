@@ -34,6 +34,12 @@ data class BudgetMonth(
 )
 
 @Serializable
+data class ChildCategoryInfo(
+    @SerialName("category_id") val categoryId: String,
+    @SerialName("category_name") val categoryName: String,
+)
+
+@Serializable
 data class BudgetStatus(
     @SerialName("category_id") val categoryId: String,
     @SerialName("category_name") val categoryName: String,
@@ -44,6 +50,8 @@ data class BudgetStatus(
     val pace: PaceIndicator,
     @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
+    val children: List<ChildCategoryInfo> = emptyList(),
+    @SerialName("has_children") val hasChildren: Boolean = false,
 )
 
 @Serializable

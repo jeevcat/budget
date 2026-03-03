@@ -52,6 +52,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
+import com.budget.shared.api.BudgetStatus
+import com.budget.shared.api.ChildCategoryInfo
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.config.ServerConfig
@@ -755,6 +757,16 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
   return null
 }
 
+private fun resolveBudgetStatus(
+    state: DashboardUiState,
+    categoryId: String,
+): BudgetStatus? =
+    when (state.selectedTab) {
+      BudgetMode.MONTHLY -> state.monthlyStatuses.find { it.categoryId == categoryId }
+      BudgetMode.ANNUAL -> state.annualStatuses.find { it.categoryId == categoryId }
+      BudgetMode.PROJECT -> null
+    }
+
 private fun resolveTransactions(
     state: DashboardUiState,
     categoryId: String,
@@ -765,6 +777,11 @@ private fun resolveTransactions(
         BudgetMode.ANNUAL -> state.annualTransactions
         BudgetMode.PROJECT -> state.projectTransactions
       }
+  val status = resolveBudgetStatus(state, categoryId)
+  if (status != null && status.hasChildren) {
+    val childIds = status.children.map { it.categoryId }.toSet() + categoryId
+    return all.filter { it.categoryId in childIds }
+  }
   return all.filter { it.categoryId == categoryId }
 }
 
@@ -777,6 +794,8 @@ private fun CategoryTransactionsContent(
 ) {
   val info = resolveCategoryInfo(state, categoryId)
   val transactions = resolveTransactions(state, categoryId)
+  val status = resolveBudgetStatus(state, categoryId)
+  val hasChildren = status?.hasChildren == true
 
   LazyColumn(
       modifier = modifier.fillMaxSize(),
@@ -818,10 +837,81 @@ private fun CategoryTransactionsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
+    } else if (hasChildren && status != null) {
+      subcategoryTransactionSections(
+          transactions = transactions,
+          children = status.children,
+          onTransactionClick = onTransactionClick,
+      )
     } else {
       items(transactions, key = { it.id }) { txn ->
         TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
       }
+    }
+  }
+}
+
+private fun LazyListScope.subcategoryTransactionSections(
+    transactions: List<TransactionEntry>,
+    children: List<ChildCategoryInfo>,
+    onTransactionClick: ((String) -> Unit)? = null,
+) {
+  val byCategory = transactions.groupBy { it.categoryId }
+  val childIds = children.map { it.categoryId }.toSet()
+
+  for (child in children) {
+    val childTxns = byCategory[child.categoryId].orEmpty()
+    if (childTxns.isEmpty()) continue
+
+    item(key = "header-${child.categoryId}") {
+      Row(
+          modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+            text = child.categoryName,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "${childTxns.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+    items(childTxns, key = { it.id }) { txn ->
+      TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
+    }
+  }
+
+  // Transactions directly on the parent category (if any exist)
+  val directTxns =
+      byCategory.entries
+          .filter { (catId, _) -> catId != null && catId !in childIds }
+          .flatMap { it.value }
+  if (directTxns.isNotEmpty()) {
+    item(key = "header-direct") {
+      Row(
+          modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+            text = "Other",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "${directTxns.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+    items(directTxns, key = { it.id }) { txn ->
+      TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
     }
   }
 }

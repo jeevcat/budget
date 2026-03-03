@@ -24,6 +24,20 @@ struct StatusQuery {
 }
 
 #[derive(Serialize)]
+struct ChildCategoryInfo {
+    category_id: CategoryId,
+    category_name: String,
+}
+
+#[derive(Serialize)]
+struct StatusEntry {
+    #[serde(flatten)]
+    status: BudgetStatus,
+    children: Vec<ChildCategoryInfo>,
+    has_children: bool,
+}
+
+#[derive(Serialize)]
 struct ProjectStatusEntry {
     #[serde(flatten)]
     status: BudgetStatus,
@@ -34,7 +48,7 @@ struct ProjectStatusEntry {
 #[derive(Serialize)]
 struct StatusResponse {
     month: BudgetMonth,
-    statuses: Vec<BudgetStatus>,
+    statuses: Vec<StatusEntry>,
     projects: Vec<ProjectStatusEntry>,
     /// Transactions contributing to monthly budgets in the active month.
     monthly_transactions: Vec<Transaction>,
@@ -286,7 +300,7 @@ async fn status(
     let transactions = state.db.list_transactions_since(earliest).await?;
     let reference_date = month.end_date.unwrap_or_else(|| Utc::now().date_naive());
 
-    let statuses: Vec<BudgetStatus> = categories
+    let statuses: Vec<StatusEntry> = categories
         .iter()
         .filter(|c| {
             matches!(
@@ -295,14 +309,28 @@ async fn status(
             )
         })
         .map(|cat| {
-            compute_budget_status(
+            let status = compute_budget_status(
                 cat,
                 &transactions,
                 month,
                 &budget_months,
                 &categories,
                 reference_date,
-            )
+            );
+            let direct_children: Vec<ChildCategoryInfo> = categories
+                .iter()
+                .filter(|c| c.parent_id == Some(cat.id))
+                .map(|c| ChildCategoryInfo {
+                    category_id: c.id,
+                    category_name: c.name.to_string(),
+                })
+                .collect();
+            let has_children = !direct_children.is_empty();
+            StatusEntry {
+                status,
+                children: direct_children,
+                has_children,
+            }
         })
         .collect();
 
