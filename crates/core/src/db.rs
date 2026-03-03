@@ -1065,11 +1065,9 @@ impl Db {
     /// Find a category by name, supporting both storage conventions.
     ///
     /// Resolution order:
-    /// 1. Exact match on `name` (handles categories stored as `"Food:Groceries"`).
+    /// 1. Exact match on `name` (handles legacy categories stored as `"Food:Groceries"`).
     /// 2. If `name` contains a colon (e.g. `"Food:Groceries"`), look for a child
     ///    named `"Groceries"` whose parent is named `"Food"`.
-    /// 3. If `name` contains a colon, also try matching the qualified name built
-    ///    from `parent.name:child.name` for categories stored with a `parent_id`.
     ///
     /// Returns `None` if no match is found.
     ///
