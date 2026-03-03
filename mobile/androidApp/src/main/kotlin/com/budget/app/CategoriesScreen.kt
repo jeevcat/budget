@@ -85,10 +85,11 @@ fun CategoriesScreen(
     viewModel: CategoriesViewModel,
     onAddCategory: () -> Unit = {},
     onEditCategory: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  Box(modifier = modifier.fillMaxSize()) {
     when {
       state.loading && state.sections.isEmpty() -> {
         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))

@@ -73,10 +73,11 @@ private fun formatTransactionDate(dateStr: String): String =
 fun TransactionsScreen(
     viewModel: TransactionsViewModel,
     onTransactionClick: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  Box(modifier = modifier.fillMaxSize()) {
     when {
       state.loading && state.transactions.isEmpty() -> {
         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))

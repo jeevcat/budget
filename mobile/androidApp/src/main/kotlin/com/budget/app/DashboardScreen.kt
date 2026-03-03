@@ -31,11 +31,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -162,22 +159,23 @@ fun DashboardScreen(config: ServerConfig) {
 fun DashboardContent(
     viewModel: DashboardViewModel,
     onTransactionClick: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
 
   val selectedCategoryId = state.selectedCategoryId
   if (selectedCategoryId != null) {
     BackHandler { viewModel.selectCategory(null) }
-    CategoryTransactionsScreen(
+    CategoryTransactionsContent(
         state = state,
         categoryId = selectedCategoryId,
-        onBack = { viewModel.selectCategory(null) },
         onTransactionClick = onTransactionClick,
+        modifier = modifier,
     )
     return
   }
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  Box(modifier = modifier.fillMaxSize()) {
     when {
       state.loading && state.currentMonth == null -> {
         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -770,77 +768,59 @@ private fun resolveTransactions(
   return all.filter { it.categoryId == categoryId }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryTransactionsScreen(
+private fun CategoryTransactionsContent(
     state: DashboardUiState,
     categoryId: String,
-    onBack: () -> Unit,
     onTransactionClick: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
   val info = resolveCategoryInfo(state, categoryId)
   val transactions = resolveTransactions(state, categoryId)
 
-  Scaffold(
-      topBar = {
-        TopAppBar(
-            title = { Text(info?.name ?: "Category") },
-            navigationIcon = {
-              IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-              }
-            },
-            colors =
-                TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
+  LazyColumn(
+      modifier = modifier.fillMaxSize(),
+      contentPadding =
+          PaddingValues(
+              start = 16.dp,
+              end = 16.dp,
+              top = 12.dp,
+              bottom = 24.dp,
+          ),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    if (info != null) {
+      item { CategoryDetailHeader(info) }
+    }
+    item {
+      Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+            text = "Transactions",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
         )
-      },
-  ) { innerPadding ->
-    LazyColumn(
-        modifier = Modifier.padding(innerPadding).fillMaxSize(),
-        contentPadding =
-            PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = 12.dp,
-                bottom = 24.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      if (info != null) {
-        item { CategoryDetailHeader(info) }
+        Text(
+            text = "${transactions.size}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
+    }
+    if (transactions.isEmpty()) {
       item {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(
-              text = "Transactions",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold,
-          )
-          Text(
-              text = "${transactions.size}",
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
+        Text(
+            text = "No transactions in this category",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
-      if (transactions.isEmpty()) {
-        item {
-          Text(
-              text = "No transactions in this category",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      } else {
-        items(transactions, key = { it.id }) { txn ->
-          TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
-        }
+    } else {
+      items(transactions, key = { it.id }) { txn ->
+        TransactionRow(txn, onClick = onTransactionClick?.let { { it(txn.id) } })
       }
     }
   }

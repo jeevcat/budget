@@ -9,6 +9,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
@@ -78,6 +79,23 @@ internal data class TopLevelRoute(
     val unselectedIcon: ImageVector,
 )
 
+private val TOP_LEVEL_ROUTES =
+    listOf(
+        TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
+        TopLevelRoute(
+            "Transactions",
+            TransactionsRoute,
+            Icons.Filled.Receipt,
+            Icons.Outlined.Receipt,
+        ),
+        TopLevelRoute(
+            "Categories",
+            CategoriesRoute,
+            Icons.Filled.Category,
+            Icons.Outlined.Category,
+        ),
+    )
+
 class MainActivity : ComponentActivity() {
 
   private lateinit var configStore: AndroidConfigStore
@@ -127,7 +145,6 @@ class MainActivity : ComponentActivity() {
   }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val navController = rememberNavController()
@@ -138,100 +155,106 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val transactionsVm: TransactionsViewModel = viewModel { TransactionsViewModel(repository) }
   val categoriesVm: CategoriesViewModel = viewModel { CategoriesViewModel(repository) }
 
-  val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
   val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
 
-  val topLevelRoutes =
-      listOf(
-          TopLevelRoute("Budget", BudgetRoute, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
-          TopLevelRoute(
-              "Transactions",
-              TransactionsRoute,
-              Icons.Filled.Receipt,
-              Icons.Outlined.Receipt,
-          ),
-          TopLevelRoute(
-              "Categories",
-              CategoriesRoute,
-              Icons.Filled.Category,
-              Icons.Outlined.Category,
-          ),
-      )
+  AppNavHost(
+      navController = navController,
+      repository = repository,
+      dashboardVm = dashboardVm,
+      transactionsVm = transactionsVm,
+      categoriesVm = categoriesVm,
+      uncategorizedCount = transactionsState.total,
+      onLogout = onLogout,
+  )
+}
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailScaffold(
+    title: String,
+    onBack: () -> Unit,
+    content: @Composable (Modifier) -> Unit,
+) {
+  Scaffold(
+      topBar = {
+        TopAppBar(
+            title = { Text(title) },
+            navigationIcon = {
+              IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+              }
+            },
+            colors =
+                TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+        )
+      },
+  ) { innerPadding ->
+    content(Modifier.padding(innerPadding))
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TopLevelScaffold(
+    navController: NavHostController,
+    title: String,
+    uncategorizedCount: Int,
+    onLogout: () -> Unit,
+    content: @Composable (Modifier) -> Unit,
+) {
   val navBackStackEntry by navController.currentBackStackEntryAsState()
   val currentDestination = navBackStackEntry?.destination
 
-  val showShellChrome =
-      currentDestination?.hasRoute<TransactionDetailRoute>() != true &&
-          currentDestination?.hasRoute<CategoryEditRoute>() != true
-
   Scaffold(
       topBar = {
-        if (showShellChrome) {
-          TopAppBar(
-              title = {
-                val title =
-                    when {
-                      currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
-                      currentDestination?.hasRoute<CategoriesRoute>() == true -> "Categories"
-                      else -> "Budget"
-                    }
-                Text(title)
-              },
-              colors =
-                  TopAppBarDefaults.topAppBarColors(
-                      containerColor = MaterialTheme.colorScheme.surface,
-                  ),
-              actions = {
-                IconButton(onClick = onLogout) {
-                  Icon(
-                      Icons.AutoMirrored.Filled.Logout,
-                      contentDescription = "Disconnect",
-                  )
-                }
-              },
-          )
-        }
+        TopAppBar(
+            title = { Text(title) },
+            colors =
+                TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            actions = {
+              IconButton(onClick = onLogout) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = "Disconnect",
+                )
+              }
+            },
+        )
       },
       bottomBar = {
-        if (showShellChrome) {
-          NavigationBar {
-            topLevelRoutes.forEach { route ->
-              val selected = currentDestination?.hasRoute(route.route::class) == true
-              NavigationBarItem(
-                  selected = selected,
-                  onClick = {
-                    navController.navigate(route.route) {
-                      popUpTo(navController.graph.startDestinationId) { saveState = true }
-                      launchSingleTop = true
-                      restoreState = true
-                    }
-                  },
-                  icon = {
-                    val icon = if (selected) route.selectedIcon else route.unselectedIcon
-                    if (route.route is TransactionsRoute && transactionsState.total > 0) {
-                      BadgedBox(badge = { Badge { Text("${transactionsState.total}") } }) {
-                        Icon(icon, contentDescription = route.label)
-                      }
-                    } else {
+        NavigationBar {
+          TOP_LEVEL_ROUTES.forEach { route ->
+            val selected = currentDestination?.hasRoute(route.route::class) == true
+            NavigationBarItem(
+                selected = selected,
+                onClick = {
+                  navController.navigate(route.route) {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
+                },
+                icon = {
+                  val icon = if (selected) route.selectedIcon else route.unselectedIcon
+                  if (route.route is TransactionsRoute && uncategorizedCount > 0) {
+                    BadgedBox(badge = { Badge { Text("$uncategorizedCount") } }) {
                       Icon(icon, contentDescription = route.label)
                     }
-                  },
-                  label = { Text(route.label) },
-              )
-            }
+                  } else {
+                    Icon(icon, contentDescription = route.label)
+                  }
+                },
+                label = { Text(route.label) },
+            )
           }
         }
       },
   ) { innerPadding ->
-    AppNavHost(
-        navController = navController,
-        repository = repository,
-        dashboardVm = dashboardVm,
-        transactionsVm = transactionsVm,
-        categoriesVm = categoriesVm,
-        modifier = Modifier.padding(innerPadding),
-    )
+    content(Modifier.padding(innerPadding))
   }
 }
 
@@ -242,28 +265,62 @@ private fun AppNavHost(
     dashboardVm: DashboardViewModel,
     transactionsVm: TransactionsViewModel,
     categoriesVm: CategoriesViewModel,
-    modifier: Modifier = Modifier,
+    uncategorizedCount: Int,
+    onLogout: () -> Unit,
 ) {
   NavHost(
       navController = navController,
       startDestination = BudgetRoute,
-      modifier = modifier,
   ) {
     composable<BudgetRoute> {
-      DashboardContent(
-          viewModel = dashboardVm,
-          onTransactionClick = { id ->
-            navController.navigate(TransactionDetailRoute(transactionId = id))
-          },
-      )
+      val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
+      val selectedCategoryId = dashboardState.selectedCategoryId
+
+      if (selectedCategoryId != null) {
+        val categoryName =
+            dashboardState.monthlyStatuses
+                .find { it.categoryId == selectedCategoryId }
+                ?.categoryName
+                ?: dashboardState.annualStatuses
+                    .find { it.categoryId == selectedCategoryId }
+                    ?.categoryName
+                ?: dashboardState.projects
+                    .find { it.categoryId == selectedCategoryId }
+                    ?.categoryName
+        DetailScaffold(
+            title = categoryName ?: "Category",
+            onBack = { dashboardVm.selectCategory(null) },
+        ) { modifier ->
+          DashboardContent(
+              viewModel = dashboardVm,
+              onTransactionClick = { id ->
+                navController.navigate(TransactionDetailRoute(transactionId = id))
+              },
+              modifier = modifier,
+          )
+        }
+      } else {
+        TopLevelScaffold(navController, "Budget", uncategorizedCount, onLogout) { modifier ->
+          DashboardContent(
+              viewModel = dashboardVm,
+              onTransactionClick = { id ->
+                navController.navigate(TransactionDetailRoute(transactionId = id))
+              },
+              modifier = modifier,
+          )
+        }
+      }
     }
     composable<TransactionsRoute> {
-      TransactionsScreen(
-          viewModel = transactionsVm,
-          onTransactionClick = { id ->
-            navController.navigate(TransactionDetailRoute(transactionId = id))
-          },
-      )
+      TopLevelScaffold(navController, "Transactions", uncategorizedCount, onLogout) { modifier ->
+        TransactionsScreen(
+            viewModel = transactionsVm,
+            onTransactionClick = { id ->
+              navController.navigate(TransactionDetailRoute(transactionId = id))
+            },
+            modifier = modifier,
+        )
+      }
     }
     composable<TransactionDetailRoute> { backStackEntry ->
       val route = backStackEntry.toRoute<TransactionDetailRoute>()
@@ -278,11 +335,14 @@ private fun AppNavHost(
       )
     }
     composable<CategoriesRoute> {
-      CategoriesScreen(
-          viewModel = categoriesVm,
-          onAddCategory = { navController.navigate(CategoryEditRoute()) },
-          onEditCategory = { id -> navController.navigate(CategoryEditRoute(categoryId = id)) },
-      )
+      TopLevelScaffold(navController, "Categories", uncategorizedCount, onLogout) { modifier ->
+        CategoriesScreen(
+            viewModel = categoriesVm,
+            onAddCategory = { navController.navigate(CategoryEditRoute()) },
+            onEditCategory = { id -> navController.navigate(CategoryEditRoute(categoryId = id)) },
+            modifier = modifier,
+        )
+      }
     }
     composable<CategoryEditRoute> { backStackEntry ->
       val route = backStackEntry.toRoute<CategoryEditRoute>()
