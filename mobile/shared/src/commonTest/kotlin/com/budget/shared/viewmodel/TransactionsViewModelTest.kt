@@ -42,7 +42,7 @@ class TransactionsViewModelTest {
   }
 
   @Test
-  fun buildDisplayCategoriesSortsAlphabeticallyWithChildren() {
+  fun buildDisplayCategoriesExcludesParentsShowsOnlyLeaves() {
     val cats =
         listOf(
             Category(id = "1", name = catName("Groceries")),
@@ -54,22 +54,22 @@ class TransactionsViewModelTest {
 
     val result = TransactionsViewModel.buildDisplayCategories(cats)
 
-    assertEquals(5, result.size)
-    // Roots sorted alphabetically: Groceries, Transport
-    assertEquals("Groceries", result[0].name)
-    assertEquals(0, result[0].depth)
-    assertEquals("Aldi", result[1].name)
-    assertEquals("Groceries", result[1].parentName)
+    // Parent categories (Groceries, Transport) are excluded; only leaves shown
+    assertEquals(3, result.size)
+    // Children of Groceries (alphabetical)
+    assertEquals("Aldi", result[0].name)
+    assertEquals("Groceries", result[0].parentName)
+    assertEquals(1, result[0].depth)
+    // Children of Transport (alphabetical)
+    assertEquals("Bus", result[1].name)
+    assertEquals("Transport", result[1].parentName)
     assertEquals(1, result[1].depth)
-    assertEquals("Transport", result[2].name)
-    assertEquals(0, result[2].depth)
-    assertEquals("Bus", result[3].name)
-    assertEquals("Transport", result[3].parentName)
-    assertEquals("Train", result[4].name)
+    assertEquals("Train", result[2].name)
+    assertEquals("Transport", result[2].parentName)
   }
 
   @Test
-  fun buildDisplayCategoriesHandlesNoChildren() {
+  fun buildDisplayCategoriesIncludesLeafRoots() {
     val cats =
         listOf(
             Category(id = "1", name = catName("Rent")),
@@ -78,10 +78,35 @@ class TransactionsViewModelTest {
 
     val result = TransactionsViewModel.buildDisplayCategories(cats)
 
+    // Root categories without children are leaf categories — they're selectable
     assertEquals(2, result.size)
     assertEquals("Food", result[0].name) // alphabetical
     assertEquals("Rent", result[1].name)
+    assertEquals(0, result[0].depth)
     assertNull(result[0].parentName)
+  }
+
+  @Test
+  fun buildDisplayCategoriesMixesLeafRootsAndChildren() {
+    val cats =
+        listOf(
+            Category(id = "1", name = catName("Tax")),
+            Category(id = "2", name = catName("Food")),
+            Category(id = "3", name = catName("Coffee"), parentId = "2"),
+            Category(id = "4", name = catName("Groceries"), parentId = "2"),
+        )
+
+    val result = TransactionsViewModel.buildDisplayCategories(cats)
+
+    // Food is a parent → excluded. Tax is a leaf root → included.
+    assertEquals(3, result.size)
+    assertEquals("Coffee", result[0].name)
+    assertEquals("Food", result[0].parentName)
+    assertEquals("Groceries", result[1].name)
+    assertEquals("Food", result[1].parentName)
+    assertEquals("Tax", result[2].name)
+    assertEquals(0, result[2].depth)
+    assertNull(result[2].parentName)
   }
 
   @Test

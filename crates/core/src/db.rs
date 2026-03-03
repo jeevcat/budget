@@ -1062,6 +1062,21 @@ impl Db {
         row.as_ref().map(row_to_category).transpose()
     }
 
+    /// Check whether a category has any child categories.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn category_has_children(&self, id: CategoryId) -> Result<bool, sqlx::Error> {
+        let pool = &self.0;
+        let row =
+            sqlx::query("SELECT EXISTS(SELECT 1 FROM categories WHERE parent_id = $1) as has")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+        row.try_get::<bool, _>("has")
+    }
+
     /// Find a category by name, supporting both storage conventions.
     ///
     /// Resolution order:

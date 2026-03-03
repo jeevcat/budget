@@ -210,11 +210,18 @@ function buildCategoryTree(categories) {
   }
   const sorted = (arr) =>
     arr.slice().sort((a, b) => a.name.localeCompare(b.name));
+  // Only leaf categories are selectable — parent categories (those with
+  // children) are excluded since transactions should only be assigned to
+  // leaves.
   const result = [];
   for (const root of sorted(roots)) {
-    result.push({ ...root, depth: 0 });
-    for (const child of sorted(childrenOf[root.id] ?? [])) {
-      result.push({ ...child, depth: 1 });
+    const children = sorted(childrenOf[root.id] ?? []);
+    if (children.length === 0) {
+      result.push({ ...root, depth: 0 });
+    } else {
+      for (const child of children) {
+        result.push({ ...child, depth: 1 });
+      }
     }
   }
   return result;

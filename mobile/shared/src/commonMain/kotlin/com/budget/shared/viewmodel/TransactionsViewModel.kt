@@ -210,7 +210,13 @@ class TransactionsViewModel(
   }
 
   companion object {
-    /** Build a sorted, hierarchical display list from flat categories. */
+    /**
+     * Build a sorted, hierarchical display list of leaf categories only.
+     *
+     * Parent categories (those that have children) are excluded from the list since transactions
+     * should only be assigned to leaf categories. Children still display their parent name for
+     * context. Root categories without children are included as selectable leaves.
+     */
     fun buildDisplayCategories(raw: List<Category>): List<DisplayCategory> {
       val byId = raw.associateBy { it.id }
       val roots = raw.filter { it.parentId == null }.sortedBy { it.name.value.lowercase() }
@@ -221,17 +227,20 @@ class TransactionsViewModel(
 
       return buildList {
         for (root in roots) {
-          add(DisplayCategory(id = root.id, name = root.name.value, depth = 0))
           val children = childrenOf[root.id].orEmpty()
-          for (child in children) {
-            add(
-                DisplayCategory(
-                    id = child.id,
-                    name = child.name.value,
-                    parentName = root.name.value,
-                    depth = 1,
-                )
-            )
+          if (children.isEmpty()) {
+            add(DisplayCategory(id = root.id, name = root.name.value, depth = 0))
+          } else {
+            for (child in children) {
+              add(
+                  DisplayCategory(
+                      id = child.id,
+                      name = child.name.value,
+                      parentName = root.name.value,
+                      depth = 1,
+                  )
+              )
+            }
           }
         }
       }

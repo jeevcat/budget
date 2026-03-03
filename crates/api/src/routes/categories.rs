@@ -71,10 +71,23 @@ struct CategoryWithCount {
 ///
 /// Returns `AppError` if the database query fails.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<CategoryWithCount>>, AppError> {
-    let (categories, counts) = tokio::try_join!(
+    let (categories, direct_counts) = tokio::try_join!(
         state.db.list_categories(),
         state.db.category_transaction_counts(),
     )?;
+
+    // Parent categories should show the sum of their own direct count plus
+    // all children's counts, so the number reflects the entire subtree.
+    let mut counts = direct_counts.clone();
+    for cat in &categories {
+        if let Some(parent_id) = cat.parent_id {
+            let child_count = direct_counts.get(&cat.id).copied().unwrap_or(0);
+            if child_count > 0 {
+                *counts.entry(parent_id).or_insert(0) += child_count;
+            }
+        }
+    }
+
     let result = categories
         .into_iter()
         .map(|c| {

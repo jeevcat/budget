@@ -157,6 +157,14 @@ async fn categorize(
     let txn_id = TransactionId::from_uuid(txn_uuid);
     let category_id = CategoryId::from_uuid(cat_uuid);
 
+    if state.db.category_has_children(category_id).await? {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "Cannot assign transactions to a parent category; use a leaf category instead"
+                .to_string(),
+        ));
+    }
+
     state
         .db
         .update_transaction_category(txn_id, category_id, CategoryMethod::Manual, None)
