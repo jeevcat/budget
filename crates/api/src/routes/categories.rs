@@ -7,7 +7,9 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use budget_core::models::{BudgetMode, BudgetType, Category, CategoryId, CategoryName};
+use budget_core::models::{
+    BudgetConfig, BudgetMode, BudgetType, Category, CategoryId, CategoryName,
+};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -222,11 +224,13 @@ async fn create(
         id: CategoryId::new(),
         name,
         parent_id,
-        budget_mode: budget.mode,
-        budget_type: budget.budget_type,
-        budget_amount: budget.amount,
-        project_start_date: budget.start,
-        project_end_date: budget.end,
+        budget: BudgetConfig::from_parts(
+            budget.mode,
+            budget.budget_type,
+            budget.amount,
+            budget.start,
+            budget.end,
+        ),
     };
 
     state.db.insert_category(&category).await?;
@@ -266,11 +270,13 @@ async fn update(
         id: CategoryId::from_uuid(uuid),
         name,
         parent_id,
-        budget_mode: budget.mode,
-        budget_type: budget.budget_type,
-        budget_amount: budget.amount,
-        project_start_date: budget.start,
-        project_end_date: budget.end,
+        budget: BudgetConfig::from_parts(
+            budget.mode,
+            budget.budget_type,
+            budget.amount,
+            budget.start,
+            budget.end,
+        ),
     };
 
     state.db.update_category(&category).await?;

@@ -2,10 +2,12 @@ use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
 use crate::error::Error;
 use crate::models::{
-    BudgetMode, BudgetMonth, BudgetMonthId, BudgetStatus, BudgetType, Category, CategoryId,
-    PaceIndicator, ProjectChildSpending, Transaction,
+    BudgetConfig, BudgetMode, BudgetMonth, BudgetMonthId, BudgetStatus, BudgetType, Category,
+    CategoryId, CorrelationType, PaceIndicator, ProjectChildSpending, Transaction, TransactionId,
 };
 
 /// Derive a deterministic UUID from a start date so the same budget month
@@ -49,20 +51,63 @@ pub fn collect_category_subtree(
 /// Collect category IDs that belong to a project-mode category (or whose
 /// ancestor is project-mode). Used to exclude project transactions from
 /// regular budget math.
-fn project_category_ids(categories: &[Category]) -> std::collections::HashSet<CategoryId> {
+fn project_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
     let project_roots: Vec<CategoryId> = categories
         .iter()
-        .filter(|c| c.budget_mode == Some(BudgetMode::Project))
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Project))
         .map(|c| c.id)
         .collect();
 
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = HashSet::new();
     for root in project_roots {
         for id in collect_category_subtree(root, categories) {
             ids.insert(id);
         }
     }
     ids
+}
+
+// ---------------------------------------------------------------------------
+// Shared transaction exclusion helpers
+// ---------------------------------------------------------------------------
+
+/// Collect IDs of transactions whose expenses have been reimbursed.
+///
+/// A reimbursement transaction points at its original via `correlation.partner_id`.
+fn reimbursed_transaction_ids(transactions: &[Transaction]) -> HashSet<TransactionId> {
+    transactions
+        .iter()
+        .filter(|t| {
+            t.correlation
+                .as_ref()
+                .is_some_and(|c| c.correlation_type == CorrelationType::Reimbursement)
+        })
+        .filter_map(|t| t.correlation.as_ref().map(|c| c.partner_id))
+        .collect()
+}
+
+/// Whether a transaction should be excluded from budget math due to correlation.
+///
+/// Excludes: transfers, reimbursements, and the original expenses that were reimbursed.
+fn is_correlated_exclusion(txn: &Transaction, reimbursed_ids: &HashSet<TransactionId>) -> bool {
+    if let Some(c) = &txn.correlation
+        && (c.correlation_type == CorrelationType::Transfer
+            || c.correlation_type == CorrelationType::Reimbursement)
+    {
+        return true;
+    }
+    reimbursed_ids.contains(&txn.id)
+}
+
+/// Effective budget mode for a category: its own mode, or inherited from parent.
+#[must_use]
+pub fn effective_budget_mode(cat: &Category, categories: &[Category]) -> Option<BudgetMode> {
+    if let Some(mode) = cat.budget.mode() {
+        return Some(mode);
+    }
+    cat.parent_id
+        .and_then(|pid| categories.iter().find(|c| c.id == pid))
+        .and_then(|p| p.budget.mode())
 }
 
 /// Filter transactions to only include those relevant to regular budget math.
@@ -78,18 +123,7 @@ pub fn filter_for_budget<'a>(
     categories: &[Category],
 ) -> Vec<&'a Transaction> {
     let project_cats = project_category_ids(categories);
-
-    // Collect IDs of transactions that are reimbursed (have a correlation partner
-    // with type "reimbursement")
-    let reimbursed_ids: std::collections::HashSet<_> = transactions
-        .iter()
-        .filter(|t| {
-            t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-        })
-        .filter_map(|t| t.correlation_id)
-        .collect();
+    let reimbursed_ids = reimbursed_transaction_ids(transactions);
 
     transactions
         .iter()
@@ -98,25 +132,7 @@ pub fn filter_for_budget<'a>(
             if t.category_id.is_some_and(|cid| project_cats.contains(&cid)) {
                 return false;
             }
-            // Exclude transfers
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Transfer)
-            {
-                return false;
-            }
-            // Exclude reimbursements themselves
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-            {
-                return false;
-            }
-            // Exclude the original expense that was reimbursed
-            if reimbursed_ids.contains(&t.id) {
-                return false;
-            }
-            true
+            !is_correlated_exclusion(t, &reimbursed_ids)
         })
         .collect()
 }
@@ -193,10 +209,65 @@ pub fn detect_budget_month_boundaries(
     Ok(budget_months)
 }
 
+/// Collect descendant category IDs whose budget mode is compatible with the root.
+///
+/// Children that declare their own explicit budget mode different from
+/// `root_mode` are excluded (along with their subtrees), because they are
+/// tracked under a separate budget entry.
+fn collect_budget_subtree(
+    category_id: CategoryId,
+    root_mode: Option<BudgetMode>,
+    categories: &[Category],
+) -> Vec<CategoryId> {
+    let mut result = vec![category_id];
+    let mut stack = vec![category_id];
+
+    while let Some(current) = stack.pop() {
+        for cat in categories {
+            if cat.parent_id == Some(current) {
+                // Skip children with their own different budget mode
+                if let Some(child_mode) = cat.budget.mode()
+                    && Some(child_mode) != root_mode
+                {
+                    continue;
+                }
+                result.push(cat.id);
+                stack.push(cat.id);
+            }
+        }
+    }
+
+    result
+}
+
 /// Sum spending in a category (including children) for a budget month.
 ///
 /// Respects category hierarchy: parent includes all children's spending.
-/// Excludes project-mode, transfer, and reimbursed transactions.
+/// Excludes children that have their own different budget mode (they are
+/// tracked separately), as well as project-mode, transfer, and reimbursed
+/// transactions.
+/// Sum spending from pre-filtered transactions for a set of category IDs
+/// in a budget month.
+fn compute_spending_for_subtree(
+    filtered_txns: &[&Transaction],
+    subtree: &[CategoryId],
+    budget_month: &BudgetMonth,
+) -> Decimal {
+    -filtered_txns
+        .iter()
+        .filter(|t| {
+            t.category_id.is_some_and(|cid| subtree.contains(&cid))
+                && is_in_budget_month(t.posted_date, budget_month)
+        })
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount)
+}
+
+/// Sum spending in a category (including children) for a budget month.
+///
+/// Respects category hierarchy: parent includes all children's spending.
+/// Excludes children that have their own different budget mode (they are
+/// tracked separately), as well as project-mode, transfer, and reimbursed
+/// transactions.
 #[must_use]
 pub fn compute_category_spending(
     transactions: &[Transaction],
@@ -204,18 +275,14 @@ pub fn compute_category_spending(
     budget_month: &BudgetMonth,
     categories: &[Category],
 ) -> Decimal {
-    let subtree = collect_category_subtree(category_id, categories);
+    let root_mode = categories
+        .iter()
+        .find(|c| c.id == category_id)
+        .and_then(|c| c.budget.mode());
+    let subtree = collect_budget_subtree(category_id, root_mode, categories);
     let budget_txns = filter_for_budget(transactions, categories);
 
-    -budget_txns
-        .iter()
-        .filter(|t| {
-            // Must be in the category subtree
-            t.category_id.is_some_and(|cid| subtree.contains(&cid))
-            // Must fall within the budget month
-            && is_in_budget_month(t.posted_date, budget_month)
-        })
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount)
+    compute_spending_for_subtree(&budget_txns, &subtree, budget_month)
 }
 
 /// Check if a date falls within a budget month's boundaries.
@@ -338,7 +405,7 @@ fn compute_monthly_status(
     today: NaiveDate,
 ) -> BudgetStatus {
     let spent = compute_category_spending(transactions, category.id, current_month, categories);
-    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+    let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
     let end_date = current_month
@@ -349,7 +416,10 @@ fn compute_monthly_status(
 
     let total_days = (end_date - current_month.start_date).num_days();
     let elapsed_days = (today - current_month.start_date).num_days().max(0);
-    let bt = category.budget_type.unwrap_or(BudgetType::Variable);
+    let bt = category
+        .budget
+        .budget_type()
+        .unwrap_or(BudgetType::Variable);
     let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt);
 
     BudgetStatus {
@@ -358,7 +428,7 @@ fn compute_monthly_status(
         budget_amount,
         spent,
         remaining,
-        time_left,
+        time_left: Some(time_left),
         pace,
         pace_delta,
         budget_mode: BudgetMode::Monthly,
@@ -376,13 +446,17 @@ fn compute_annual_status(
 ) -> BudgetStatus {
     let year_months = budget_year_months(all_months, current_month);
 
-    // Sum spending across all months in the budget year
+    // Pre-filter once, then sum across all months in the budget year
+    let root_mode = category.budget.mode();
+    let subtree = collect_budget_subtree(category.id, root_mode, categories);
+    let budget_txns = filter_for_budget(transactions, categories);
+
     let spent = year_months
         .iter()
-        .map(|bm| compute_category_spending(transactions, category.id, bm, categories))
+        .map(|bm| compute_spending_for_subtree(&budget_txns, &subtree, bm))
         .sum::<Decimal>();
 
-    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+    let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
     let total_year_months = i64::try_from(year_months.len()).unwrap_or(i64::MAX);
@@ -395,7 +469,10 @@ fn compute_annual_status(
         });
     let time_left = (total_year_months - elapsed_months).max(0);
 
-    let bt = category.budget_type.unwrap_or(BudgetType::Variable);
+    let bt = category
+        .budget
+        .budget_type()
+        .unwrap_or(BudgetType::Variable);
     let (pace, pace_delta) =
         compute_pace(spent, budget_amount, elapsed_months, total_year_months, bt);
 
@@ -405,7 +482,7 @@ fn compute_annual_status(
         budget_amount,
         spent,
         remaining,
-        time_left,
+        time_left: Some(time_left),
         pace,
         pace_delta,
         budget_mode: BudgetMode::Annual,
@@ -420,20 +497,16 @@ fn compute_project_status(
     today: NaiveDate,
 ) -> BudgetStatus {
     let subtree = collect_category_subtree(category.id, categories);
+    let reimbursed_ids = reimbursed_transaction_ids(transactions);
 
-    // Collect reimbursed transaction IDs (same logic as filter_for_budget)
-    let reimbursed_ids: std::collections::HashSet<_> = transactions
-        .iter()
-        .filter(|t| {
-            t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-        })
-        .filter_map(|t| t.correlation_id)
-        .collect();
-
-    let start = category.project_start_date;
-    let end = category.project_end_date;
+    let (start, end) = match &category.budget {
+        BudgetConfig::Project {
+            start_date,
+            end_date,
+            ..
+        } => (Some(*start_date), *end_date),
+        _ => (None, None),
+    };
 
     // Filter transactions within the project date range, excluding transfers/reimbursements
     let spent: Decimal = -transactions
@@ -443,22 +516,7 @@ fn compute_project_status(
             if !in_subtree {
                 return false;
             }
-            // Exclude transfers
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Transfer)
-            {
-                return false;
-            }
-            // Exclude reimbursements
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-            {
-                return false;
-            }
-            // Exclude reimbursed originals
-            if reimbursed_ids.contains(&t.id) {
+            if is_correlated_exclusion(t, &reimbursed_ids) {
                 return false;
             }
             // Date range filter
@@ -476,20 +534,23 @@ fn compute_project_status(
         })
         .fold(Decimal::ZERO, |acc, t| acc + t.amount);
 
-    let budget_amount = category.budget_amount.unwrap_or(Decimal::ZERO);
+    let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
-    let bt = category.budget_type.unwrap_or(BudgetType::Variable);
+    let bt = category
+        .budget
+        .budget_type()
+        .unwrap_or(BudgetType::Variable);
     let (time_left, pace, pace_delta) = match (start, end) {
         (Some(s), Some(e)) if budget_amount > Decimal::ZERO => {
             let total_days = (e - s).num_days();
             let elapsed_days = (today - s).num_days().max(0);
             let tl = (e - today).num_days().max(0);
             let (p, d) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt);
-            (tl, p, d)
+            (Some(tl), p, d)
         }
         // Open-ended or no budget: can't compute pace
-        _ => (-1, PaceIndicator::OnTrack, Decimal::ZERO),
+        _ => (None, PaceIndicator::OnTrack, Decimal::ZERO),
     };
 
     BudgetStatus {
@@ -507,7 +568,7 @@ fn compute_project_status(
 
 /// Compute the full budget status for a category.
 ///
-/// Dispatches to mode-specific logic based on the category's `budget_mode`.
+/// Dispatches to mode-specific logic based on the category's budget mode.
 #[must_use]
 pub fn compute_budget_status(
     category: &Category,
@@ -517,7 +578,7 @@ pub fn compute_budget_status(
     categories: &[Category],
     today: NaiveDate,
 ) -> BudgetStatus {
-    match category.budget_mode {
+    match category.budget.mode() {
         Some(BudgetMode::Annual) => compute_annual_status(
             category,
             transactions,
@@ -544,44 +605,16 @@ pub fn filter_for_project<'a>(
     categories: &[Category],
 ) -> Vec<&'a Transaction> {
     let project_cats = project_category_ids(categories);
-
-    let reimbursed_ids: std::collections::HashSet<_> = transactions
-        .iter()
-        .filter(|t| {
-            t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-        })
-        .filter_map(|t| t.correlation_id)
-        .collect();
+    let reimbursed_ids = reimbursed_transaction_ids(transactions);
 
     transactions
         .iter()
         .filter(|t| {
-            // Must be in a project-mode category
             let in_project = t.category_id.is_some_and(|cid| project_cats.contains(&cid));
             if !in_project {
                 return false;
             }
-            // Exclude transfers
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Transfer)
-            {
-                return false;
-            }
-            // Exclude reimbursements themselves
-            if t.correlation_type
-                .as_ref()
-                .is_some_and(|ct| *ct == crate::models::CorrelationType::Reimbursement)
-            {
-                return false;
-            }
-            // Exclude reimbursed originals
-            if reimbursed_ids.contains(&t.id) {
-                return false;
-            }
-            true
+            !is_correlated_exclusion(t, &reimbursed_ids)
         })
         .collect()
 }
@@ -667,7 +700,7 @@ pub fn compute_project_child_breakdowns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CategoryId, CategoryName};
+    use crate::models::{CategoryId, CategoryName, Correlation};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -695,11 +728,7 @@ mod tests {
             id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
             name: CategoryName::new(name).expect("valid test category name"),
             parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
-            budget_mode: None,
-            budget_type: None,
-            budget_amount: None,
-            project_start_date: None,
-            project_end_date: None,
+            budget: BudgetConfig::None,
         }
     }
 
@@ -724,9 +753,23 @@ mod tests {
     }
 
     fn food_with_budget(mode: BudgetMode, amount: Decimal) -> Category {
+        let budget = match mode {
+            BudgetMode::Monthly => BudgetConfig::Monthly {
+                amount,
+                budget_type: BudgetType::Variable,
+            },
+            BudgetMode::Annual => BudgetConfig::Annual {
+                amount,
+                budget_type: BudgetType::Variable,
+            },
+            BudgetMode::Project => BudgetConfig::Project {
+                amount,
+                start_date: date(2025, 1, 1),
+                end_date: None,
+            },
+        };
         Category {
-            budget_mode: Some(mode),
-            budget_amount: Some(amount),
+            budget,
             ..food_category()
         }
     }
@@ -870,11 +913,54 @@ mod tests {
     }
 
     #[test]
+    fn annual_subcategory_excluded_from_monthly_parent_spending() {
+        let mut food = food_category();
+        food.budget = BudgetConfig::Monthly {
+            amount: dec!(500),
+            budget_type: BudgetType::Variable,
+        };
+
+        let groceries = groceries_category(); // no explicit mode → inherits monthly
+        let mut christmas_food = make_category(103, "Christmas Food", Some(100));
+        christmas_food.budget = BudgetConfig::Annual {
+            amount: dec!(200),
+            budget_type: BudgetType::Variable,
+        };
+
+        let categories = vec![food.clone(), groceries.clone(), christmas_food.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(groceries.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(Some(christmas_food.id), dec!(-80), date(2025, 1, 25)),
+        ];
+
+        // Monthly parent should NOT include the annual subcategory's spending
+        let food_spending = compute_category_spending(&transactions, food.id, &bm, &categories);
+        assert_eq!(food_spending, dec!(50));
+
+        // Annual subcategory tracks its own spending independently
+        let xmas_spending =
+            compute_category_spending(&transactions, christmas_food.id, &bm, &categories);
+        assert_eq!(xmas_spending, dec!(80));
+    }
+
+    #[test]
     fn project_transactions_excluded_from_budget() {
         let food = food_category();
         // A project category whose transactions should be excluded
         let mut project_cat = make_category(200, "Renovation", None);
-        project_cat.budget_mode = Some(BudgetMode::Project);
+        project_cat.budget = BudgetConfig::Project {
+            amount: Decimal::ZERO,
+            start_date: date(2025, 1, 1),
+            end_date: None,
+        };
         let categories = vec![food.clone(), project_cat.clone()];
 
         let bm = BudgetMonth {
@@ -913,7 +999,10 @@ mod tests {
         };
 
         let mut transfer_txn = make_txn(Some(food.id), dec!(-200), date(2025, 1, 20));
-        transfer_txn.correlation_type = Some(crate::models::CorrelationType::Transfer);
+        transfer_txn.correlation = Some(crate::models::Correlation {
+            partner_id: TransactionId::new(),
+            correlation_type: CorrelationType::Transfer,
+        });
 
         let transactions = vec![
             make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
@@ -942,8 +1031,10 @@ mod tests {
 
         // Reimbursement linked to the original (positive: money coming back)
         let mut reimbursement = make_txn(Some(food.id), dec!(200), date(2025, 1, 25));
-        reimbursement.correlation_id = Some(original_id);
-        reimbursement.correlation_type = Some(crate::models::CorrelationType::Reimbursement);
+        reimbursement.correlation = Some(crate::models::Correlation {
+            partner_id: original_id,
+            correlation_type: CorrelationType::Reimbursement,
+        });
 
         let transactions = vec![
             make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
@@ -983,7 +1074,7 @@ mod tests {
             status.pace_delta < Decimal::ZERO,
             "under-pace delta should be negative"
         );
-        assert!(status.time_left > 0);
+        assert!(status.time_left.unwrap_or(0) > 0);
         assert_eq!(status.budget_mode, BudgetMode::Monthly);
     }
 
@@ -1112,16 +1203,17 @@ mod tests {
         assert_eq!(status.spent, dec!(1200));
         assert_eq!(status.remaining, dec!(4800));
         // 3 months total, reference is month 3 → 0 months left
-        assert_eq!(status.time_left, 0);
+        assert_eq!(status.time_left, Some(0));
     }
 
     #[test]
     fn project_status_filters_by_date_range() {
         let mut project = make_category(300, "Renovation", None);
-        project.budget_mode = Some(BudgetMode::Project);
-        project.budget_amount = Some(dec!(10000));
-        project.project_start_date = Some(date(2025, 1, 1));
-        project.project_end_date = Some(date(2025, 6, 30));
+        project.budget = BudgetConfig::Project {
+            amount: dec!(10000),
+            start_date: date(2025, 1, 1),
+            end_date: Some(date(2025, 6, 30)),
+        };
         let categories = vec![project.clone()];
 
         // A dummy budget month (needed for signature but project ignores it)
@@ -1155,16 +1247,17 @@ mod tests {
         assert_eq!(status.spent, dec!(5000));
         assert_eq!(status.remaining, dec!(5000));
         // Days left: June 30 - April 15 = 76 days
-        assert_eq!(status.time_left, 76);
+        assert_eq!(status.time_left, Some(76));
     }
 
     #[test]
     fn project_status_open_ended() {
         let mut project = make_category(301, "Ongoing", None);
-        project.budget_mode = Some(BudgetMode::Project);
-        project.budget_amount = Some(dec!(5000));
-        project.project_start_date = Some(date(2025, 1, 1));
-        // No end date
+        project.budget = BudgetConfig::Project {
+            amount: dec!(5000),
+            start_date: date(2025, 1, 1),
+            end_date: None,
+        };
         let categories = vec![project.clone()];
 
         let bm = BudgetMonth {
@@ -1189,7 +1282,7 @@ mod tests {
 
         assert_eq!(status.budget_mode, BudgetMode::Project);
         assert_eq!(status.spent, dec!(1000));
-        assert_eq!(status.time_left, -1);
+        assert_eq!(status.time_left, None);
         assert_eq!(status.pace, PaceIndicator::OnTrack);
         assert_eq!(status.pace_delta, Decimal::ZERO);
     }
@@ -1222,8 +1315,10 @@ mod tests {
     fn mixed_monthly_and_annual_categories() {
         let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let mut insurance = make_category(200, "Insurance", None);
-        insurance.budget_mode = Some(BudgetMode::Annual);
-        insurance.budget_amount = Some(dec!(2400));
+        insurance.budget = BudgetConfig::Annual {
+            amount: dec!(2400),
+            budget_type: BudgetType::Variable,
+        };
         let categories = vec![food.clone(), insurance.clone()];
 
         let bm_jan = BudgetMonth {
@@ -1284,8 +1379,10 @@ mod tests {
     fn annual_transactions_do_not_affect_monthly_budget() {
         let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let mut insurance = make_category(200, "Insurance", None);
-        insurance.budget_mode = Some(BudgetMode::Annual);
-        insurance.budget_amount = Some(dec!(2400));
+        insurance.budget = BudgetConfig::Annual {
+            amount: dec!(2400),
+            budget_type: BudgetType::Variable,
+        };
         let categories = vec![food.clone(), insurance.clone()];
 
         let bm = BudgetMonth {
@@ -1333,11 +1430,15 @@ mod tests {
     fn dashboard_totals_with_monthly_and_annual() {
         let food = food_with_budget(BudgetMode::Monthly, dec!(500));
         let mut transport = make_category(150, "Transport", None);
-        transport.budget_mode = Some(BudgetMode::Monthly);
-        transport.budget_amount = Some(dec!(200));
+        transport.budget = BudgetConfig::Monthly {
+            amount: dec!(200),
+            budget_type: BudgetType::Variable,
+        };
         let mut insurance = make_category(200, "Insurance", None);
-        insurance.budget_mode = Some(BudgetMode::Annual);
-        insurance.budget_amount = Some(dec!(2400));
+        insurance.budget = BudgetConfig::Annual {
+            amount: dec!(2400),
+            budget_type: BudgetType::Variable,
+        };
         let categories = vec![food.clone(), transport.clone(), insurance.clone()];
 
         let bm_jan = BudgetMonth {
@@ -1467,10 +1568,11 @@ mod tests {
     #[test]
     fn project_with_mixed_expenses_and_refunds() {
         let mut project = make_category(300, "Renovation", None);
-        project.budget_mode = Some(BudgetMode::Project);
-        project.budget_amount = Some(dec!(10000));
-        project.project_start_date = Some(date(2025, 1, 1));
-        project.project_end_date = Some(date(2025, 6, 30));
+        project.budget = BudgetConfig::Project {
+            amount: dec!(10000),
+            start_date: date(2025, 1, 1),
+            end_date: Some(date(2025, 6, 30)),
+        };
         let categories = vec![project.clone()];
 
         let bm = BudgetMonth {
@@ -1714,5 +1816,632 @@ mod tests {
         let (pace, delta) = compute_pace(dec!(50), Decimal::ZERO, 15, 30, F);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(50));
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_budget_subtree
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn subtree_children_without_mode_inherit_parent() {
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = make_category(11, "Child", Some(10)); // no mode → inherits
+        let categories = vec![parent.clone(), child.clone()];
+
+        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        assert!(subtree.contains(&parent.id));
+        assert!(subtree.contains(&child.id));
+    }
+
+    #[test]
+    fn subtree_children_with_different_mode_excluded() {
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Child", Some(10));
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(1200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), child.clone()];
+
+        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        assert!(subtree.contains(&parent.id));
+        assert!(!subtree.contains(&child.id));
+    }
+
+    #[test]
+    fn subtree_prunes_different_mode_child_and_its_descendants() {
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Annual Child", Some(10));
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(1200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        // Grandchild inherits from annual child, but since child is pruned,
+        // grandchild is also unreachable
+        let grandchild = make_category(12, "Grandchild", Some(11));
+        let categories = vec![parent.clone(), child.clone(), grandchild.clone()];
+
+        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        assert_eq!(subtree.len(), 1);
+        assert!(subtree.contains(&parent.id));
+    }
+
+    #[test]
+    fn subtree_children_with_same_explicit_mode_included() {
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Child", Some(10));
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), child.clone()];
+
+        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        assert!(subtree.contains(&parent.id));
+        assert!(subtree.contains(&child.id));
+    }
+
+    #[test]
+    fn subtree_all_children_differ_returns_root_only() {
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let c1 = {
+            let mut c = make_category(11, "Annual Child", Some(10));
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(1200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let c2 = {
+            let mut c = make_category(12, "Project Child", Some(10));
+            c.budget = BudgetConfig::Project {
+                amount: dec!(5000),
+                start_date: date(2025, 1, 1),
+                end_date: None,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), c1, c2];
+
+        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        assert_eq!(subtree, vec![parent.id]);
+    }
+
+    #[test]
+    fn subtree_three_level_mixed_modes() {
+        // monthly → (none/inherits) → (none/inherits)
+        let root = {
+            let mut c = make_category(10, "Root", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(1000),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = make_category(11, "Child", Some(10));
+        let grandchild = make_category(12, "Grandchild", Some(11));
+        let categories = vec![root.clone(), child.clone(), grandchild.clone()];
+
+        let subtree = collect_budget_subtree(root.id, Some(BudgetMode::Monthly), &categories);
+        assert_eq!(subtree.len(), 3);
+        assert!(subtree.contains(&root.id));
+        assert!(subtree.contains(&child.id));
+        assert!(subtree.contains(&grandchild.id));
+    }
+
+    // -----------------------------------------------------------------------
+    // effective_budget_mode
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effective_mode_explicit_returned() {
+        let cat = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        assert_eq!(
+            effective_budget_mode(&cat, &[cat.clone()]),
+            Some(BudgetMode::Monthly)
+        );
+    }
+
+    #[test]
+    fn effective_mode_inherits_from_parent() {
+        let parent = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(6000),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = make_category(11, "Groceries", Some(10));
+        let categories = vec![parent.clone(), child.clone()];
+
+        assert_eq!(
+            effective_budget_mode(&child, &categories),
+            Some(BudgetMode::Annual)
+        );
+    }
+
+    #[test]
+    fn effective_mode_no_parent_no_mode_is_none() {
+        let cat = make_category(10, "Misc", None);
+        assert_eq!(effective_budget_mode(&cat, &[cat.clone()]), None);
+    }
+
+    #[test]
+    fn effective_mode_child_overrides_parent() {
+        let parent = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Groceries", Some(10));
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(6000),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent, child.clone()];
+
+        assert_eq!(
+            effective_budget_mode(&child, &categories),
+            Some(BudgetMode::Annual)
+        );
+    }
+
+    #[test]
+    fn effective_mode_orphan_child_is_none() {
+        // parent_id points to a non-existent category
+        let child = make_category(11, "Orphan", Some(999));
+        assert_eq!(effective_budget_mode(&child, &[child.clone()]), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_in_budget_month boundaries
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn budget_month_on_start_date_is_true() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+        assert!(is_in_budget_month(date(2025, 1, 15), &bm));
+    }
+
+    #[test]
+    fn budget_month_on_end_date_is_true() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+        assert!(is_in_budget_month(date(2025, 2, 14), &bm));
+    }
+
+    #[test]
+    fn budget_month_day_before_start_is_false() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+        assert!(!is_in_budget_month(date(2025, 1, 14), &bm));
+    }
+
+    #[test]
+    fn budget_month_day_after_end_is_false() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+        assert!(!is_in_budget_month(date(2025, 2, 15), &bm));
+    }
+
+    #[test]
+    fn budget_month_open_ended_includes_far_future() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        assert!(is_in_budget_month(date(2030, 12, 31), &bm));
+    }
+
+    #[test]
+    fn budget_month_open_ended_excludes_before_start() {
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        assert!(!is_in_budget_month(date(2025, 1, 14), &bm));
+    }
+
+    // -----------------------------------------------------------------------
+    // Hierarchy + mode spending
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn annual_parent_with_monthly_child_excludes_child() {
+        let parent = {
+            let mut c = make_category(10, "Insurance", None);
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(2400),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Monthly Sub", Some(10));
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), child.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(parent.id), dec!(-100), date(2025, 1, 20)),
+            make_txn(Some(child.id), dec!(-50), date(2025, 1, 25)),
+        ];
+
+        // Annual parent spending should NOT include the monthly child
+        let spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
+        assert_eq!(spending, dec!(100));
+    }
+
+    #[test]
+    fn monthly_parent_with_project_child_excludes_child() {
+        let parent = {
+            let mut c = make_category(10, "Home", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(1000),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Renovation", Some(10));
+            c.budget = BudgetConfig::Project {
+                amount: dec!(10000),
+                start_date: date(2025, 1, 1),
+                end_date: None,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), child.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(parent.id), dec!(-200), date(2025, 1, 20)),
+            make_txn(Some(child.id), dec!(-5000), date(2025, 1, 25)),
+        ];
+
+        // Monthly parent should NOT include the project child
+        let spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
+        assert_eq!(spending, dec!(200));
+    }
+
+    #[test]
+    fn all_children_inherit_mode_all_contribute() {
+        let parent = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let c1 = make_category(11, "Groceries", Some(10));
+        let c2 = make_category(12, "Dining", Some(10));
+        let categories = vec![parent.clone(), c1.clone(), c2.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(c1.id), dec!(-100), date(2025, 1, 20)),
+            make_txn(Some(c2.id), dec!(-80), date(2025, 1, 25)),
+        ];
+
+        let spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
+        assert_eq!(spending, dec!(180));
+    }
+
+    #[test]
+    fn mixed_some_inherit_some_override() {
+        let parent = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let inherits = make_category(11, "Groceries", Some(10)); // inherits monthly
+        let overrides = {
+            let mut c = make_category(12, "Dining Annual", Some(10));
+            c.budget = BudgetConfig::Annual {
+                amount: dec!(3000),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), inherits.clone(), overrides.clone()];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 14)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(inherits.id), dec!(-100), date(2025, 1, 20)),
+            make_txn(Some(overrides.id), dec!(-200), date(2025, 1, 25)),
+        ];
+
+        // Only groceries (inherits) contributes to monthly parent
+        let spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
+        assert_eq!(spending, dec!(100));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_correlated_exclusion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn correlated_transfer_excluded() {
+        let txn = Transaction {
+            correlation: Some(Correlation {
+                partner_id: TransactionId::new(),
+                correlation_type: CorrelationType::Transfer,
+            }),
+            ..Default::default()
+        };
+        let empty = HashSet::new();
+        assert!(is_correlated_exclusion(&txn, &empty));
+    }
+
+    #[test]
+    fn correlated_reimbursement_excluded() {
+        let txn = Transaction {
+            correlation: Some(Correlation {
+                partner_id: TransactionId::new(),
+                correlation_type: CorrelationType::Reimbursement,
+            }),
+            ..Default::default()
+        };
+        let empty = HashSet::new();
+        assert!(is_correlated_exclusion(&txn, &empty));
+    }
+
+    #[test]
+    fn reimbursed_original_excluded() {
+        let txn = Transaction::default();
+        let mut reimbursed = HashSet::new();
+        reimbursed.insert(txn.id);
+        assert!(is_correlated_exclusion(&txn, &reimbursed));
+    }
+
+    #[test]
+    fn normal_transaction_passes_exclusion() {
+        let txn = Transaction::default();
+        let empty = HashSet::new();
+        assert!(!is_correlated_exclusion(&txn, &empty));
+    }
+
+    // -----------------------------------------------------------------------
+    // BudgetConfig construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn budget_config_from_parts_monthly() {
+        let bc = BudgetConfig::from_parts(
+            Some(BudgetMode::Monthly),
+            Some(BudgetType::Fixed),
+            Some(dec!(500)),
+            None,
+            None,
+        );
+        assert_eq!(bc.mode(), Some(BudgetMode::Monthly));
+        assert_eq!(bc.amount(), Some(dec!(500)));
+        assert_eq!(bc.budget_type(), Some(BudgetType::Fixed));
+    }
+
+    #[test]
+    fn budget_config_from_parts_annual() {
+        let bc =
+            BudgetConfig::from_parts(Some(BudgetMode::Annual), None, Some(dec!(6000)), None, None);
+        assert_eq!(bc.mode(), Some(BudgetMode::Annual));
+        assert_eq!(bc.amount(), Some(dec!(6000)));
+        // defaults to Variable
+        assert_eq!(bc.budget_type(), Some(BudgetType::Variable));
+    }
+
+    #[test]
+    fn budget_config_from_parts_project() {
+        let bc = BudgetConfig::from_parts(
+            Some(BudgetMode::Project),
+            None,
+            Some(dec!(10000)),
+            Some(date(2025, 1, 1)),
+            Some(date(2025, 6, 30)),
+        );
+        assert_eq!(bc.mode(), Some(BudgetMode::Project));
+        assert_eq!(bc.amount(), Some(dec!(10000)));
+        assert_eq!(bc.budget_type(), None); // projects have no budget_type
+        if let BudgetConfig::Project {
+            start_date,
+            end_date,
+            ..
+        } = &bc
+        {
+            assert_eq!(*start_date, date(2025, 1, 1));
+            assert_eq!(*end_date, Some(date(2025, 6, 30)));
+        } else {
+            panic!("expected Project variant");
+        }
+    }
+
+    #[test]
+    fn budget_config_from_parts_none_when_all_null() {
+        let bc = BudgetConfig::from_parts(None, None, None, None, None);
+        assert!(matches!(bc, BudgetConfig::None));
+    }
+
+    #[test]
+    fn budget_config_from_parts_project_without_start_falls_back_to_none() {
+        let bc = BudgetConfig::from_parts(
+            Some(BudgetMode::Project),
+            None,
+            Some(dec!(10000)),
+            None,
+            Some(date(2025, 6, 30)),
+        );
+        assert!(matches!(bc, BudgetConfig::None));
+    }
+
+    #[test]
+    fn budget_config_from_parts_monthly_defaults_amount_to_zero() {
+        let bc = BudgetConfig::from_parts(
+            Some(BudgetMode::Monthly),
+            None,
+            None, // no amount
+            None,
+            None,
+        );
+        assert_eq!(bc.amount(), Some(Decimal::ZERO));
+    }
+
+    // -----------------------------------------------------------------------
+    // BudgetConfig serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn budget_config_serde_roundtrip_monthly() {
+        let bc = BudgetConfig::Monthly {
+            amount: dec!(500),
+            budget_type: BudgetType::Variable,
+        };
+        let json = serde_json::to_string(&bc).expect("serialize");
+        let parsed: BudgetConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.mode(), bc.mode());
+        assert_eq!(parsed.amount(), bc.amount());
+        assert_eq!(parsed.budget_type(), bc.budget_type());
+    }
+
+    #[test]
+    fn budget_config_serde_roundtrip_project() {
+        let bc = BudgetConfig::Project {
+            amount: dec!(10000),
+            start_date: date(2025, 1, 1),
+            end_date: Some(date(2025, 6, 30)),
+        };
+        let json = serde_json::to_string(&bc).expect("serialize");
+        let parsed: BudgetConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.mode(), bc.mode());
+        assert_eq!(parsed.amount(), bc.amount());
+        if let BudgetConfig::Project {
+            start_date,
+            end_date,
+            ..
+        } = &parsed
+        {
+            assert_eq!(*start_date, date(2025, 1, 1));
+            assert_eq!(*end_date, Some(date(2025, 6, 30)));
+        } else {
+            panic!("expected Project variant after roundtrip");
+        }
+    }
+
+    #[test]
+    fn budget_config_serde_roundtrip_none() {
+        let bc = BudgetConfig::None;
+        let json = serde_json::to_string(&bc).expect("serialize");
+        let parsed: BudgetConfig = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(parsed, BudgetConfig::None));
     }
 }

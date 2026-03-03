@@ -161,11 +161,7 @@ fn make_category(name: &str) -> Category {
         id: CategoryId::new(),
         name: CategoryName::new(name).expect("valid test category name"),
         parent_id: None,
-        budget_mode: None,
-        budget_type: None,
-        budget_amount: None,
-        project_start_date: None,
-        project_end_date: None,
+        budget: budget_core::models::BudgetConfig::None,
     }
 }
 
@@ -444,7 +440,7 @@ async fn categories_create_and_list(pool: PgPool) {
     let created: Category = serde_json::from_slice(&body).expect("parse");
     assert_eq!(created.name, "Entertainment");
     assert!(created.parent_id.is_none());
-    assert!(created.budget_mode.is_none());
+    assert!(created.budget.mode().is_none());
 
     // List should contain the created category
     let (status, body) = send(app, get("/api/categories")).await;
@@ -471,11 +467,11 @@ async fn categories_create_with_budget_fields(pool: PgPool) {
     let created: Category = serde_json::from_slice(&body).expect("parse");
     assert_eq!(created.name, "Groceries");
     assert_eq!(
-        created.budget_mode,
+        created.budget.mode(),
         Some(budget_core::models::BudgetMode::Monthly)
     );
     assert_eq!(
-        created.budget_amount,
+        created.budget.amount(),
         Some(rust_decimal::Decimal::new(50000, 2))
     );
 }
@@ -497,17 +493,26 @@ async fn categories_create_project_with_dates(pool: PgPool) {
 
     let created: Category = serde_json::from_slice(&body).expect("parse");
     assert_eq!(
-        created.budget_mode,
+        created.budget.mode(),
         Some(budget_core::models::BudgetMode::Project)
     );
-    assert_eq!(
-        created.project_start_date,
-        Some(chrono::NaiveDate::from_ymd_opt(2025, 3, 1).expect("date"))
-    );
-    assert_eq!(
-        created.project_end_date,
-        Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 30).expect("date"))
-    );
+    if let budget_core::models::BudgetConfig::Project {
+        start_date,
+        end_date,
+        ..
+    } = &created.budget
+    {
+        assert_eq!(
+            *start_date,
+            chrono::NaiveDate::from_ymd_opt(2025, 3, 1).expect("date")
+        );
+        assert_eq!(
+            *end_date,
+            Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 30).expect("date"))
+        );
+    } else {
+        panic!("expected Project budget config");
+    }
 }
 
 #[sqlx::test]
@@ -519,7 +524,7 @@ async fn categories_update_budget_fields(pool: PgPool) {
     let (status, body) = send(app.clone(), post_json("/api/categories", &payload)).await;
     assert_eq!(status, StatusCode::CREATED);
     let created: Category = serde_json::from_slice(&body).expect("parse");
-    assert!(created.budget_mode.is_none());
+    assert!(created.budget.mode().is_none());
 
     // Update to monthly budget
     let update = serde_json::json!({
@@ -536,11 +541,11 @@ async fn categories_update_budget_fields(pool: PgPool) {
 
     let updated: Category = serde_json::from_slice(&body).expect("parse");
     assert_eq!(
-        updated.budget_mode,
+        updated.budget.mode(),
         Some(budget_core::models::BudgetMode::Monthly)
     );
     assert_eq!(
-        updated.budget_amount,
+        updated.budget.amount(),
         Some(rust_decimal::Decimal::new(30000, 2))
     );
 }

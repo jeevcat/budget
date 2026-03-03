@@ -6,9 +6,9 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use crate::models::{
-    Account, AccountId, AccountType, BudgetMode, BudgetType, Category, CategoryId, CategoryMethod,
-    Connection, ConnectionId, ConnectionStatus, CorrelationType, Rule, RuleCondition, RuleId,
-    RuleType, Transaction, TransactionId,
+    Account, AccountId, AccountType, BudgetConfig, BudgetMode, BudgetType, Category, CategoryId,
+    CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation, CorrelationType, Rule,
+    RuleCondition, RuleId, RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -69,15 +69,23 @@ fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
 }
 
 fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
+    let budget_mode = parse_enum_opt::<BudgetMode>(row, "budget_mode")?;
+    let budget_type = parse_enum_opt::<BudgetType>(row, "budget_type")?;
+    let budget_amount: Option<Decimal> = row.try_get("budget_amount")?;
+    let project_start_date: Option<NaiveDate> = row.try_get("project_start_date")?;
+    let project_end_date: Option<NaiveDate> = row.try_get("project_end_date")?;
+
     Ok(Category {
         id: row.try_get("id")?,
         name: row.try_get("name")?,
         parent_id: row.try_get("parent_id")?,
-        budget_mode: parse_enum_opt::<BudgetMode>(row, "budget_mode")?,
-        budget_type: parse_enum_opt::<BudgetType>(row, "budget_type")?,
-        budget_amount: row.try_get("budget_amount")?,
-        project_start_date: row.try_get("project_start_date")?,
-        project_end_date: row.try_get("project_end_date")?,
+        budget: BudgetConfig::from_parts(
+            budget_mode,
+            budget_type,
+            budget_amount,
+            project_start_date,
+            project_end_date,
+        ),
     })
 }
 
@@ -95,6 +103,16 @@ const TXN_COLUMNS: &str = "id, account_id, category_id, amount, original_amount,
                     creditor_account_additional_id, debtor_account_additional_id";
 
 fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
+    let correlation_id: Option<TransactionId> = row.try_get("correlation_id")?;
+    let correlation_type = parse_enum_opt::<CorrelationType>(row, "correlation_type")?;
+    let correlation = match (correlation_id, correlation_type) {
+        (Some(partner_id), Some(ct)) => Some(Correlation {
+            partner_id,
+            correlation_type: ct,
+        }),
+        _ => None,
+    };
+
     Ok(Transaction {
         id: row.try_get("id")?,
         account_id: row.try_get("account_id")?,
@@ -105,8 +123,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         merchant_name: row.try_get("merchant_name")?,
         remittance_information: row.try_get("remittance_information")?,
         posted_date: row.try_get("posted_date")?,
-        correlation_id: row.try_get("correlation_id")?,
-        correlation_type: parse_enum_opt::<CorrelationType>(row, "correlation_type")?,
+        correlation,
         category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
         suggested_category: row.try_get("suggested_category")?,
         counterparty_name: row.try_get("counterparty_name")?,
@@ -375,8 +392,8 @@ impl Db {
         .bind(&txn.merchant_name)
         .bind(&txn.remittance_information)
         .bind(txn.posted_date)
-        .bind(txn.correlation_id)
-        .bind(txn.correlation_type.map(|ct| ct.to_string()))
+        .bind(txn.correlation.as_ref().map(|c| c.partner_id))
+        .bind(txn.correlation.as_ref().map(|c| c.correlation_type.to_string()))
         .bind(provider_transaction_id)
         .bind(txn.suggested_category.as_deref())
         .bind(txn.counterparty_name.as_deref())
@@ -963,6 +980,14 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails (e.g. duplicate primary key).
     pub async fn insert_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
+        let (start, end) = match &category.budget {
+            BudgetConfig::Project {
+                start_date,
+                end_date,
+                ..
+            } => (Some(*start_date), *end_date),
+            _ => (None, None),
+        };
         sqlx::query(
             "INSERT INTO categories (id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -970,11 +995,11 @@ impl Db {
         .bind(category.id)
         .bind(&category.name)
         .bind(category.parent_id)
-        .bind(category.budget_mode.map(|m| m.to_string()))
-        .bind(category.budget_type.map(|t| t.to_string()))
-        .bind(category.budget_amount)
-        .bind(category.project_start_date)
-        .bind(category.project_end_date)
+        .bind(category.budget.mode().map(|m| m.to_string()))
+        .bind(category.budget.budget_type().map(|t| t.to_string()))
+        .bind(category.budget.amount())
+        .bind(start)
+        .bind(end)
         .execute(pool)
         .await?;
         Ok(())
@@ -987,6 +1012,14 @@ impl Db {
     /// Returns `sqlx::Error` if the query fails.
     pub async fn update_category(&self, category: &Category) -> Result<(), sqlx::Error> {
         let pool = &self.0;
+        let (start, end) = match &category.budget {
+            BudgetConfig::Project {
+                start_date,
+                end_date,
+                ..
+            } => (Some(*start_date), *end_date),
+            _ => (None, None),
+        };
         sqlx::query(
             "UPDATE categories SET name = $1, parent_id = $2, budget_mode = $3, budget_type = $4,
                     budget_amount = $5, project_start_date = $6, project_end_date = $7
@@ -994,11 +1027,11 @@ impl Db {
         )
         .bind(&category.name)
         .bind(category.parent_id)
-        .bind(category.budget_mode.map(|m| m.to_string()))
-        .bind(category.budget_type.map(|t| t.to_string()))
-        .bind(category.budget_amount)
-        .bind(category.project_start_date)
-        .bind(category.project_end_date)
+        .bind(category.budget.mode().map(|m| m.to_string()))
+        .bind(category.budget.budget_type().map(|t| t.to_string()))
+        .bind(category.budget.amount())
+        .bind(start)
+        .bind(end)
         .bind(category.id)
         .execute(pool)
         .await?;
@@ -1499,11 +1532,7 @@ mod tests {
             id: CategoryId::new(),
             name: CategoryName::new(name).expect("valid test category name"),
             parent_id: None,
-            budget_mode: None,
-            budget_type: None,
-            budget_amount: None,
-            project_start_date: None,
-            project_end_date: None,
+            budget: BudgetConfig::None,
         }
     }
 
@@ -1629,8 +1658,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()
         );
         assert!(fetched.category_id.is_none());
-        assert!(fetched.correlation_id.is_none());
-        assert!(fetched.correlation_type.is_none());
+        assert!(fetched.correlation.is_none());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1732,8 +1760,10 @@ mod tests {
 
         let mut txn_corr = make_transaction(acct.id);
         txn_corr.category_id = Some(cat.id);
-        txn_corr.correlation_id = Some(txn_uncorr.id);
-        txn_corr.correlation_type = Some(CorrelationType::Transfer);
+        txn_corr.correlation = Some(Correlation {
+            partner_id: txn_uncorr.id,
+            correlation_type: CorrelationType::Transfer,
+        });
         db.upsert_transaction(&txn_corr, None).await.unwrap();
 
         let uncorr = db.get_uncorrelated_transactions().await.unwrap();
@@ -1849,8 +1879,9 @@ mod tests {
 
         let fetched = db.list_transactions().await.unwrap();
         let a = fetched.iter().find(|t| t.id == txn_a.id).unwrap();
-        assert_eq!(a.correlation_id, Some(txn_b.id));
-        assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
+        let corr = a.correlation.as_ref().expect("should be correlated");
+        assert_eq!(corr.partner_id, txn_b.id);
+        assert_eq!(corr.correlation_type, CorrelationType::Transfer);
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1997,14 +2028,15 @@ mod tests {
         let db = wrap(pool);
 
         let mut cat = make_category("Rent");
-        cat.budget_mode = Some(BudgetMode::Monthly);
-        cat.budget_amount = Some(dec!(1500.00));
+        cat.budget = BudgetConfig::Monthly {
+            amount: dec!(1500.00),
+            budget_type: BudgetType::Variable,
+        };
         db.insert_category(&cat).await.unwrap();
 
         let fetched = db.get_category(cat.id).await.unwrap().unwrap();
-        assert_eq!(fetched.budget_mode, Some(BudgetMode::Monthly));
-        assert_eq!(fetched.budget_amount, Some(dec!(1500.00)));
-        assert!(fetched.project_start_date.is_none());
+        assert_eq!(fetched.budget.mode(), Some(BudgetMode::Monthly));
+        assert_eq!(fetched.budget.amount(), Some(dec!(1500.00)));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2012,17 +2044,21 @@ mod tests {
         let db = wrap(pool);
 
         let mut cat = make_category("Utilities");
-        cat.budget_mode = Some(BudgetMode::Monthly);
-        cat.budget_amount = Some(dec!(200.00));
+        cat.budget = BudgetConfig::Monthly {
+            amount: dec!(200.00),
+            budget_type: BudgetType::Variable,
+        };
         db.insert_category(&cat).await.unwrap();
 
-        cat.budget_mode = Some(BudgetMode::Annual);
-        cat.budget_amount = Some(dec!(2400.00));
+        cat.budget = BudgetConfig::Annual {
+            amount: dec!(2400.00),
+            budget_type: BudgetType::Variable,
+        };
         db.update_category(&cat).await.unwrap();
 
         let fetched = db.get_category(cat.id).await.unwrap().unwrap();
-        assert_eq!(fetched.budget_mode, Some(BudgetMode::Annual));
-        assert_eq!(fetched.budget_amount, Some(dec!(2400.00)));
+        assert_eq!(fetched.budget.mode(), Some(BudgetMode::Annual));
+        assert_eq!(fetched.budget.amount(), Some(dec!(2400.00)));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2030,23 +2066,30 @@ mod tests {
         let db = wrap(pool);
 
         let mut cat = make_category("Kitchen Renovation");
-        cat.budget_mode = Some(BudgetMode::Project);
-        cat.budget_amount = Some(dec!(10000.00));
-        cat.project_start_date = Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
-        cat.project_end_date = Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap());
+        cat.budget = BudgetConfig::Project {
+            amount: dec!(10000.00),
+            start_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            end_date: Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap()),
+        };
         db.insert_category(&cat).await.unwrap();
 
         let fetched = db.get_category(cat.id).await.unwrap().unwrap();
-        assert_eq!(fetched.budget_mode, Some(BudgetMode::Project));
-        assert_eq!(fetched.budget_amount, Some(dec!(10000.00)));
-        assert_eq!(
-            fetched.project_start_date,
-            Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap())
-        );
-        assert_eq!(
-            fetched.project_end_date,
-            Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap())
-        );
+        assert_eq!(fetched.budget.mode(), Some(BudgetMode::Project));
+        assert_eq!(fetched.budget.amount(), Some(dec!(10000.00)));
+        match &fetched.budget {
+            BudgetConfig::Project {
+                start_date,
+                end_date,
+                ..
+            } => {
+                assert_eq!(*start_date, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
+                assert_eq!(
+                    *end_date,
+                    Some(NaiveDate::from_ymd_opt(2025, 6, 30).unwrap())
+                );
+            }
+            other => panic!("expected Project, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -2293,10 +2336,12 @@ mod tests {
         let a = db.get_transaction_by_id(txn_a.id).await.unwrap().unwrap();
         let b = db.get_transaction_by_id(txn_b.id).await.unwrap().unwrap();
 
-        assert_eq!(a.correlation_id, Some(txn_b.id));
-        assert_eq!(b.correlation_id, Some(txn_a.id));
-        assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
-        assert_eq!(b.correlation_type, Some(CorrelationType::Transfer));
+        let ca = a.correlation.as_ref().expect("a should be correlated");
+        let cb = b.correlation.as_ref().expect("b should be correlated");
+        assert_eq!(ca.partner_id, txn_b.id);
+        assert_eq!(cb.partner_id, txn_a.id);
+        assert_eq!(ca.correlation_type, CorrelationType::Transfer);
+        assert_eq!(cb.correlation_type, CorrelationType::Transfer);
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2339,7 +2384,7 @@ mod tests {
 
         // txn_c should remain uncorrelated
         let c = db.get_transaction_by_id(txn_c.id).await.unwrap().unwrap();
-        assert!(c.correlation_id.is_none());
+        assert!(c.correlation.is_none());
     }
 
     #[sqlx::test(migrations = "../../migrations")]

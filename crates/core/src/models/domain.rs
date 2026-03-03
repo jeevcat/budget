@@ -11,6 +11,163 @@ use super::enums::{
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
 use crate::error::Error;
 
+// ---------------------------------------------------------------------------
+// BudgetConfig — replaces 5 independent Option fields on Category
+// ---------------------------------------------------------------------------
+
+/// Budget configuration for a category.
+///
+/// Encodes the budget mode and its mode-specific parameters as a single enum,
+/// making impossible states unrepresentable (e.g. a Monthly category cannot
+/// carry project dates, and a Project always has a start date and amount).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BudgetConfig {
+    /// No budget set for this category.
+    None,
+    /// Resets each budget month.
+    Monthly {
+        amount: Decimal,
+        budget_type: BudgetType,
+    },
+    /// Cumulative across the calendar year.
+    Annual {
+        amount: Decimal,
+        budget_type: BudgetType,
+    },
+    /// Time-bounded project.
+    Project {
+        amount: Decimal,
+        start_date: NaiveDate,
+        end_date: Option<NaiveDate>,
+    },
+}
+
+impl BudgetConfig {
+    /// The budget mode, or `None` for unbudgeted categories.
+    #[must_use]
+    pub fn mode(&self) -> Option<BudgetMode> {
+        match self {
+            Self::None => Option::None,
+            Self::Monthly { .. } => Some(BudgetMode::Monthly),
+            Self::Annual { .. } => Some(BudgetMode::Annual),
+            Self::Project { .. } => Some(BudgetMode::Project),
+        }
+    }
+
+    /// The budget amount, or `None` for unbudgeted categories.
+    #[must_use]
+    pub fn amount(&self) -> Option<Decimal> {
+        match self {
+            Self::None => Option::None,
+            Self::Monthly { amount, .. }
+            | Self::Annual { amount, .. }
+            | Self::Project { amount, .. } => Some(*amount),
+        }
+    }
+
+    /// The budget type (Fixed/Variable), or `None` for unbudgeted/project categories.
+    #[must_use]
+    pub fn budget_type(&self) -> Option<BudgetType> {
+        match self {
+            Self::Monthly { budget_type, .. } | Self::Annual { budget_type, .. } => {
+                Some(*budget_type)
+            }
+            Self::None | Self::Project { .. } => Option::None,
+        }
+    }
+
+    /// Construct from the flat DB/API representation.
+    ///
+    /// Unrecognised combinations (e.g. Project without a start date) fall back
+    /// to `BudgetConfig::None`.
+    #[must_use]
+    pub fn from_parts(
+        mode: Option<BudgetMode>,
+        budget_type: Option<BudgetType>,
+        amount: Option<Decimal>,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Self {
+        match mode {
+            Some(BudgetMode::Monthly) => Self::Monthly {
+                amount: amount.unwrap_or(Decimal::ZERO),
+                budget_type: budget_type.unwrap_or(BudgetType::Variable),
+            },
+            Some(BudgetMode::Annual) => Self::Annual {
+                amount: amount.unwrap_or(Decimal::ZERO),
+                budget_type: budget_type.unwrap_or(BudgetType::Variable),
+            },
+            Some(BudgetMode::Project) => match start_date {
+                Some(start) => Self::Project {
+                    amount: amount.unwrap_or(Decimal::ZERO),
+                    start_date: start,
+                    end_date,
+                },
+                // Project without a start date is invalid; fall back
+                Option::None => Self::None,
+            },
+            Option::None => Self::None,
+        }
+    }
+}
+
+/// Flat serialization: emit the same JSON shape the frontend/mobile expect.
+impl Serialize for BudgetConfig {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Option::None)?;
+        map.serialize_entry("budget_mode", &self.mode())?;
+        map.serialize_entry("budget_type", &self.budget_type())?;
+        map.serialize_entry("budget_amount", &self.amount())?;
+        if let Self::Project {
+            start_date,
+            end_date,
+            ..
+        } = self
+        {
+            map.serialize_entry("project_start_date", &Some(start_date))?;
+            map.serialize_entry("project_end_date", end_date)?;
+        } else {
+            map.serialize_entry("project_start_date", &Option::<NaiveDate>::None)?;
+            map.serialize_entry("project_end_date", &Option::<NaiveDate>::None)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for BudgetConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Flat {
+            budget_mode: Option<BudgetMode>,
+            budget_type: Option<BudgetType>,
+            budget_amount: Option<Decimal>,
+            project_start_date: Option<NaiveDate>,
+            project_end_date: Option<NaiveDate>,
+        }
+        let f = Flat::deserialize(deserializer)?;
+        Ok(Self::from_parts(
+            f.budget_mode,
+            f.budget_type,
+            f.budget_amount,
+            f.project_start_date,
+            f.project_end_date,
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Correlation — replaces two independent Option fields on Transaction
+// ---------------------------------------------------------------------------
+
+/// A correlation link to another transaction (transfer or reimbursement).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Correlation {
+    pub partner_id: TransactionId,
+    pub correlation_type: CorrelationType,
+}
+
 /// Maximum length for a category name (UTF-8 bytes).
 const MAX_CATEGORY_NAME_LEN: usize = 100;
 
@@ -162,11 +319,60 @@ pub struct Category {
     pub id: CategoryId,
     pub name: CategoryName,
     pub parent_id: Option<CategoryId>,
-    pub budget_mode: Option<BudgetMode>,
-    pub budget_type: Option<BudgetType>,
-    pub budget_amount: Option<Decimal>,
-    pub project_start_date: Option<NaiveDate>,
-    pub project_end_date: Option<NaiveDate>,
+    /// Budget configuration (mode + mode-specific parameters).
+    /// Serializes as flat fields for API compatibility.
+    #[serde(flatten)]
+    pub budget: BudgetConfig,
+}
+
+/// Flat serde for `Option<Correlation>` — serializes/deserializes as two
+/// top-level fields `correlation_id` and `correlation_type` for API compat.
+mod correlation_serde {
+    use super::{Correlation, CorrelationType, TransactionId};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize)]
+    struct Flat {
+        correlation_id: Option<TransactionId>,
+        correlation_type: Option<CorrelationType>,
+    }
+
+    #[derive(Deserialize)]
+    struct FlatDe {
+        correlation_id: Option<TransactionId>,
+        correlation_type: Option<CorrelationType>,
+    }
+
+    #[allow(clippy::ref_option)]
+    pub fn serialize<S: Serializer>(
+        value: &Option<Correlation>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let flat = match value {
+            Some(c) => Flat {
+                correlation_id: Some(c.partner_id),
+                correlation_type: Some(c.correlation_type),
+            },
+            None => Flat {
+                correlation_id: None,
+                correlation_type: None,
+            },
+        };
+        flat.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Correlation>, D::Error> {
+        let flat = FlatDe::deserialize(deserializer)?;
+        Ok(match (flat.correlation_id, flat.correlation_type) {
+            (Some(partner_id), Some(correlation_type)) => Some(Correlation {
+                partner_id,
+                correlation_type,
+            }),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,8 +389,10 @@ pub struct Transaction {
     /// Source: Enable Banking `remittance_information`
     pub remittance_information: Vec<String>,
     pub posted_date: NaiveDate,
-    pub correlation_id: Option<TransactionId>,
-    pub correlation_type: Option<CorrelationType>,
+    /// Correlation link to a partner transaction (transfer or reimbursement).
+    /// Serialized as flat `correlation_id` + `correlation_type` fields.
+    #[serde(flatten, with = "correlation_serde")]
+    pub correlation: Option<Correlation>,
     pub category_method: Option<CategoryMethod>,
     pub suggested_category: Option<String>,
     pub counterparty_name: Option<String>,
@@ -251,8 +459,7 @@ impl Default for Transaction {
             merchant_name: String::new(),
             remittance_information: Vec::new(),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 1).expect("valid date"),
-            correlation_id: None,
-            correlation_type: None,
+            correlation: None,
             category_method: None,
             suggested_category: None,
             counterparty_name: None,
@@ -393,8 +600,9 @@ pub struct BudgetStatus {
     pub budget_amount: Decimal,
     pub spent: Decimal,
     pub remaining: Decimal,
-    /// Monthly = days left, Annual = months left, Project = days left (-1 if open-ended)
-    pub time_left: i64,
+    /// Time remaining in the budget period. `None` for open-ended projects.
+    /// Unit: days for Monthly/Project, months for Annual.
+    pub time_left: Option<i64>,
     pub pace: PaceIndicator,
     /// Signed deviation from pro-rata expected spend (`spent - expected`).
     /// Positive = over pace, negative = under pace.
@@ -413,11 +621,7 @@ mod tests {
             id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
             name: CategoryName(name.to_owned()),
             parent_id: parent_id.map(|p| CategoryId::from_uuid(uuid::Uuid::from_u128(p))),
-            budget_mode: None,
-            budget_type: None,
-            budget_amount: None,
-            project_start_date: None,
-            project_end_date: None,
+            budget: BudgetConfig::None,
         }
     }
 
@@ -939,11 +1143,7 @@ mod tests {
             id: CategoryId::from_uuid(uuid::Uuid::from_u128(42)),
             name: CategoryName::new("Food").unwrap(),
             parent_id: None,
-            budget_mode: None,
-            budget_type: None,
-            budget_amount: None,
-            project_start_date: None,
-            project_end_date: None,
+            budget: BudgetConfig::None,
         };
         let json = serde_json::to_string(&c).unwrap();
         assert!(json.contains("\"name\":\"Food\""));

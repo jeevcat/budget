@@ -91,11 +91,7 @@ async fn seed_category(db: &Db, name: &str) -> Category {
         id: CategoryId::new(),
         name: CategoryName::new(name).expect("valid test category name"),
         parent_id: None,
-        budget_mode: None,
-        budget_type: None,
-        budget_amount: None,
-        project_start_date: None,
-        project_end_date: None,
+        budget: budget_core::models::BudgetConfig::None,
     };
     db.insert_category(&cat).await.expect("seed category");
     cat
@@ -107,11 +103,7 @@ async fn seed_child_category(db: &Db, name: &str, parent: &Category) -> Category
         id: CategoryId::new(),
         name: CategoryName::new(name).expect("valid test category name"),
         parent_id: Some(parent.id),
-        budget_mode: None,
-        budget_type: None,
-        budget_amount: None,
-        project_start_date: None,
-        project_end_date: None,
+        budget: budget_core::models::BudgetConfig::None,
     };
     db.insert_category(&cat).await.expect("seed child category");
     cat
@@ -711,7 +703,7 @@ async fn correlate_rule_based_linking(pool: PgPool) {
     // At least one side should be correlated (the rule matches txn_b as
     // a candidate for txn_a, linking them)
     assert!(
-        a.correlation_id.is_some() || b.correlation_id.is_some(),
+        a.correlation.is_some() || b.correlation.is_some(),
         "at least one transaction should be correlated after rule match"
     );
 }
@@ -759,18 +751,19 @@ async fn correlate_llm_equal_opposite_amounts_links(pool: PgPool) {
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
 
+    let ac = a.correlation.as_ref().expect("txn_a should be correlated");
     assert_eq!(
-        a.correlation_id,
-        Some(txn_b.id),
+        ac.partner_id, txn_b.id,
         "txn_a should be correlated to txn_b"
     );
+    assert_eq!(ac.correlation_type, CorrelationType::Transfer);
+
+    let bc = b.correlation.as_ref().expect("txn_b should be correlated");
     assert_eq!(
-        b.correlation_id,
-        Some(txn_a.id),
+        bc.partner_id, txn_a.id,
         "txn_b should be correlated to txn_a"
     );
-    assert_eq!(a.correlation_type, Some(CorrelationType::Transfer));
-    assert_eq!(b.correlation_type, Some(CorrelationType::Transfer));
+    assert_eq!(bc.correlation_type, CorrelationType::Transfer);
 }
 
 #[sqlx::test]
@@ -815,9 +808,11 @@ async fn correlate_bidirectional_both_sides_linked(pool: PgPool) {
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
 
     // Both sides should point to each other
-    assert_eq!(a.correlation_id, Some(txn_b.id));
-    assert_eq!(b.correlation_id, Some(txn_a.id));
-    assert_eq!(a.correlation_type, b.correlation_type);
+    let ac = a.correlation.as_ref().expect("txn_a should be correlated");
+    let bc = b.correlation.as_ref().expect("txn_b should be correlated");
+    assert_eq!(ac.partner_id, txn_b.id);
+    assert_eq!(bc.partner_id, txn_a.id);
+    assert_eq!(ac.correlation_type, bc.correlation_type);
 }
 
 #[sqlx::test]
@@ -890,13 +885,15 @@ async fn correlate_already_paired_not_correlated_again(pool: PgPool) {
     // txn_a and txn_b should still have their original correlations
     let a = all_txns.iter().find(|t| t.id == txn_a.id).expect("txn_a");
     let b = all_txns.iter().find(|t| t.id == txn_b.id).expect("txn_b");
-    assert_eq!(a.correlation_id, Some(txn_b.id));
-    assert_eq!(b.correlation_id, Some(txn_a.id));
+    let ac = a.correlation.as_ref().expect("txn_a correlated");
+    let bc = b.correlation.as_ref().expect("txn_b correlated");
+    assert_eq!(ac.partner_id, txn_b.id);
+    assert_eq!(bc.partner_id, txn_a.id);
 
     // txn_c has no counterpart with opposite amount, so it stays uncorrelated
     let c = all_txns.iter().find(|t| t.id == txn_c.id).expect("txn_c");
-    assert_eq!(
-        c.correlation_id, None,
+    assert!(
+        c.correlation.is_none(),
         "txn_c has no matching counterpart; should remain uncorrelated"
     );
 }

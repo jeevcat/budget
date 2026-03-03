@@ -8,11 +8,12 @@ use uuid::Uuid;
 
 use budget_core::budget::{
     budget_year_months, collect_category_subtree, compute_budget_status,
-    compute_project_child_breakdowns, detect_budget_month_boundaries, filter_for_budget,
-    filter_for_project, is_in_budget_month,
+    compute_project_child_breakdowns, detect_budget_month_boundaries, effective_budget_mode,
+    filter_for_budget, filter_for_project, is_in_budget_month,
 };
 use budget_core::models::{
-    BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId, ProjectChildSpending, Transaction,
+    BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId,
+    ProjectChildSpending, Transaction,
 };
 
 use crate::routes::AppError;
@@ -110,17 +111,6 @@ async fn derive_months(
     }
 }
 
-/// Effective budget mode for a category: its own mode, or inherited from parent.
-fn effective_budget_mode(cat: &Category, categories: &[Category]) -> Option<BudgetMode> {
-    if let Some(mode) = cat.budget_mode {
-        return Some(mode);
-    }
-    let parent = cat
-        .parent_id
-        .and_then(|pid| categories.iter().find(|c| c.id == pid));
-    parent.and_then(|p| p.budget_mode)
-}
-
 /// Pre-classified transactions and auxiliary dashboard data.
 struct ClassifiedTransactions {
     monthly: Vec<Transaction>,
@@ -187,7 +177,7 @@ fn classify_transactions(
         .filter(|t| {
             is_in_budget_month(t.posted_date, month)
                 && t.category_id.is_none()
-                && t.correlation_type.is_none()
+                && t.correlation.is_none()
         })
         .count()
         .try_into()
@@ -219,7 +209,7 @@ fn compute_projects(
 
     categories
         .iter()
-        .filter(|c| c.budget_mode == Some(BudgetMode::Project))
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Project))
         .map(|cat| {
             let status = compute_budget_status(
                 cat,
@@ -290,10 +280,8 @@ async fn status(
         earliest = earliest.min(first.start_date);
     }
     for cat in &categories {
-        if cat.budget_mode == Some(BudgetMode::Project)
-            && let Some(start) = cat.project_start_date
-        {
-            earliest = earliest.min(start);
+        if let BudgetConfig::Project { start_date, .. } = &cat.budget {
+            earliest = earliest.min(*start_date);
         }
     }
 
@@ -304,7 +292,7 @@ async fn status(
         .iter()
         .filter(|c| {
             matches!(
-                c.budget_mode,
+                c.budget.mode(),
                 Some(BudgetMode::Monthly | BudgetMode::Annual)
             )
         })

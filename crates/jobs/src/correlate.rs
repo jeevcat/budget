@@ -158,7 +158,7 @@ pub async fn handle_correlate_transaction_job(
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
 
     // Race-safe: already correlated by another job or rule
-    if txn.correlation_id.is_some() {
+    if txn.correlation.is_some() {
         tracing::debug!(txn_id = %txn_id, "already correlated, skipping");
         return Ok(());
     }
