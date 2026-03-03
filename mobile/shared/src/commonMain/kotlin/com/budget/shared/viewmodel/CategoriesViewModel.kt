@@ -117,6 +117,10 @@ class CategoriesViewModel(
       return name
     }
 
+    /** Convenience overload accepting a [CategoryName]. */
+    fun leafName(name: com.budget.shared.api.CategoryName, parentName: String?): String =
+        leafName(name.value, parentName)
+
     /**
      * Group categories by budget mode with parent/child hierarchy.
      *
@@ -132,7 +136,7 @@ class CategoriesViewModel(
           categories
               .filter { it.parentId != null && it.budgetMode == null }
               .groupBy { it.parentId }
-              .mapValues { (_, v) -> v.sortedBy { it.name.lowercase() } }
+              .mapValues { (_, v) -> v.sortedBy { it.name.value.lowercase() } }
 
       // Every category that has a budget_mode set, grouped by that mode.
       // Categories without budget_mode and without a parent go into the null group.
@@ -146,11 +150,11 @@ class CategoriesViewModel(
 
       return sectionOrder.mapNotNull { mode ->
         val cats = grouped[mode] ?: return@mapNotNull null
-        val sorted = cats.sortedBy { it.name.lowercase() }
+        val sorted = cats.sortedBy { it.name.value.lowercase() }
 
         val items = buildList {
           for (cat in sorted) {
-            val parentName = cat.parentId?.let { byId[it]?.name }
+            val parentName = cat.parentId?.let { byId[it]?.name?.value }
             val displayName = leafName(cat.name, parentName)
             add(
                 CategoryDisplayItem(
@@ -165,12 +169,12 @@ class CategoriesViewModel(
             )
             // Nest children that don't have their own budget_mode
             for (child in unbudgetedChildrenOf[cat.id].orEmpty()) {
-              val childDisplayName = leafName(child.name, cat.name)
+              val childDisplayName = leafName(child.name, cat.name.value)
               add(
                   CategoryDisplayItem(
                       id = child.id,
                       name = childDisplayName,
-                      parentName = cat.name,
+                      parentName = cat.name.value,
                       budgetMode = null,
                       budgetAmount = child.budgetAmount,
                       transactionCount = child.transactionCount,

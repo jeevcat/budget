@@ -2,6 +2,7 @@ package com.budget.shared.viewmodel
 
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.Category
+import com.budget.shared.api.CategoryName
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -101,10 +102,10 @@ class CategoriesViewModelTest {
   fun childWithOwnBudgetModeAppearsInItsSection() = runTest {
     val categories =
         listOf(
-            Category(id = "house", name = "House", transactionCount = 0),
+            Category(id = "house", name = catName("House"), transactionCount = 0),
             Category(
                 id = "mortgage",
-                name = "Mortgage",
+                name = catName("Mortgage"),
                 parentId = "house",
                 budgetMode = BudgetMode.MONTHLY,
                 budgetAmount = "4000",
@@ -112,7 +113,7 @@ class CategoriesViewModelTest {
             ),
             Category(
                 id = "cleaning",
-                name = "Cleaning",
+                name = catName("Cleaning"),
                 parentId = "house",
                 transactionCount = 3,
             ),
@@ -154,26 +155,26 @@ class CategoriesViewModelTest {
         listOf(
             Category(
                 id = "1",
-                name = "Rent",
+                name = catName("Rent"),
                 budgetMode = BudgetMode.MONTHLY,
                 budgetAmount = "1000",
                 transactionCount = 5,
             ),
             Category(
                 id = "2",
-                name = "Insurance",
+                name = catName("Insurance"),
                 budgetMode = BudgetMode.ANNUAL,
                 budgetAmount = "500",
                 transactionCount = 2,
             ),
             Category(
                 id = "3",
-                name = "Renovation",
+                name = catName("Renovation"),
                 budgetMode = BudgetMode.PROJECT,
                 budgetAmount = "5000",
                 transactionCount = 10,
             ),
-            Category(id = "4", name = "Random", transactionCount = 1),
+            Category(id = "4", name = catName("Random"), transactionCount = 1),
         )
     val sections = CategoriesViewModel.buildSections(categories)
 
@@ -183,17 +184,29 @@ class CategoriesViewModelTest {
     assertEquals(BudgetMode.PROJECT, sections[2].mode)
     assertNull(sections[3].mode)
   }
+
   // -----------------------------------------------------------------------
   // Category name parsing / display tests
   // -----------------------------------------------------------------------
 
   @Test
   fun childWithLeafNameShowsParentName() = runTest {
-    // Child stored as "Groceries" under parent "Food" (new convention)
+    // Child stored as "Groceries" under parent "Food"
     val categories =
         listOf(
-            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
-            Category(id = "groc", name = "Groceries", parentId = "food", transactionCount = 5),
+            Category(
+                id = "food",
+                name = catName("Food"),
+                budgetMode = BudgetMode.MONTHLY,
+                budgetAmount = "400",
+                transactionCount = 10,
+            ),
+            Category(
+                id = "groc",
+                name = catName("Groceries"),
+                parentId = "food",
+                transactionCount = 5,
+            ),
         )
     val sections = CategoriesViewModel.buildSections(categories)
     val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
@@ -201,60 +214,6 @@ class CategoriesViewModelTest {
     assertEquals("Food", grocItem.parentName)
     assertEquals("Groceries", grocItem.name)
     assertTrue(grocItem.isChild)
-  }
-
-  @Test
-  fun childWithColonNameStripsParentPrefix() = runTest {
-    // Child stored as "Food:Groceries" under parent "Food" (legacy convention)
-    val categories =
-        listOf(
-            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
-            Category(id = "groc", name = "Food:Groceries", parentId = "food", transactionCount = 5),
-        )
-    val sections = CategoriesViewModel.buildSections(categories)
-    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    val grocItem = monthly.categories.find { it.id == "groc" }!!
-    assertEquals("Food", grocItem.parentName)
-    // The parent prefix should be stripped so display shows "Food > Groceries" not "Food > Food:Groceries"
-    assertEquals("Groceries", grocItem.name)
-    assertTrue(grocItem.isChild)
-  }
-
-  @Test
-  fun mixedNamingConventionsInSameParent() = runTest {
-    // One child uses leaf name, another uses colon prefix — both under same parent
-    val categories =
-        listOf(
-            Category(id = "food", name = "Food", budgetMode = BudgetMode.MONTHLY, budgetAmount = "400", transactionCount = 10),
-            Category(id = "groc", name = "Groceries", parentId = "food", transactionCount = 5),
-            Category(id = "rest", name = "Food:Restaurants", parentId = "food", transactionCount = 3),
-        )
-    val sections = CategoriesViewModel.buildSections(categories)
-    val monthly = sections.first { it.mode == BudgetMode.MONTHLY }
-    // Both children should be nested under Food with consistent display names
-    val groc = monthly.categories.find { it.id == "groc" }!!
-    val rest = monthly.categories.find { it.id == "rest" }!!
-    assertEquals("Food", groc.parentName)
-    assertEquals("Food", rest.parentName)
-    assertEquals("Groceries", groc.name)
-    assertEquals("Restaurants", rest.name) // "Food:" prefix stripped
-    assertTrue(groc.isChild)
-    assertTrue(rest.isChild)
-  }
-
-  @Test
-  fun rootCategoryWithColonInNameHasNoParent() = runTest {
-    // A root category whose name happens to contain a colon (no parent_id set)
-    val categories =
-        listOf(
-            Category(id = "misc", name = "Misc:Other", transactionCount = 2),
-        )
-    val sections = CategoriesViewModel.buildSections(categories)
-    val unbudgeted = sections.first { it.mode == null }
-    val item = unbudgeted.categories.first()
-    assertNull(item.parentName)
-    assertFalse(item.isChild)
-    assertEquals("Misc:Other", item.name)
   }
 
   // -----------------------------------------------------------------------
@@ -262,36 +221,25 @@ class CategoriesViewModelTest {
   // -----------------------------------------------------------------------
 
   @Test
-  fun leafNameStripsParentPrefix() {
-    assertEquals("Groceries", CategoriesViewModel.leafName("Food:Groceries", "Food"))
-  }
-
-  @Test
-  fun leafNameReturnsRawWhenNoPrefix() {
+  fun leafNameReturnsNameWhenNoPrefix() {
     assertEquals("Groceries", CategoriesViewModel.leafName("Groceries", "Food"))
   }
 
   @Test
-  fun leafNameReturnsRawWhenNoParent() {
+  fun leafNameReturnsNameWhenNoParent() {
     assertEquals("Cash", CategoriesViewModel.leafName("Cash", null))
   }
 
   @Test
-  fun leafNameIsCaseSensitive() {
-    // "food:" prefix doesn't match parent "Food"
-    assertEquals("food:Groceries", CategoriesViewModel.leafName("food:Groceries", "Food"))
-  }
-
-  @Test
-  fun leafNameHandlesMultipleColons() {
-    assertEquals("Sub:Detail", CategoriesViewModel.leafName("Parent:Sub:Detail", "Parent"))
-  }
-
-  @Test
-  fun leafNameEmptyParent() {
-    assertEquals("Child", CategoriesViewModel.leafName(":Child", ""))
+  fun leafNameCategoryNameOverload() {
+    assertEquals("Groceries", CategoriesViewModel.leafName(catName("Groceries"), "Food"))
   }
 }
+
+// -- Helpers ----------------------------------------------------------------
+
+/** Shorthand for constructing a [CategoryName] in tests where the name is known-valid. */
+private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThrow()
 
 // -- Test doubles -----------------------------------------------------------
 
@@ -309,32 +257,31 @@ private fun sampleCategories(): List<Category> =
     listOf(
         Category(
             id = "food",
-            name = "Food",
+            name = catName("Food"),
             budgetMode = BudgetMode.MONTHLY,
             budgetAmount = "400",
             transactionCount = 20,
         ),
         Category(
             id = "dining",
-            name = "Dining Out",
+            name = catName("Dining Out"),
             parentId = "food",
-            // budgetMode is null — inherited from parent
             budgetAmount = "100",
             transactionCount = 8,
         ),
         Category(
             id = "groceries",
-            name = "Groceries",
+            name = catName("Groceries"),
             budgetMode = BudgetMode.MONTHLY,
             budgetAmount = "300",
             transactionCount = 15,
         ),
         Category(
             id = "insurance",
-            name = "Insurance",
+            name = catName("Insurance"),
             budgetMode = BudgetMode.ANNUAL,
             budgetAmount = "1200",
             transactionCount = 4,
         ),
-        Category(id = "misc", name = "Miscellaneous", transactionCount = 3),
+        Category(id = "misc", name = catName("Miscellaneous"), transactionCount = 3),
     )

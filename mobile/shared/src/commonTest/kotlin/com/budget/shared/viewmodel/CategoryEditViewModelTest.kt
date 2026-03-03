@@ -3,6 +3,7 @@ package com.budget.shared.viewmodel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
+import com.budget.shared.api.CategoryName
 import com.budget.shared.api.CategoryRequest
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -54,7 +55,7 @@ class CategoryEditViewModelTest {
     val category =
         Category(
             id = "cat-1",
-            name = "Groceries",
+            name = catName("Groceries"),
             parentId = "food",
             budgetMode = BudgetMode.MONTHLY,
             budgetAmount = "500",
@@ -81,7 +82,7 @@ class CategoryEditViewModelTest {
     val category =
         Category(
             id = "proj-1",
-            name = "Renovation",
+            name = catName("Renovation"),
             budgetMode = BudgetMode.PROJECT,
             budgetAmount = "10000",
             projectStartDate = "2025-03-01",
@@ -149,7 +150,7 @@ class CategoryEditViewModelTest {
     assertEquals(1, saver.createdRequests.size)
     assertEquals(0, saver.updatedRequests.size)
     val req = saver.createdRequests[0]
-    assertEquals("Entertainment", req.name)
+    assertEquals("Entertainment", req.name.value)
     assertEquals("monthly", req.budgetMode)
     assertEquals("200", req.budgetAmount)
     assertNull(req.parentId)
@@ -157,7 +158,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveExistingCategoryCallsUpdate() = runTest {
-    val category = Category(id = "cat-1", name = "Old Name", transactionCount = 0)
+    val category = Category(id = "cat-1", name = catName("Old Name"), transactionCount = 0)
     val saver = FakeCategorySaver()
     val vm =
         CategoryEditViewModel(
@@ -174,7 +175,7 @@ class CategoryEditViewModelTest {
     assertEquals(0, saver.createdRequests.size)
     assertEquals(1, saver.updatedRequests.size)
     assertEquals("cat-1", saver.updatedIds[0])
-    assertEquals("New Name", saver.updatedRequests[0].name)
+    assertEquals("New Name", saver.updatedRequests[0].name.value)
   }
 
   @Test
@@ -211,9 +212,33 @@ class CategoryEditViewModelTest {
   }
 
   @Test
+  fun saveWithColonInNameSetsError() = runTest {
+    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    vm.updateName("Food:Groceries")
+
+    vm.save()
+
+    val state = vm.uiState.value
+    assertEquals("name contains a colon \u2014 use parent_id for hierarchy", state.error)
+    assertFalse(state.saved)
+  }
+
+  @Test
+  fun saveWithControlCharInNameSetsError() = runTest {
+    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    vm.updateName("Bad\u0000Name")
+
+    vm.save()
+
+    val state = vm.uiState.value
+    assertEquals("name contains control characters", state.error)
+    assertFalse(state.saved)
+  }
+
+  @Test
   fun buildRequestOmitsBudgetAmountWhenNoMode() {
     val state = CategoryEditUiState(name = "Test", budgetAmount = "500")
-    val request = CategoryEditViewModel.buildRequest(state, "Test")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Test"))
 
     assertNull(request.budgetMode)
     assertNull(request.budgetAmount)
@@ -227,7 +252,7 @@ class CategoryEditViewModelTest {
             budgetMode = BudgetMode.MONTHLY,
             budgetAmount = "500",
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Test")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Test"))
 
     assertEquals("monthly", request.budgetMode)
     assertEquals("500", request.budgetAmount)
@@ -243,7 +268,7 @@ class CategoryEditViewModelTest {
             projectStartDate = "2025-03-01",
             projectEndDate = "2025-06-30",
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Reno")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Reno"))
 
     assertEquals("project", request.budgetMode)
     assertEquals("2025-03-01", request.projectStartDate)
@@ -260,7 +285,7 @@ class CategoryEditViewModelTest {
             projectStartDate = "2025-03-01",
             projectEndDate = "2025-06-30",
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Test")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Test"))
 
     assertNull(request.projectStartDate)
     assertNull(request.projectEndDate)
@@ -270,11 +295,11 @@ class CategoryEditViewModelTest {
   fun loadsAvailableParentsExcludingEditedCategory() = runTest {
     val categories =
         listOf(
-            Category(id = "a", name = "Alpha", transactionCount = 0),
-            Category(id = "b", name = "Beta", transactionCount = 0),
-            Category(id = "c", name = "Child", parentId = "a", transactionCount = 0),
+            Category(id = "a", name = catName("Alpha"), transactionCount = 0),
+            Category(id = "b", name = catName("Beta"), transactionCount = 0),
+            Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
         )
-    val editing = Category(id = "a", name = "Alpha", transactionCount = 0)
+    val editing = Category(id = "a", name = catName("Alpha"), transactionCount = 0)
     val saver = FakeCategorySaver(categories = categories)
     val vm =
         CategoryEditViewModel(
@@ -318,7 +343,7 @@ class CategoryEditViewModelTest {
     val category =
         Category(
             id = "cat-1",
-            name = "Mortgage",
+            name = catName("Mortgage"),
             budgetMode = BudgetMode.MONTHLY,
             budgetType = BudgetType.FIXED,
             budgetAmount = "2000",
@@ -344,7 +369,7 @@ class CategoryEditViewModelTest {
             budgetType = BudgetType.FIXED,
             budgetAmount = "2000",
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Mortgage")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Mortgage"))
 
     assertEquals("fixed", request.budgetType)
   }
@@ -356,7 +381,7 @@ class CategoryEditViewModelTest {
             name = "Test",
             budgetType = BudgetType.FIXED,
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Test")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Test"))
 
     assertNull(request.budgetType)
   }
@@ -369,7 +394,7 @@ class CategoryEditViewModelTest {
             budgetMode = BudgetMode.MONTHLY,
             budgetAmount = "500",
         )
-    val request = CategoryEditViewModel.buildRequest(state, "Groceries")
+    val request = CategoryEditViewModel.buildRequest(state, catName("Groceries"))
 
     assertEquals("variable", request.budgetType)
   }
@@ -383,9 +408,13 @@ class CategoryEditViewModelTest {
     vm.save()
 
     assertTrue(vm.uiState.value.saved)
-    assertEquals("Groceries", saver.createdRequests[0].name)
+    assertEquals("Groceries", saver.createdRequests[0].name.value)
   }
 }
+
+// -- Helpers ----------------------------------------------------------------
+
+private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThrow()
 
 // -- Test doubles -----------------------------------------------------------
 
