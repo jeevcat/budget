@@ -928,9 +928,9 @@ function Dashboard() {
   const timeLeft = (items, unit) => {
     const entry = items[0];
     if (!entry) return "";
-    const val = Number(entry.time_left);
-    if (val < 0) return "open-ended";
-    return `${val}${unit} left`;
+    if (entry.time_left === null || entry.time_left === undefined)
+      return "open-ended";
+    return `${entry.time_left}${unit} left`;
   };
   const monthlyTimeLabel = timeLeft(monthly, "d");
 

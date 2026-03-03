@@ -169,13 +169,13 @@ class DashboardViewModel(
     val monthlyTimeLabel =
         if (monthly.isNotEmpty()) {
           val tl = monthly.first().timeLeft
-          if (tl < 0) "open-ended" else "${tl}d left"
+          if (tl == null) "open-ended" else "${tl}d left"
         } else ""
 
     val annualTimeLabel =
         if (annual.isNotEmpty()) {
           val tl = annual.first().timeLeft
-          if (tl < 0) "open-ended" else "${tl}mo left"
+          if (tl == null) "open-ended" else "${tl}mo left"
         } else ""
 
     _uiState.update {
