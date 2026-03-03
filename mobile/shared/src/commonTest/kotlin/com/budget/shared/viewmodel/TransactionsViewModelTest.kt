@@ -1,6 +1,7 @@
 package com.budget.shared.viewmodel
 
 import com.budget.shared.api.Category
+import com.budget.shared.api.CategoryName
 import com.budget.shared.api.Transaction
 import com.budget.shared.api.TransactionPage
 import kotlin.test.AfterTest
@@ -35,11 +36,11 @@ class TransactionsViewModelTest {
   fun buildDisplayCategoriesSortsAlphabeticallyWithChildren() {
     val cats =
         listOf(
-            Category(id = "1", name = "Groceries"),
-            Category(id = "2", name = "Transport"),
-            Category(id = "3", name = "Bus", parentId = "2"),
-            Category(id = "4", name = "Aldi", parentId = "1"),
-            Category(id = "5", name = "Train", parentId = "2"),
+            Category(id = "1", name = catName("Groceries")),
+            Category(id = "2", name = catName("Transport")),
+            Category(id = "3", name = catName("Bus"), parentId = "2"),
+            Category(id = "4", name = catName("Aldi"), parentId = "1"),
+            Category(id = "5", name = catName("Train"), parentId = "2"),
         )
 
     val result = TransactionsViewModel.buildDisplayCategories(cats)
@@ -62,8 +63,8 @@ class TransactionsViewModelTest {
   fun buildDisplayCategoriesHandlesNoChildren() {
     val cats =
         listOf(
-            Category(id = "1", name = "Rent"),
-            Category(id = "2", name = "Food"),
+            Category(id = "1", name = catName("Rent")),
+            Category(id = "2", name = catName("Food")),
         )
 
     val result = TransactionsViewModel.buildDisplayCategories(cats)
@@ -105,7 +106,7 @@ class TransactionsViewModelTest {
                     limit = 200,
                     offset = 0,
                 ),
-            categories = listOf(Category(id = "c1", name = "Food")),
+            categories = listOf(Category(id = "c1", name = catName("Food"))),
         )
 
     val vm = TransactionsViewModel("https://example.com", "key", fetcher)
@@ -138,7 +139,7 @@ class TransactionsViewModelTest {
                     limit = 200,
                     offset = 0,
                 ),
-            categories = listOf(Category(id = "c1", name = "Food")),
+            categories = listOf(Category(id = "c1", name = catName("Food"))),
         )
 
     val vm = TransactionsViewModel("https://example.com", "key", fetcher)
@@ -163,9 +164,9 @@ class TransactionsViewModelTest {
             transactions = TransactionPage(items = emptyList(), total = 0, limit = 200, offset = 0),
             categories =
                 listOf(
-                    Category(id = "c1", name = "Food"),
-                    Category(id = "c2", name = "Transport"),
-                    Category(id = "c3", name = "Rent"),
+                    Category(id = "c1", name = catName("Food")),
+                    Category(id = "c2", name = catName("Transport")),
+                    Category(id = "c3", name = catName("Rent")),
                 ),
         )
 
@@ -222,6 +223,10 @@ class TransactionsViewModelTest {
     assertEquals(false, state.categorizing)
   }
 }
+
+// -- Helpers ------------------------------------------------------------
+
+private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThrow()
 
 // -- Test doubles -------------------------------------------------------
 

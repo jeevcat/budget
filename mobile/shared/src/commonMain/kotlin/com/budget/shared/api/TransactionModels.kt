@@ -56,7 +56,7 @@ data class TransactionPage(
 @Serializable
 data class Category(
     val id: String,
-    val name: String,
+    val name: CategoryName,
     @SerialName("parent_id") val parentId: String? = null,
     @SerialName("budget_mode") val budgetMode: BudgetMode? = null,
     @SerialName("budget_type") val budgetType: BudgetType? = null,
@@ -73,7 +73,7 @@ data class CategorizeRequest(
 
 @Serializable
 data class CategoryRequest(
-    val name: String,
+    val name: CategoryName,
     @SerialName("parent_id") val parentId: String? = null,
     @SerialName("budget_mode") val budgetMode: String? = null,
     @SerialName("budget_type") val budgetType: String? = null,

@@ -6,6 +6,7 @@ import com.budget.shared.api.BudgetApi
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
+import com.budget.shared.api.CategoryName
 import com.budget.shared.api.CategoryRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,7 +100,7 @@ class CategoryEditViewModel(
     if (editingCategory != null) {
       _uiState.update {
         it.copy(
-            name = editingCategory.name,
+            name = editingCategory.name.value,
             parentId = editingCategory.parentId,
             budgetMode = editingCategory.budgetMode,
             budgetType = editingCategory.budgetType ?: BudgetType.VARIABLE,
@@ -119,8 +120,8 @@ class CategoryEditViewModel(
         val parents =
             categories
                 .filter { it.parentId == null && it.id != editingCategory?.id }
-                .sortedBy { it.name.lowercase() }
-                .map { ParentOption(id = it.id, name = it.name) }
+                .sortedBy { it.name.value.lowercase() }
+                .map { ParentOption(id = it.id, name = it.name.value) }
         _uiState.update { it.copy(availableParents = parents) }
       } catch (_: Exception) {
         // Non-critical — form still works without parent picker
@@ -164,10 +165,16 @@ class CategoryEditViewModel(
       return
     }
 
+    val categoryName =
+        CategoryName.of(trimmedName).getOrElse { e ->
+          _uiState.update { it.copy(error = e.message) }
+          return
+        }
+
     _uiState.update { it.copy(saving = true, error = null) }
     viewModelScope.launch {
       try {
-        val request = buildRequest(state, trimmedName)
+        val request = buildRequest(state, categoryName)
         if (editingCategory != null) {
           saver.updateCategory(serverUrl, apiKey, editingCategory.id, request)
         } else {
@@ -181,7 +188,7 @@ class CategoryEditViewModel(
   }
 
   companion object {
-    fun buildRequest(state: CategoryEditUiState, name: String): CategoryRequest {
+    fun buildRequest(state: CategoryEditUiState, name: CategoryName): CategoryRequest {
       val budgetMode = state.budgetMode
       return CategoryRequest(
           name = name,

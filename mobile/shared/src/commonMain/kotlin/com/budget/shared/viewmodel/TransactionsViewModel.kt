@@ -316,22 +316,22 @@ class TransactionsViewModel(
     /** Build a sorted, hierarchical display list from flat categories. */
     fun buildDisplayCategories(raw: List<Category>): List<DisplayCategory> {
       val byId = raw.associateBy { it.id }
-      val roots = raw.filter { it.parentId == null }.sortedBy { it.name.lowercase() }
+      val roots = raw.filter { it.parentId == null }.sortedBy { it.name.value.lowercase() }
       val childrenOf =
           raw.filter { it.parentId != null }
               .groupBy { it.parentId }
-              .mapValues { (_, v) -> v.sortedBy { it.name.lowercase() } }
+              .mapValues { (_, v) -> v.sortedBy { it.name.value.lowercase() } }
 
       return buildList {
         for (root in roots) {
-          add(DisplayCategory(id = root.id, name = root.name, depth = 0))
+          add(DisplayCategory(id = root.id, name = root.name.value, depth = 0))
           val children = childrenOf[root.id].orEmpty()
           for (child in children) {
             add(
                 DisplayCategory(
                     id = child.id,
-                    name = child.name,
-                    parentName = root.name,
+                    name = child.name.value,
+                    parentName = root.name.value,
                     depth = 1,
                 )
             )
