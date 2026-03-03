@@ -133,18 +133,12 @@ class TransactionsViewModel(
         val success = repository.uncategorizeTransaction(txn.id)
         if (success) {
           _uiState.update { state ->
-            val updated =
-                state.transactions.map { t ->
-                  if (t.id == txn.id)
-                      t.copy(
-                          categoryId = null,
-                          categoryMethod = null,
-                      )
-                  else t
-                }
+            val cleared =
+                txn.copy(categoryId = null, categoryMethod = null, llmJustification = null)
+            val updated = state.transactions.map { t -> if (t.id == txn.id) cleared else t }
             state.copy(
                 categorizing = false,
-                selectedTransaction = null,
+                selectedTransaction = cleared,
                 transactions = updated,
             )
           }

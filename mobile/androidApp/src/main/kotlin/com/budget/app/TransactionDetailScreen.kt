@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -288,7 +289,9 @@ fun TransactionDetailScreen(
         CategorySection(
             txn = txn,
             categories = state.categories,
+            categorizing = state.categorizing,
             onOpenPicker = { showPicker = true },
+            onClear = viewModel::uncategorize,
         )
       }
     }
@@ -477,7 +480,9 @@ private fun SuggestionCard(
 private fun CategorySection(
     txn: Transaction,
     categories: List<DisplayCategory>,
+    categorizing: Boolean,
     onOpenPicker: () -> Unit,
+    onClear: () -> Unit,
 ) {
   val categoryName = txn.categoryId?.let { id -> categories.find { it.id == id }?.displayName }
 
@@ -503,8 +508,18 @@ private fun CategorySection(
             }
           }
         },
-        trailingContent = { Icon(Icons.Default.Edit, contentDescription = "Change category") },
-        modifier = Modifier.clickable(onClick = onOpenPicker),
+        trailingContent = {
+          Row {
+            if (txn.categoryId != null) {
+              IconButton(onClick = onClear, enabled = !categorizing) {
+                Icon(Icons.Default.Close, contentDescription = "Clear category")
+              }
+            }
+            IconButton(onClick = onOpenPicker, enabled = !categorizing) {
+              Icon(Icons.Default.Edit, contentDescription = "Change category")
+            }
+          }
+        },
     )
   }
 }
