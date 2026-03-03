@@ -5,6 +5,11 @@ import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryName
 import com.budget.shared.api.CategoryRequest
+import com.budget.shared.api.Transaction
+import com.budget.shared.api.TransactionPage
+import com.budget.shared.repository.BudgetRepository
+import com.budget.shared.repository.DashboardData
+import com.budget.shared.repository.InvalidationEvent
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -14,6 +19,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -36,7 +44,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun newCategoryStartsWithEmptyState() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
 
     val state = vm.uiState.value
     assertFalse(state.isEditing)
@@ -61,13 +69,7 @@ class CategoryEditViewModelTest {
             budgetAmount = "500",
             transactionCount = 10,
         )
-    val vm =
-        CategoryEditViewModel(
-            "https://example.com",
-            "key",
-            editingCategory = category,
-            saver = FakeCategorySaver(),
-        )
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository(), editingCategory = category)
 
     val state = vm.uiState.value
     assertTrue(state.isEditing)
@@ -89,13 +91,7 @@ class CategoryEditViewModelTest {
             projectEndDate = "2025-06-30",
             transactionCount = 5,
         )
-    val vm =
-        CategoryEditViewModel(
-            "https://example.com",
-            "key",
-            editingCategory = category,
-            saver = FakeCategorySaver(),
-        )
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository(), editingCategory = category)
 
     val state = vm.uiState.value
     assertEquals(BudgetMode.PROJECT, state.budgetMode)
@@ -105,7 +101,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun updateNameClearsError() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
     vm.save() // triggers "Name is required" error
     assertEquals("Name is required", vm.uiState.value.error)
 
@@ -116,7 +112,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveWithEmptyNameSetsError() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
 
     vm.save()
 
@@ -128,7 +124,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveWithBlankNameSetsError() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
     vm.updateName("   ")
 
     vm.save()
@@ -138,8 +134,8 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveNewCategoryCallsCreate() = runTest {
-    val saver = FakeCategorySaver()
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = saver)
+    val repo = FakeCategoryEditRepository()
+    val vm = CategoryEditViewModel(repo)
     vm.updateName("Entertainment")
     vm.updateBudgetMode(BudgetMode.MONTHLY)
     vm.updateBudgetAmount("200")
@@ -147,9 +143,9 @@ class CategoryEditViewModelTest {
     vm.save()
 
     assertTrue(vm.uiState.value.saved)
-    assertEquals(1, saver.createdRequests.size)
-    assertEquals(0, saver.updatedRequests.size)
-    val req = saver.createdRequests[0]
+    assertEquals(1, repo.createdRequests.size)
+    assertEquals(0, repo.updatedRequests.size)
+    val req = repo.createdRequests[0]
     assertEquals("Entertainment", req.name.value)
     assertEquals("monthly", req.budgetMode)
     assertEquals("200", req.budgetAmount)
@@ -159,29 +155,23 @@ class CategoryEditViewModelTest {
   @Test
   fun saveExistingCategoryCallsUpdate() = runTest {
     val category = Category(id = "cat-1", name = catName("Old Name"), transactionCount = 0)
-    val saver = FakeCategorySaver()
-    val vm =
-        CategoryEditViewModel(
-            "https://example.com",
-            "key",
-            editingCategory = category,
-            saver = saver,
-        )
+    val repo = FakeCategoryEditRepository()
+    val vm = CategoryEditViewModel(repo, editingCategory = category)
     vm.updateName("New Name")
 
     vm.save()
 
     assertTrue(vm.uiState.value.saved)
-    assertEquals(0, saver.createdRequests.size)
-    assertEquals(1, saver.updatedRequests.size)
-    assertEquals("cat-1", saver.updatedIds[0])
-    assertEquals("New Name", saver.updatedRequests[0].name.value)
+    assertEquals(0, repo.createdRequests.size)
+    assertEquals(1, repo.updatedRequests.size)
+    assertEquals("cat-1", repo.updatedIds[0])
+    assertEquals("New Name", repo.updatedRequests[0].name.value)
   }
 
   @Test
   fun saveErrorSetsErrorState() = runTest {
-    val saver = FakeCategorySaver(error = "already exists")
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = saver)
+    val repo = FakeCategoryEditRepository(saveError = "already exists")
+    val vm = CategoryEditViewModel(repo)
     vm.updateName("Duplicate")
 
     vm.save()
@@ -193,7 +183,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun updateFieldsMutateState() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
 
     vm.updateParentId("parent-1")
     assertEquals("parent-1", vm.uiState.value.parentId)
@@ -213,7 +203,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveWithColonInNameSetsError() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
     vm.updateName("Food:Groceries")
 
     vm.save()
@@ -225,7 +215,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun saveWithControlCharInNameSetsError() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
     vm.updateName("Bad\u0000Name")
 
     vm.save()
@@ -300,14 +290,8 @@ class CategoryEditViewModelTest {
             Category(id = "c", name = catName("Child"), parentId = "a", transactionCount = 0),
         )
     val editing = Category(id = "a", name = catName("Alpha"), transactionCount = 0)
-    val saver = FakeCategorySaver(categories = categories)
-    val vm =
-        CategoryEditViewModel(
-            "https://example.com",
-            "key",
-            editingCategory = editing,
-            saver = saver,
-        )
+    val repo = FakeCategoryEditRepository(categories = categories)
+    val vm = CategoryEditViewModel(repo, editingCategory = editing)
 
     val parents = vm.uiState.value.availableParents
     // "a" excluded (self), "c" excluded (has parent), only "b" remains
@@ -331,7 +315,7 @@ class CategoryEditViewModelTest {
 
   @Test
   fun updateBudgetTypeMutatesState() = runTest {
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = FakeCategorySaver())
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository())
     assertEquals(BudgetType.VARIABLE, vm.uiState.value.budgetType)
 
     vm.updateBudgetType(BudgetType.FIXED)
@@ -349,13 +333,7 @@ class CategoryEditViewModelTest {
             budgetAmount = "2000",
             transactionCount = 5,
         )
-    val vm =
-        CategoryEditViewModel(
-            "https://example.com",
-            "key",
-            editingCategory = category,
-            saver = FakeCategorySaver(),
-        )
+    val vm = CategoryEditViewModel(FakeCategoryEditRepository(), editingCategory = category)
 
     assertEquals(BudgetType.FIXED, vm.uiState.value.budgetType)
   }
@@ -401,14 +379,14 @@ class CategoryEditViewModelTest {
 
   @Test
   fun nameTrimmedBeforeSave() = runTest {
-    val saver = FakeCategorySaver()
-    val vm = CategoryEditViewModel("https://example.com", "key", saver = saver)
+    val repo = FakeCategoryEditRepository()
+    val vm = CategoryEditViewModel(repo)
     vm.updateName("  Groceries  ")
 
     vm.save()
 
     assertTrue(vm.uiState.value.saved)
-    assertEquals("Groceries", saver.createdRequests[0].name.value)
+    assertEquals("Groceries", repo.createdRequests[0].name.value)
   }
 }
 
@@ -418,36 +396,41 @@ private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThr
 
 // -- Test doubles -----------------------------------------------------------
 
-private class FakeCategorySaver(
+private class FakeCategoryEditRepository(
     private val categories: List<Category> = emptyList(),
-    private val error: String? = null,
-) : CategorySaver {
+    private val saveError: String? = null,
+) : BudgetRepository {
 
   val createdRequests = mutableListOf<CategoryRequest>()
   val updatedRequests = mutableListOf<CategoryRequest>()
   val updatedIds = mutableListOf<String>()
 
-  override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
-    return categories
-  }
+  private val _invalidationEvents = MutableSharedFlow<InvalidationEvent>()
+  override val invalidationEvents: SharedFlow<InvalidationEvent> =
+      _invalidationEvents.asSharedFlow()
 
-  override suspend fun createCategory(
-      serverUrl: String,
-      apiKey: String,
-      request: CategoryRequest,
-  ): Category {
-    if (error != null) throw RuntimeException(error)
+  override suspend fun getDashboardData(monthId: String?): DashboardData =
+      throw NotImplementedError()
+
+  override suspend fun getTransactions(limit: Int, offset: Int, categoryId: String?) =
+      TransactionPage(emptyList(), 0, limit, offset)
+
+  override suspend fun getTransaction(id: String): Transaction = throw NotImplementedError()
+
+  override suspend fun getCategories(): List<Category> = categories
+
+  override suspend fun categorizeTransaction(transactionId: String, categoryId: String) = true
+
+  override suspend fun uncategorizeTransaction(transactionId: String) = true
+
+  override suspend fun createCategory(request: CategoryRequest): Category {
+    if (saveError != null) throw RuntimeException(saveError)
     createdRequests.add(request)
     return Category(id = "new-id", name = request.name, transactionCount = 0)
   }
 
-  override suspend fun updateCategory(
-      serverUrl: String,
-      apiKey: String,
-      id: String,
-      request: CategoryRequest,
-  ): Category {
-    if (error != null) throw RuntimeException(error)
+  override suspend fun updateCategory(id: String, request: CategoryRequest): Category {
+    if (saveError != null) throw RuntimeException(saveError)
     updatedIds.add(id)
     updatedRequests.add(request)
     return Category(id = id, name = request.name, transactionCount = 0)

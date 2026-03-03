@@ -2,14 +2,14 @@ package com.budget.shared.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.budget.shared.api.BudgetApi
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
-import com.budget.shared.api.StatusResponse
 import com.budget.shared.api.TransactionEntry
+import com.budget.shared.repository.BudgetRepository
+import com.budget.shared.repository.DashboardData
 import kotlin.math.abs
 import kotlin.math.max
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,33 +51,8 @@ data class DashboardUiState(
     val hasNextMonth: Boolean = false,
 )
 
-/** Abstraction over [BudgetApi] fetches so the ViewModel is unit-testable. */
-fun interface DashboardFetcher {
-  suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult
-}
-
-data class FetchResult(
-    val status: StatusResponse,
-    val months: List<BudgetMonth>,
-)
-
-class DefaultDashboardFetcher : DashboardFetcher {
-  override suspend fun fetch(serverUrl: String, apiKey: String, monthId: String?): FetchResult {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      val status = api.getStatus(monthId)
-      val months = api.getMonths()
-      FetchResult(status, months)
-    } finally {
-      api.close()
-    }
-  }
-}
-
 class DashboardViewModel(
-    private val serverUrl: String,
-    private val apiKey: String,
-    private val fetcher: DashboardFetcher = DefaultDashboardFetcher(),
+    private val repository: BudgetRepository,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(DashboardUiState())
@@ -85,10 +60,17 @@ class DashboardViewModel(
 
   private var sortedMonths: List<BudgetMonth> = emptyList()
   private var activeMonthIndex: Int = -1
-  private val cache = mutableMapOf<String, FetchResult>()
+  private val cache = mutableMapOf<String, DashboardData>()
 
   init {
     load(monthId = null)
+    viewModelScope.launch {
+      repository.invalidationEvents.collect {
+        cache.clear()
+        val currentMonthId = _uiState.value.currentMonth?.id
+        load(monthId = currentMonthId)
+      }
+    }
   }
 
   fun selectTab(tab: BudgetMode) {
@@ -130,7 +112,7 @@ class DashboardViewModel(
     _uiState.update { it.copy(loading = true, error = null) }
     viewModelScope.launch {
       try {
-        val result = fetcher.fetch(serverUrl, apiKey, monthId)
+        val result = repository.getDashboardData(monthId)
         cache[result.status.month.id] = result
         processResult(result)
         prefetchAdjacentMonths()
@@ -146,7 +128,7 @@ class DashboardViewModel(
       if (prevId !in cache) {
         viewModelScope.launch {
           try {
-            val result = fetcher.fetch(serverUrl, apiKey, prevId)
+            val result = repository.getDashboardData(prevId)
             cache[result.status.month.id] = result
           } catch (_: Exception) {
             /* silent prefetch failure */
@@ -159,7 +141,7 @@ class DashboardViewModel(
       if (nextId !in cache) {
         viewModelScope.launch {
           try {
-            val result = fetcher.fetch(serverUrl, apiKey, nextId)
+            val result = repository.getDashboardData(nextId)
             cache[result.status.month.id] = result
           } catch (_: Exception) {
             /* silent prefetch failure */
@@ -169,7 +151,7 @@ class DashboardViewModel(
     }
   }
 
-  private fun processResult(result: FetchResult) {
+  private fun processResult(result: DashboardData) {
     val resp = result.status
     val months = result.months
 

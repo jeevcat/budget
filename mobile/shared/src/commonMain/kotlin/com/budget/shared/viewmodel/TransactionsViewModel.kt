@@ -2,11 +2,10 @@ package com.budget.shared.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.budget.shared.api.BudgetApi
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryMethod
 import com.budget.shared.api.Transaction
-import com.budget.shared.api.TransactionPage
+import com.budget.shared.repository.BudgetRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,104 +39,8 @@ data class TransactionsUiState(
     val categorySearch: String = "",
 )
 
-/** Abstraction over API calls so the ViewModel is unit-testable. */
-interface TransactionsFetcher {
-  suspend fun fetchTransactions(
-      serverUrl: String,
-      apiKey: String,
-      limit: Int,
-      offset: Int,
-      categoryId: String?,
-  ): TransactionPage
-
-  suspend fun fetchTransaction(serverUrl: String, apiKey: String, id: String): Transaction
-
-  suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category>
-
-  suspend fun categorize(
-      serverUrl: String,
-      apiKey: String,
-      transactionId: String,
-      categoryId: String,
-  ): Boolean
-
-  suspend fun uncategorize(
-      serverUrl: String,
-      apiKey: String,
-      transactionId: String,
-  ): Boolean
-}
-
-class DefaultTransactionsFetcher : TransactionsFetcher {
-  override suspend fun fetchTransactions(
-      serverUrl: String,
-      apiKey: String,
-      limit: Int,
-      offset: Int,
-      categoryId: String?,
-  ): TransactionPage {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.getTransactions(limit = limit, offset = offset, categoryId = categoryId)
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun fetchTransaction(
-      serverUrl: String,
-      apiKey: String,
-      id: String,
-  ): Transaction {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.getTransaction(id)
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.getCategories()
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun categorize(
-      serverUrl: String,
-      apiKey: String,
-      transactionId: String,
-      categoryId: String,
-  ): Boolean {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.categorizeTransaction(transactionId, categoryId)
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun uncategorize(
-      serverUrl: String,
-      apiKey: String,
-      transactionId: String,
-  ): Boolean {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.uncategorizeTransaction(transactionId)
-    } finally {
-      api.close()
-    }
-  }
-}
-
 class TransactionsViewModel(
-    private val serverUrl: String,
-    private val apiKey: String,
-    private val fetcher: TransactionsFetcher = DefaultTransactionsFetcher(),
+    private val repository: BudgetRepository,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(TransactionsUiState())
@@ -160,7 +63,7 @@ class TransactionsViewModel(
     _uiState.update { it.copy(detailLoading = true, selectedTransaction = null, error = null) }
     viewModelScope.launch {
       try {
-        val txn = fetcher.fetchTransaction(serverUrl, apiKey, id)
+        val txn = repository.getTransaction(id)
         _uiState.update {
           it.copy(detailLoading = false, selectedTransaction = txn, categorySearch = "")
         }
@@ -188,7 +91,7 @@ class TransactionsViewModel(
     _uiState.update { it.copy(categorizing = true) }
     viewModelScope.launch {
       try {
-        val success = fetcher.categorize(serverUrl, apiKey, txn.id, categoryId)
+        val success = repository.categorizeTransaction(txn.id, categoryId)
         if (success) {
           _uiState.update { state ->
             val categorized =
@@ -227,7 +130,7 @@ class TransactionsViewModel(
     _uiState.update { it.copy(categorizing = true) }
     viewModelScope.launch {
       try {
-        val success = fetcher.uncategorize(serverUrl, apiKey, txn.id)
+        val success = repository.uncategorizeTransaction(txn.id)
         if (success) {
           _uiState.update { state ->
             val updated =
@@ -285,14 +188,12 @@ class TransactionsViewModel(
     viewModelScope.launch {
       try {
         val page =
-            fetcher.fetchTransactions(
-                serverUrl,
-                apiKey,
+            repository.getTransactions(
                 limit = 200,
                 offset = 0,
                 categoryId = "__none",
             )
-        val rawCategories = fetcher.fetchCategories(serverUrl, apiKey)
+        val rawCategories = repository.getCategories()
         val displayCategories = buildDisplayCategories(rawCategories)
         _uiState.update {
           it.copy(

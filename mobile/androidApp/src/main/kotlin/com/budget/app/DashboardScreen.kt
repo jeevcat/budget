@@ -38,6 +38,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +58,7 @@ import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.config.ServerConfig
+import com.budget.shared.repository.DefaultBudgetRepository
 import com.budget.shared.viewmodel.BudgetSummary
 import com.budget.shared.viewmodel.DashboardUiState
 import com.budget.shared.viewmodel.DashboardViewModel
@@ -150,9 +152,8 @@ private fun formatMonthRange(month: BudgetMonth): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(config: ServerConfig) {
-  val viewModel: DashboardViewModel = viewModel {
-    DashboardViewModel(config.serverUrl, config.apiKey)
-  }
+  val repository = remember(config) { DefaultBudgetRepository(config.serverUrl, config.apiKey) }
+  val viewModel: DashboardViewModel = viewModel { DashboardViewModel(repository) }
   DashboardContent(viewModel = viewModel)
 }
 

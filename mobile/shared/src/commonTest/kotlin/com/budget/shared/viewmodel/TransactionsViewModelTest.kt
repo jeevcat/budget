@@ -3,8 +3,12 @@ package com.budget.shared.viewmodel
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryMethod
 import com.budget.shared.api.CategoryName
+import com.budget.shared.api.CategoryRequest
 import com.budget.shared.api.Transaction
 import com.budget.shared.api.TransactionPage
+import com.budget.shared.repository.BudgetRepository
+import com.budget.shared.repository.DashboardData
+import com.budget.shared.repository.InvalidationEvent
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -14,6 +18,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -99,8 +106,8 @@ class TransactionsViewModelTest {
             merchantName = "Supermarket",
             postedDate = "2026-02-28",
         )
-    val fetcher =
-        FakeTransactionsFetcher(
+    val repo =
+        FakeTransactionsRepository(
             transactions =
                 TransactionPage(
                     items = listOf(txn),
@@ -111,7 +118,7 @@ class TransactionsViewModelTest {
             categories = listOf(Category(id = "c1", name = catName("Food"))),
         )
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
     val state = vm.uiState.value
 
     assertEquals(false, state.loading)
@@ -132,8 +139,8 @@ class TransactionsViewModelTest {
             merchantName = "Supermarket",
             postedDate = "2026-02-28",
         )
-    val fetcher =
-        FakeTransactionsFetcher(
+    val repo =
+        FakeTransactionsRepository(
             transactions =
                 TransactionPage(
                     items = listOf(txn),
@@ -144,7 +151,7 @@ class TransactionsViewModelTest {
             categories = listOf(Category(id = "c1", name = catName("Food"))),
         )
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
 
     // Select the transaction
     vm.selectTransaction(txn)
@@ -163,8 +170,8 @@ class TransactionsViewModelTest {
 
   @Test
   fun categorySearchFilters() = runTest {
-    val fetcher =
-        FakeTransactionsFetcher(
+    val repo =
+        FakeTransactionsRepository(
             transactions = TransactionPage(items = emptyList(), total = 0, limit = 200, offset = 0),
             categories =
                 listOf(
@@ -174,7 +181,7 @@ class TransactionsViewModelTest {
                 ),
         )
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
 
     vm.updateCategorySearch("foo")
     val filtered = vm.filteredCategories()
@@ -185,9 +192,9 @@ class TransactionsViewModelTest {
 
   @Test
   fun fetchErrorSetsErrorState() = runTest {
-    val fetcher = FakeTransactionsFetcher(shouldThrow = true)
+    val repo = FakeTransactionsRepository(shouldThrow = true)
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
     val state = vm.uiState.value
 
     assertEquals(false, state.loading)
@@ -205,8 +212,8 @@ class TransactionsViewModelTest {
             merchantName = "Supermarket",
             postedDate = "2026-02-28",
         )
-    val fetcher =
-        FakeTransactionsFetcher(
+    val repo =
+        FakeTransactionsRepository(
             transactions =
                 TransactionPage(
                     items = listOf(txn),
@@ -217,7 +224,7 @@ class TransactionsViewModelTest {
             categories = listOf(Category(id = "c1", name = catName("Food"))),
         )
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
 
     vm.selectTransactionById("t1")
 
@@ -238,8 +245,8 @@ class TransactionsViewModelTest {
             merchantName = "Supermarket",
             postedDate = "2026-02-28",
         )
-    val fetcher =
-        FakeTransactionsFetcher(
+    val repo =
+        FakeTransactionsRepository(
             transactions =
                 TransactionPage(
                     items = listOf(txn),
@@ -251,7 +258,7 @@ class TransactionsViewModelTest {
             categorizeResult = false,
         )
 
-    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+    val vm = TransactionsViewModel(repo)
     vm.selectTransaction(txn)
     vm.categorize("c1")
 
@@ -267,17 +274,22 @@ private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThr
 
 // -- Test doubles -------------------------------------------------------
 
-private class FakeTransactionsFetcher(
+private class FakeTransactionsRepository(
     private val transactions: TransactionPage = TransactionPage(emptyList(), 0, 200, 0),
     private val categories: List<Category> = emptyList(),
     private val categorizeResult: Boolean = true,
     private val uncategorizeResult: Boolean = true,
     private val shouldThrow: Boolean = false,
-) : TransactionsFetcher {
+) : BudgetRepository {
 
-  override suspend fun fetchTransactions(
-      serverUrl: String,
-      apiKey: String,
+  private val _invalidationEvents = MutableSharedFlow<InvalidationEvent>()
+  override val invalidationEvents: SharedFlow<InvalidationEvent> =
+      _invalidationEvents.asSharedFlow()
+
+  override suspend fun getDashboardData(monthId: String?): DashboardData =
+      throw NotImplementedError()
+
+  override suspend fun getTransactions(
       limit: Int,
       offset: Int,
       categoryId: String?,
@@ -286,30 +298,26 @@ private class FakeTransactionsFetcher(
     return transactions
   }
 
-  override suspend fun fetchTransaction(
-      serverUrl: String,
-      apiKey: String,
-      id: String,
-  ): Transaction {
+  override suspend fun getTransaction(id: String): Transaction {
     if (shouldThrow) throw RuntimeException("Test error")
     return transactions.items.first { it.id == id }
   }
 
-  override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
+  override suspend fun getCategories(): List<Category> {
     if (shouldThrow) throw RuntimeException("Test error")
     return categories
   }
 
-  override suspend fun categorize(
-      serverUrl: String,
-      apiKey: String,
+  override suspend fun categorizeTransaction(
       transactionId: String,
       categoryId: String,
   ): Boolean = categorizeResult
 
-  override suspend fun uncategorize(
-      serverUrl: String,
-      apiKey: String,
-      transactionId: String,
-  ): Boolean = uncategorizeResult
+  override suspend fun uncategorizeTransaction(transactionId: String): Boolean = uncategorizeResult
+
+  override suspend fun createCategory(request: CategoryRequest): Category =
+      throw NotImplementedError()
+
+  override suspend fun updateCategory(id: String, request: CategoryRequest): Category =
+      throw NotImplementedError()
 }

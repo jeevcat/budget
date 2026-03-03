@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -52,6 +53,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.budget.shared.config.AndroidConfigStore
 import com.budget.shared.config.ServerConfig
+import com.budget.shared.repository.BudgetRepository
+import com.budget.shared.repository.DefaultBudgetRepository
 import com.budget.shared.viewmodel.CategoriesViewModel
 import com.budget.shared.viewmodel.CategoryEditViewModel
 import com.budget.shared.viewmodel.DashboardViewModel
@@ -129,15 +132,11 @@ class MainActivity : ComponentActivity() {
 internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val navController = rememberNavController()
 
-  val dashboardVm: DashboardViewModel = viewModel {
-    DashboardViewModel(config.serverUrl, config.apiKey)
-  }
-  val transactionsVm: TransactionsViewModel = viewModel {
-    TransactionsViewModel(config.serverUrl, config.apiKey)
-  }
-  val categoriesVm: CategoriesViewModel = viewModel {
-    CategoriesViewModel(config.serverUrl, config.apiKey)
-  }
+  val repository = remember(config) { DefaultBudgetRepository(config.serverUrl, config.apiKey) }
+
+  val dashboardVm: DashboardViewModel = viewModel { DashboardViewModel(repository) }
+  val transactionsVm: TransactionsViewModel = viewModel { TransactionsViewModel(repository) }
+  val categoriesVm: CategoriesViewModel = viewModel { CategoriesViewModel(repository) }
 
   val dashboardState by dashboardVm.uiState.collectAsStateWithLifecycle()
   val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
@@ -227,7 +226,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   ) { innerPadding ->
     AppNavHost(
         navController = navController,
-        config = config,
+        repository = repository,
         dashboardVm = dashboardVm,
         transactionsVm = transactionsVm,
         categoriesVm = categoriesVm,
@@ -239,7 +238,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
 @Composable
 private fun AppNavHost(
     navController: NavHostController,
-    config: ServerConfig,
+    repository: BudgetRepository,
     dashboardVm: DashboardViewModel,
     transactionsVm: TransactionsViewModel,
     categoriesVm: CategoriesViewModel,
@@ -291,14 +290,11 @@ private fun AppNavHost(
           route.categoryId?.let { id -> categoriesVm.uiState.value.categories.find { it.id == id } }
       val editVm: CategoryEditViewModel =
           viewModel(key = route.categoryId ?: "new") {
-            CategoryEditViewModel(config.serverUrl, config.apiKey, editingCategory)
+            CategoryEditViewModel(repository, editingCategory)
           }
       CategoryEditScreen(
           viewModel = editVm,
-          onBack = {
-            navController.popBackStack()
-            categoriesVm.refresh()
-          },
+          onBack = { navController.popBackStack() },
       )
     }
   }

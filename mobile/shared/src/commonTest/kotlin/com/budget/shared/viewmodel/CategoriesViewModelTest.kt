@@ -3,6 +3,12 @@ package com.budget.shared.viewmodel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryName
+import com.budget.shared.api.CategoryRequest
+import com.budget.shared.api.Transaction
+import com.budget.shared.api.TransactionPage
+import com.budget.shared.repository.BudgetRepository
+import com.budget.shared.repository.DashboardData
+import com.budget.shared.repository.InvalidationEvent
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -12,6 +18,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -34,8 +43,8 @@ class CategoriesViewModelTest {
 
   @Test
   fun initialLoadPopulatesState() = runTest {
-    val fetcher = FakeCategoriesFetcher(sampleCategories())
-    val vm = CategoriesViewModel("https://example.com", "key", fetcher)
+    val repo = FakeCategoriesRepository(sampleCategories())
+    val vm = CategoriesViewModel(repo)
 
     val state = vm.uiState.value
     assertFalse(state.loading)
@@ -45,8 +54,8 @@ class CategoriesViewModelTest {
 
   @Test
   fun errorSetsErrorState() = runTest {
-    val fetcher = FakeCategoriesFetcher(error = "Network failure")
-    val vm = CategoriesViewModel("https://example.com", "key", fetcher)
+    val repo = FakeCategoriesRepository(error = "Network failure")
+    val vm = CategoriesViewModel(repo)
 
     val state = vm.uiState.value
     assertFalse(state.loading)
@@ -56,8 +65,8 @@ class CategoriesViewModelTest {
 
   @Test
   fun toggleSectionCollapsesAndExpands() = runTest {
-    val fetcher = FakeCategoriesFetcher(sampleCategories())
-    val vm = CategoriesViewModel("https://example.com", "key", fetcher)
+    val repo = FakeCategoriesRepository(sampleCategories())
+    val vm = CategoriesViewModel(repo)
 
     assertTrue(BudgetMode.MONTHLY in vm.uiState.value.expandedSections)
 
@@ -137,8 +146,8 @@ class CategoriesViewModelTest {
 
   @Test
   fun allSectionsExpandedByDefault() = runTest {
-    val fetcher = FakeCategoriesFetcher(sampleCategories())
-    val vm = CategoriesViewModel("https://example.com", "key", fetcher)
+    val repo = FakeCategoriesRepository(sampleCategories())
+    val vm = CategoriesViewModel(repo)
 
     val state = vm.uiState.value
     for (section in state.sections) {
@@ -243,14 +252,37 @@ private fun catName(name: String): CategoryName = CategoryName.of(name).getOrThr
 
 // -- Test doubles -----------------------------------------------------------
 
-private class FakeCategoriesFetcher(
+private class FakeCategoriesRepository(
     private val categories: List<Category> = emptyList(),
     private val error: String? = null,
-) : CategoriesFetcher {
-  override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
+) : BudgetRepository {
+
+  private val _invalidationEvents = MutableSharedFlow<InvalidationEvent>()
+  override val invalidationEvents: SharedFlow<InvalidationEvent> =
+      _invalidationEvents.asSharedFlow()
+
+  override suspend fun getDashboardData(monthId: String?): DashboardData =
+      throw NotImplementedError()
+
+  override suspend fun getTransactions(limit: Int, offset: Int, categoryId: String?) =
+      TransactionPage(emptyList(), 0, limit, offset)
+
+  override suspend fun getTransaction(id: String): Transaction = throw NotImplementedError()
+
+  override suspend fun getCategories(): List<Category> {
     if (error != null) throw RuntimeException(error)
     return categories
   }
+
+  override suspend fun categorizeTransaction(transactionId: String, categoryId: String) = true
+
+  override suspend fun uncategorizeTransaction(transactionId: String) = true
+
+  override suspend fun createCategory(request: CategoryRequest): Category =
+      throw NotImplementedError()
+
+  override suspend fun updateCategory(id: String, request: CategoryRequest): Category =
+      throw NotImplementedError()
 }
 
 private fun sampleCategories(): List<Category> =

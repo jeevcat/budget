@@ -2,12 +2,12 @@ package com.budget.shared.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.budget.shared.api.BudgetApi
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetType
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryName
 import com.budget.shared.api.CategoryRequest
+import com.budget.shared.repository.BudgetRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,63 +34,9 @@ data class ParentOption(
     val name: String,
 )
 
-/** Abstraction for saving a category so the ViewModel is unit-testable. */
-interface CategorySaver {
-  suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category>
-
-  suspend fun createCategory(serverUrl: String, apiKey: String, request: CategoryRequest): Category
-
-  suspend fun updateCategory(
-      serverUrl: String,
-      apiKey: String,
-      id: String,
-      request: CategoryRequest,
-  ): Category
-}
-
-class DefaultCategorySaver : CategorySaver {
-  override suspend fun fetchCategories(serverUrl: String, apiKey: String): List<Category> {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.getCategories()
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun createCategory(
-      serverUrl: String,
-      apiKey: String,
-      request: CategoryRequest,
-  ): Category {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.createCategory(request)
-    } finally {
-      api.close()
-    }
-  }
-
-  override suspend fun updateCategory(
-      serverUrl: String,
-      apiKey: String,
-      id: String,
-      request: CategoryRequest,
-  ): Category {
-    val api = BudgetApi(serverUrl, apiKey)
-    return try {
-      api.updateCategory(id, request)
-    } finally {
-      api.close()
-    }
-  }
-}
-
 class CategoryEditViewModel(
-    private val serverUrl: String,
-    private val apiKey: String,
+    private val repository: BudgetRepository,
     private val editingCategory: Category? = null,
-    private val saver: CategorySaver = DefaultCategorySaver(),
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(CategoryEditUiState(isEditing = editingCategory != null))
@@ -116,7 +62,7 @@ class CategoryEditViewModel(
   private fun loadParents() {
     viewModelScope.launch {
       try {
-        val categories = saver.fetchCategories(serverUrl, apiKey)
+        val categories = repository.getCategories()
         val parents =
             categories
                 .filter { it.parentId == null && it.id != editingCategory?.id }
@@ -176,9 +122,9 @@ class CategoryEditViewModel(
       try {
         val request = buildRequest(state, categoryName)
         if (editingCategory != null) {
-          saver.updateCategory(serverUrl, apiKey, editingCategory.id, request)
+          repository.updateCategory(editingCategory.id, request)
         } else {
-          saver.createCategory(serverUrl, apiKey, request)
+          repository.createCategory(request)
         }
         _uiState.update { it.copy(saving = false, saved = true) }
       } catch (e: Exception) {
