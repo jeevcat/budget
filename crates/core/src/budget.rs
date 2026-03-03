@@ -482,14 +482,18 @@ fn compute_annual_status(
     let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
     let remaining = budget_amount - spent;
 
-    let total_year_months = i64::try_from(year_months.len()).unwrap_or(i64::MAX);
-    // Elapsed months = months up to and including the reference month
-    let elapsed_months = year_months
-        .iter()
-        .position(|bm| bm.id == current_month.id)
-        .map_or(total_year_months, |idx| {
-            i64::try_from(idx).unwrap_or(i64::MAX) + 1
-        });
+    // Budget year is always 12 months
+    let total_year_months: i64 = 12;
+    // Elapsed = calendar months from the year anchor (January) to current month, inclusive
+    let year_anchor = year_months
+        .first()
+        .map_or(current_month.start_date, |bm| bm.start_date);
+    let elapsed_months = {
+        let anchor_ord = year_anchor.year() * 12 + i32::try_from(year_anchor.month0()).unwrap_or(0);
+        let current_ord = current_month.start_date.year() * 12
+            + i32::try_from(current_month.start_date.month0()).unwrap_or(0);
+        i64::from((current_ord - anchor_ord + 1).clamp(1, 12))
+    };
     let time_left = (total_year_months - elapsed_months).max(0);
 
     let bt = category
@@ -1244,8 +1248,8 @@ mod tests {
         // 400 + 600 + 200 = 1200 across three months
         assert_eq!(status.spent, dec!(1200));
         assert_eq!(status.remaining, dec!(4800));
-        // 3 months total, reference is month 3 → 0 months left
-        assert_eq!(status.time_left, Some(0));
+        // 12-month year, reference is month 3 → 9 months left
+        assert_eq!(status.time_left, Some(9));
     }
 
     #[test]
