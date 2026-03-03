@@ -61,22 +61,9 @@ import com.budget.shared.repository.DefaultBudgetRepository
 import com.budget.shared.viewmodel.BudgetSummary
 import com.budget.shared.viewmodel.DashboardUiState
 import com.budget.shared.viewmodel.DashboardViewModel
-import java.text.NumberFormat
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.util.Currency
-import java.util.Locale
 import kotlin.math.abs
 
 private const val MAX_VISIBLE_TRANSACTIONS = 50
-
-private val ShortDateFormatter = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
-
-private val EuroCurrencyFormat: NumberFormat =
-    NumberFormat.getCurrencyInstance(Locale.GERMANY).apply {
-      currency = Currency.getInstance("EUR")
-    }
 
 // -- Pace colors -----------------------------------------------------------
 
@@ -112,28 +99,6 @@ private fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
 }
 
 // -- Formatting helpers ----------------------------------------------------
-
-private fun formatAmount(value: Double, showSign: Boolean = false): String {
-  val formatted =
-      synchronized(EuroCurrencyFormat) {
-        EuroCurrencyFormat.maximumFractionDigits = 0
-        EuroCurrencyFormat.format(abs(value))
-      }
-  val prefix =
-      when {
-        showSign && value > 0 -> "+"
-        value < 0 -> "-"
-        else -> ""
-      }
-  return "$prefix$formatted"
-}
-
-private fun parseLocalDate(date: String): LocalDate? =
-    try {
-      LocalDate.parse(date)
-    } catch (_: DateTimeParseException) {
-      null
-    }
 
 private fun formatMonthRange(month: BudgetMonth): String {
   val startDate = parseLocalDate(month.startDate) ?: return month.startDate
@@ -686,7 +651,7 @@ private fun TransactionRow(txn: TransactionEntry, onClick: (() -> Unit)? = null)
           overflow = TextOverflow.Ellipsis,
       )
       Text(
-          text = formatDate(txn.postedDate),
+          text = formatShortDate(txn.postedDate),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
@@ -964,6 +929,3 @@ private fun CategoryDetailHeader(info: CategoryInfo) {
     }
   }
 }
-
-private fun formatDate(dateStr: String): String =
-    parseLocalDate(dateStr)?.format(ShortDateFormatter) ?: dateStr

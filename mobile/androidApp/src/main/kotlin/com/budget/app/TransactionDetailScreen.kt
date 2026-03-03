@@ -56,13 +56,6 @@ import com.budget.shared.api.Transaction
 import com.budget.shared.viewmodel.DisplayCategory
 import com.budget.shared.viewmodel.TransactionsUiState
 import com.budget.shared.viewmodel.TransactionsViewModel
-import java.text.NumberFormat
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.util.Currency
-import java.util.Locale
-import kotlin.math.abs
 
 // -- Colors -----------------------------------------------------------------
 
@@ -70,31 +63,6 @@ private val ExpenseColor = Color(0xFFC34043)
 private val IncomeColor = Color(0xFF76946A)
 
 // -- Formatting helpers -----------------------------------------------------
-
-private val LongDateFormatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
-
-private val EuroCurrencyFormat: NumberFormat =
-    NumberFormat.getCurrencyInstance(Locale.GERMANY).apply {
-      currency = Currency.getInstance("EUR")
-    }
-
-private fun formatAmount(value: String): String {
-  val d = value.toDoubleOrNull() ?: return value
-  val formatted =
-      synchronized(EuroCurrencyFormat) {
-        EuroCurrencyFormat.maximumFractionDigits = 0
-        EuroCurrencyFormat.format(abs(d))
-      }
-  val prefix = if (d < 0) "-" else "+"
-  return "$prefix$formatted"
-}
-
-private fun formatLongDate(dateStr: String): String =
-    try {
-      LocalDate.parse(dateStr).format(LongDateFormatter)
-    } catch (_: DateTimeParseException) {
-      dateStr
-    }
 
 private fun formatCategoryMethod(method: CategoryMethod): String =
     when (method) {
@@ -325,7 +293,7 @@ private fun AmountHeader(txn: Transaction) {
       horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(
-        text = formatAmount(txn.amount),
+        text = formatAmountSigned(txn.amount),
         style = MaterialTheme.typography.headlineLarge,
         fontWeight = FontWeight.Bold,
         color = amountColor,

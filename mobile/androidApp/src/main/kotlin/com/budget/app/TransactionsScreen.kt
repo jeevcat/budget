@@ -32,40 +32,6 @@ import com.budget.shared.api.Transaction
 import com.budget.shared.viewmodel.DisplayCategory
 import com.budget.shared.viewmodel.TransactionsUiState
 import com.budget.shared.viewmodel.TransactionsViewModel
-import java.text.NumberFormat
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.util.Currency
-import java.util.Locale
-import kotlin.math.abs
-
-// -- Formatting helpers (shared with DashboardScreen) ----------------------
-
-private val ShortDateFormatter = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
-
-private val EuroCurrencyFormat: NumberFormat =
-    NumberFormat.getCurrencyInstance(Locale.GERMANY).apply {
-      currency = Currency.getInstance("EUR")
-    }
-
-private fun formatTransactionAmount(value: String): String {
-  val d = value.toDoubleOrNull() ?: return value
-  val formatted =
-      synchronized(EuroCurrencyFormat) {
-        EuroCurrencyFormat.maximumFractionDigits = 0
-        EuroCurrencyFormat.format(abs(d))
-      }
-  val prefix = if (d < 0) "-" else ""
-  return "$prefix$formatted"
-}
-
-private fun formatTransactionDate(dateStr: String): String =
-    try {
-      LocalDate.parse(dateStr).format(ShortDateFormatter)
-    } catch (_: DateTimeParseException) {
-      dateStr
-    }
 
 // -- Root screen -----------------------------------------------------------
 
@@ -168,7 +134,7 @@ private fun TransactionCard(
   val merchant =
       transaction.merchantName.ifEmpty { transaction.remittanceInformation.firstOrNull() ?: "" }
   val subtitle = buildString {
-    append(formatTransactionDate(transaction.postedDate))
+    append(formatShortDate(transaction.postedDate))
     if (transaction.categoryMethod != null) {
       val catName = categories.find { it.id == transaction.categoryId }?.displayName
       if (catName != null) append(" · $catName")
@@ -220,4 +186,3 @@ private fun TransactionCard(
     }
   }
 }
-// test

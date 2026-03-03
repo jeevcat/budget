@@ -60,6 +60,7 @@ import com.budget.shared.viewmodel.CategoriesViewModel
 import com.budget.shared.viewmodel.CategoryEditViewModel
 import com.budget.shared.viewmodel.DashboardViewModel
 import com.budget.shared.viewmodel.TransactionsViewModel
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 
 @Serializable data object BudgetRoute
@@ -155,7 +156,9 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val transactionsVm: TransactionsViewModel = viewModel { TransactionsViewModel(repository) }
   val categoriesVm: CategoriesViewModel = viewModel { CategoriesViewModel(repository) }
 
-  val transactionsState by transactionsVm.uiState.collectAsStateWithLifecycle()
+  val uncategorizedCount by
+      remember { transactionsVm.uiState.map { it.total } }
+          .collectAsStateWithLifecycle(initialValue = 0)
 
   AppNavHost(
       navController = navController,
@@ -163,7 +166,7 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
       dashboardVm = dashboardVm,
       transactionsVm = transactionsVm,
       categoriesVm = categoriesVm,
-      uncategorizedCount = transactionsState.total,
+      uncategorizedCount = uncategorizedCount,
       onLogout = onLogout,
   )
 }

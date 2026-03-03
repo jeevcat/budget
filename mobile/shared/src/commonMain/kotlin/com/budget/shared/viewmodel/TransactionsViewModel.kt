@@ -48,6 +48,7 @@ class TransactionsViewModel(
 
   init {
     load()
+    viewModelScope.launch { repository.invalidationEvents.collect { load() } }
   }
 
   fun refresh() {

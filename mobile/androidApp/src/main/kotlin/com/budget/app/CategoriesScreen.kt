@@ -43,10 +43,6 @@ import com.budget.shared.api.BudgetMode
 import com.budget.shared.viewmodel.CategoriesViewModel
 import com.budget.shared.viewmodel.CategoryDisplayItem
 import com.budget.shared.viewmodel.CategorySection
-import java.text.NumberFormat
-import java.util.Currency
-import java.util.Locale
-import kotlin.math.abs
 
 // -- Kanagawa palette colors for budget modes --------------------------------
 
@@ -61,22 +57,6 @@ private fun modeColor(mode: BudgetMode?): Color =
       BudgetMode.PROJECT -> AutumnYellow
       null -> Color.Unspecified
     }
-
-// -- Currency formatting -----------------------------------------------------
-
-private val EuroCurrencyFormat: NumberFormat =
-    NumberFormat.getCurrencyInstance(Locale.GERMANY).apply {
-      currency = Currency.getInstance("EUR")
-    }
-
-private fun formatBudgetAmount(value: String?): String {
-  if (value == null) return "No budget"
-  val d = value.toDoubleOrNull() ?: return value
-  return synchronized(EuroCurrencyFormat) {
-    EuroCurrencyFormat.maximumFractionDigits = 0
-    EuroCurrencyFormat.format(abs(d))
-  }
-}
 
 // -- Root screen -------------------------------------------------------------
 
