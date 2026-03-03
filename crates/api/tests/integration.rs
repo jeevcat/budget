@@ -1059,7 +1059,10 @@ async fn budgets_status_with_current_month(pool: PgPool) {
     db.upsert_account(&account).await.expect("account");
 
     // Create a Salary category so months can be derived
-    let salary_cat = make_category("Salary");
+    let salary_cat = Category {
+        budget: budget_core::models::BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
     db.insert_category(&salary_cat)
         .await
         .expect("salary category");

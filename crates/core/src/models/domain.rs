@@ -40,6 +40,8 @@ pub enum BudgetConfig {
         start_date: NaiveDate,
         end_date: Option<NaiveDate>,
     },
+    /// Income category (salary deposits). Excluded from budget math.
+    Salary,
 }
 
 impl BudgetConfig {
@@ -51,6 +53,7 @@ impl BudgetConfig {
             Self::Monthly { .. } => Some(BudgetMode::Monthly),
             Self::Annual { .. } => Some(BudgetMode::Annual),
             Self::Project { .. } => Some(BudgetMode::Project),
+            Self::Salary => Some(BudgetMode::Salary),
         }
     }
 
@@ -58,7 +61,7 @@ impl BudgetConfig {
     #[must_use]
     pub fn amount(&self) -> Option<Decimal> {
         match self {
-            Self::None => Option::None,
+            Self::None | Self::Salary => Option::None,
             Self::Monthly { amount, .. }
             | Self::Annual { amount, .. }
             | Self::Project { amount, .. } => Some(*amount),
@@ -72,7 +75,7 @@ impl BudgetConfig {
             Self::Monthly { budget_type, .. } | Self::Annual { budget_type, .. } => {
                 Some(*budget_type)
             }
-            Self::None | Self::Project { .. } => Option::None,
+            Self::None | Self::Salary | Self::Project { .. } => Option::None,
         }
     }
 
@@ -106,6 +109,7 @@ impl BudgetConfig {
                 // Project without a start date is invalid; fall back
                 Option::None => Self::None,
             },
+            Some(BudgetMode::Salary) => Self::Salary,
             Option::None => Self::None,
         }
     }

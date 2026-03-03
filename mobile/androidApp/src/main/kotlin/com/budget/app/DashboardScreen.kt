@@ -189,6 +189,7 @@ private fun DashboardTabContent(
                     BudgetMode.MONTHLY -> "Monthly"
                     BudgetMode.ANNUAL -> "Annual"
                     BudgetMode.PROJECT -> "Projects"
+                    BudgetMode.SALARY -> "Salary"
                   }
               )
             },
@@ -211,6 +212,7 @@ private fun DashboardTabContent(
         BudgetMode.MONTHLY -> monthlyTabContent(state = state, viewModel = viewModel)
         BudgetMode.ANNUAL -> annualTabContent(state = state, viewModel = viewModel)
         BudgetMode.PROJECT -> projectTabContent(state = state, viewModel = viewModel)
+        BudgetMode.SALARY -> {} // Salary has no dashboard tab content
       }
     }
   }
@@ -710,6 +712,7 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
               state.projectSummary.barMax,
           )
     }
+    BudgetMode.SALARY -> {}
   }
   return null
 }
@@ -721,7 +724,8 @@ private fun resolveBudgetStatus(
     when (state.selectedTab) {
       BudgetMode.MONTHLY -> state.monthlyStatuses.find { it.categoryId == categoryId }
       BudgetMode.ANNUAL -> state.annualStatuses.find { it.categoryId == categoryId }
-      BudgetMode.PROJECT -> null
+      BudgetMode.PROJECT,
+      BudgetMode.SALARY -> null
     }
 
 private fun resolveTransactions(
@@ -736,6 +740,7 @@ private fun resolveTransactions(
         BudgetMode.MONTHLY -> state.monthlyTransactions
         BudgetMode.ANNUAL -> state.annualTransactions
         BudgetMode.PROJECT -> state.projectTransactions
+        BudgetMode.SALARY -> emptyList()
       }
   val status = resolveBudgetStatus(state, categoryId)
   if (status != null && status.hasChildren) {

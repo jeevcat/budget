@@ -89,22 +89,23 @@ async fn derive_months(
     state: &AppState,
     categories: &[Category],
 ) -> Result<Vec<BudgetMonth>, AppError> {
-    let salary_cat_id = state.db.get_category_by_name("Salary").await?.map(|c| c.id);
+    // Find salary categories by budget mode
+    let salary_roots: Vec<&Category> = categories
+        .iter()
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Salary))
+        .collect();
 
-    let salary_txns = match salary_cat_id {
-        Some(sid) => {
-            let subtree = collect_category_subtree(sid, categories);
-            state.db.list_transactions_by_category_ids(&subtree).await?
+    let salary_txns = if salary_roots.is_empty() {
+        Vec::new()
+    } else {
+        let mut all_ids = Vec::new();
+        for root in &salary_roots {
+            all_ids.extend(collect_category_subtree(root.id, categories));
         }
-        None => Vec::new(),
+        state.db.list_transactions_by_category_ids(&all_ids).await?
     };
 
-    match detect_budget_month_boundaries(
-        &salary_txns,
-        state.expected_salary_count,
-        salary_cat_id,
-        categories,
-    ) {
+    match detect_budget_month_boundaries(&salary_txns, state.expected_salary_count, categories) {
         Ok(mut months) => {
             months.sort_by_key(|bm| bm.start_date);
             Ok(months)

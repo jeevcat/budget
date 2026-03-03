@@ -8,6 +8,7 @@ enum class BudgetMode {
   @SerialName("monthly") MONTHLY,
   @SerialName("annual") ANNUAL,
   @SerialName("project") PROJECT,
+  @SerialName("salary") SALARY,
 }
 
 @Serializable

@@ -221,6 +221,9 @@
 .cat-project {
   color: var(--kw-autumn-yellow);
 }
+.cat-salary {
+  color: var(--kw-autumn-green);
+}
 
 /* Category method dots */
 .method-dot {

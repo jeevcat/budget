@@ -129,13 +129,14 @@ class CategoryEditViewModel(
   companion object {
     fun buildRequest(state: CategoryEditUiState, name: CategoryName): CategoryRequest {
       val budgetMode = state.budgetMode
+      val hasBudgetFields = budgetMode != null && budgetMode != BudgetMode.SALARY
       return CategoryRequest(
           name = name,
           parentId = state.parentId,
           budgetMode = budgetMode?.let { modeToString(it) },
-          budgetType = if (budgetMode != null) typeToString(state.budgetType) else null,
+          budgetType = if (hasBudgetFields) typeToString(state.budgetType) else null,
           budgetAmount =
-              if (budgetMode != null && state.budgetAmount.isNotBlank()) state.budgetAmount.trim()
+              if (hasBudgetFields && state.budgetAmount.isNotBlank()) state.budgetAmount.trim()
               else null,
           projectStartDate =
               if (budgetMode == BudgetMode.PROJECT && state.projectStartDate.isNotBlank())
@@ -153,6 +154,7 @@ class CategoryEditViewModel(
           BudgetMode.MONTHLY -> "monthly"
           BudgetMode.ANNUAL -> "annual"
           BudgetMode.PROJECT -> "project"
+          BudgetMode.SALARY -> "salary"
         }
 
     fun typeToString(type: BudgetType): String =

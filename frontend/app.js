@@ -190,6 +190,7 @@ function budgetModeColor(mode) {
   if (mode === "monthly") return "cat-monthly";
   if (mode === "annual") return "cat-annual";
   if (mode === "project") return "cat-project";
+  if (mode === "salary") return "cat-salary";
   return "";
 }
 
@@ -2111,10 +2112,14 @@ function Categories() {
         name: editForm.name,
         parent_id: editForm.parent_id || null,
         budget_mode: editForm.budget_mode || null,
-        budget_type: editForm.budget_mode
-          ? editForm.budget_type || "variable"
-          : null,
-        budget_amount: editForm.budget_amount || null,
+        budget_type:
+          editForm.budget_mode && editForm.budget_mode !== "salary"
+            ? editForm.budget_type || "variable"
+            : null,
+        budget_amount:
+          editForm.budget_mode && editForm.budget_mode !== "salary"
+            ? editForm.budget_amount || null
+            : null,
         project_start_date: editForm.project_start_date || null,
         project_end_date: editForm.project_end_date || null,
       });
@@ -2216,7 +2221,13 @@ function Categories() {
     if (!mode) return null;
     const cls = budgetModeColor(mode);
     const label =
-      mode === "monthly" ? "Monthly" : mode === "annual" ? "Annual" : "Project";
+      mode === "monthly"
+        ? "Monthly"
+        : mode === "annual"
+          ? "Annual"
+          : mode === "salary"
+            ? "Salary"
+            : "Project";
     return html`<span class="hstack" style="gap:0.3rem;align-items:center"><span class="method-dot ${cls}" style="cursor:default"></span><span class="text-light" style="font-size:0.8rem">${label}</span></span>`;
   }
 
@@ -2365,10 +2376,12 @@ function Categories() {
                 <option value="monthly">Monthly</option>
                 <option value="annual">Annual</option>
                 <option value="project">Project</option>
+                <option value="salary">Salary</option>
               </select>
             </div>
             ${
               editForm.budget_mode &&
+              editForm.budget_mode !== "salary" &&
               html`
               <div data-field>
                 <label>Type</label>

@@ -445,6 +445,7 @@ class CategoryEditViewModelTest {
     assertEquals("monthly", CategoryEditViewModel.modeToString(BudgetMode.MONTHLY))
     assertEquals("annual", CategoryEditViewModel.modeToString(BudgetMode.ANNUAL))
     assertEquals("project", CategoryEditViewModel.modeToString(BudgetMode.PROJECT))
+    assertEquals("salary", CategoryEditViewModel.modeToString(BudgetMode.SALARY))
   }
 
   @Test

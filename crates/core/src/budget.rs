@@ -67,6 +67,25 @@ fn project_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
     ids
 }
 
+/// Collect category IDs that belong to a salary-mode category (or whose
+/// ancestor is salary-mode). Used to exclude salary transactions from
+/// regular budget math and to discover salary categories by mode.
+fn salary_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
+    let salary_roots: Vec<CategoryId> = categories
+        .iter()
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Salary))
+        .map(|c| c.id)
+        .collect();
+
+    let mut ids = HashSet::new();
+    for root in salary_roots {
+        for id in collect_category_subtree(root, categories) {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
 // ---------------------------------------------------------------------------
 // Shared transaction exclusion helpers
 // ---------------------------------------------------------------------------
@@ -123,6 +142,7 @@ pub fn filter_for_budget<'a>(
     categories: &[Category],
 ) -> Vec<&'a Transaction> {
     let project_cats = project_category_ids(categories);
+    let salary_cats = salary_category_ids(categories);
     let reimbursed_ids = reimbursed_transaction_ids(transactions);
 
     transactions
@@ -130,6 +150,10 @@ pub fn filter_for_budget<'a>(
         .filter(|t| {
             // Exclude transactions in project-mode categories
             if t.category_id.is_some_and(|cid| project_cats.contains(&cid)) {
+                return false;
+            }
+            // Exclude transactions in salary-mode categories
+            if t.category_id.is_some_and(|cid| salary_cats.contains(&cid)) {
                 return false;
             }
             !is_correlated_exclusion(t, &reimbursed_ids)
@@ -146,17 +170,16 @@ pub fn filter_for_budget<'a>(
 ///
 /// # Errors
 ///
-/// Returns `Error::NoSalaryCategory` if `salary_category_id` is `None`.
+/// Returns `Error::NoSalaryCategory` if no salary-mode category exists.
 pub fn detect_budget_month_boundaries(
     transactions: &[Transaction],
     expected_salary_count: u32,
-    salary_category_id: Option<CategoryId>,
     categories: &[Category],
 ) -> Result<Vec<BudgetMonth>, Error> {
-    let salary_cat_id = salary_category_id.ok_or(Error::NoSalaryCategory)?;
-
-    // Collect salary category subtree (e.g. Salary:Employer A, Salary:Employer B)
-    let salary_cat_ids = collect_category_subtree(salary_cat_id, categories);
+    let salary_cat_ids: Vec<CategoryId> = salary_category_ids(categories).into_iter().collect();
+    if salary_cat_ids.is_empty() {
+        return Err(Error::NoSalaryCategory);
+    }
 
     // Find salary transactions (positive amounts in salary categories)
     let mut salary_txns: Vec<&Transaction> = transactions
@@ -590,8 +613,11 @@ pub fn compute_budget_status(
         Some(BudgetMode::Project) => {
             compute_project_status(category, transactions, categories, today)
         }
-        // Monthly (default)
-        _ => compute_monthly_status(category, transactions, current_month, categories, today),
+        // Monthly is the default for budgeted categories.
+        // Salary categories are excluded at the API layer but fall back here defensively.
+        Some(BudgetMode::Monthly | BudgetMode::Salary) | None => {
+            compute_monthly_status(category, transactions, current_month, categories, today)
+        }
     }
 }
 
@@ -733,7 +759,10 @@ mod tests {
     }
 
     fn salary_category() -> Category {
-        make_category(1, "Salary", None)
+        Category {
+            budget: BudgetConfig::Salary,
+            ..make_category(1, "Salary", None)
+        }
     }
 
     fn salary_cat_id() -> CategoryId {
@@ -767,6 +796,7 @@ mod tests {
                 start_date: date(2025, 1, 1),
                 end_date: None,
             },
+            BudgetMode::Salary => BudgetConfig::Salary,
         };
         Category {
             budget,
@@ -783,9 +813,8 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 3, 15)),
         ];
 
-        let months =
-            detect_budget_month_boundaries(&transactions, 1, Some(salary_cat_id()), &categories)
-                .expect("should detect months");
+        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+            .expect("should detect months");
 
         assert_eq!(months.len(), 3);
         assert_eq!(months[0].start_date, date(2025, 1, 15));
@@ -809,9 +838,8 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 2, 24)),
         ];
 
-        let months =
-            detect_budget_month_boundaries(&transactions, 2, Some(salary_cat_id()), &categories)
-                .expect("should detect months");
+        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+            .expect("should detect months");
 
         assert_eq!(months.len(), 2);
         // Budget month starts on last salary of the calendar month
@@ -832,9 +860,8 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 25)),
         ];
 
-        let months =
-            detect_budget_month_boundaries(&transactions, 2, Some(salary_cat_id()), &categories)
-                .expect("should detect months");
+        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+            .expect("should detect months");
 
         assert_eq!(months.len(), 2);
         assert_eq!(months[0].start_date, date(2025, 1, 25));
@@ -859,9 +886,8 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(-1000), date(2026, 1, 2)),
         ];
 
-        let months =
-            detect_budget_month_boundaries(&transactions, 1, Some(salary_cat_id()), &categories)
-                .expect("should detect 3 months");
+        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+            .expect("should detect 3 months");
 
         assert_eq!(months.len(), 3);
         assert_eq!(months[0].start_date, date(2025, 12, 18));
@@ -876,7 +902,7 @@ mod tests {
 
     #[test]
     fn no_salary_category_returns_error() {
-        let result = detect_budget_month_boundaries(&[], 1, None, &[]);
+        let result = detect_budget_month_boundaries(&[], 1, &[]);
         assert!(result.is_err());
     }
 
@@ -981,6 +1007,22 @@ mod tests {
 
         // The project category spending is also excluded when computing "all"
         // spending via a parent that doesn't exist, so let's verify via filter
+        let filtered = filter_for_budget(&transactions, &categories);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].amount, dec!(-50));
+    }
+
+    #[test]
+    fn salary_transactions_excluded_from_budget() {
+        let food = food_category();
+        let salary = salary_category();
+        let categories = vec![food.clone(), salary.clone()];
+
+        let transactions = vec![
+            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(Some(salary.id), dec!(3000), date(2025, 1, 15)),
+        ];
+
         let filtered = filter_for_budget(&transactions, &categories);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].amount, dec!(-50));
