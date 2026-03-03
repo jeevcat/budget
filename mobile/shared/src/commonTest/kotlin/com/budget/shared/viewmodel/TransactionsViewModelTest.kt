@@ -1,6 +1,7 @@
 package com.budget.shared.viewmodel
 
 import com.budget.shared.api.Category
+import com.budget.shared.api.CategoryMethod
 import com.budget.shared.api.CategoryName
 import com.budget.shared.api.Transaction
 import com.budget.shared.api.TransactionPage
@@ -8,6 +9,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
@@ -121,7 +123,7 @@ class TransactionsViewModelTest {
   }
 
   @Test
-  fun categorizeRemovesTransactionFromList() = runTest {
+  fun categorizeUpdatesSelectedTransactionInPlace() = runTest {
     val txn =
         Transaction(
             id = "t1",
@@ -152,7 +154,9 @@ class TransactionsViewModelTest {
     vm.categorize("c1")
 
     val state = vm.uiState.value
-    assertNull(state.selectedTransaction)
+    val selected = assertNotNull(state.selectedTransaction)
+    assertEquals("c1", selected.categoryId)
+    assertEquals(CategoryMethod.MANUAL, selected.categoryMethod)
     assertEquals(0, state.total)
     assertTrue(state.transactions.isEmpty())
   }
@@ -189,6 +193,39 @@ class TransactionsViewModelTest {
     assertEquals(false, state.loading)
     assertEquals("Test error", state.error)
     assertTrue(state.transactions.isEmpty())
+  }
+
+  @Test
+  fun selectTransactionByIdUsesDetailLoading() = runTest {
+    val txn =
+        Transaction(
+            id = "t1",
+            accountId = "a1",
+            amount = "-50.00",
+            merchantName = "Supermarket",
+            postedDate = "2026-02-28",
+        )
+    val fetcher =
+        FakeTransactionsFetcher(
+            transactions =
+                TransactionPage(
+                    items = listOf(txn),
+                    total = 1,
+                    limit = 200,
+                    offset = 0,
+                ),
+            categories = listOf(Category(id = "c1", name = catName("Food"))),
+        )
+
+    val vm = TransactionsViewModel("https://example.com", "key", fetcher)
+
+    vm.selectTransactionById("t1")
+
+    val state = vm.uiState.value
+    assertEquals(false, state.detailLoading)
+    assertEquals(false, state.loading)
+    val selected = assertNotNull(state.selectedTransaction)
+    assertEquals("t1", selected.id)
   }
 
   @Test

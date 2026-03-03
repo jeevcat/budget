@@ -1,6 +1,5 @@
 package com.budget.app
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -71,19 +70,11 @@ private fun formatTransactionDate(dateStr: String): String =
 // -- Root screen -----------------------------------------------------------
 
 @Composable
-fun TransactionsScreen(viewModel: TransactionsViewModel) {
+fun TransactionsScreen(
+    viewModel: TransactionsViewModel,
+    onTransactionClick: (String) -> Unit,
+) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-
-  // Show detail screen when a transaction is selected
-  if (state.selectedTransaction != null) {
-    BackHandler { viewModel.selectTransaction(null) }
-    TransactionDetailScreen(
-        state = state,
-        viewModel = viewModel,
-        onBack = { viewModel.selectTransaction(null) },
-    )
-    return
-  }
 
   Box(modifier = Modifier.fillMaxSize()) {
     when {
@@ -123,7 +114,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel) {
       else -> {
         TransactionList(
             state = state,
-            onSelect = viewModel::selectTransaction,
+            onSelect = { onTransactionClick(it.id) },
         )
       }
     }

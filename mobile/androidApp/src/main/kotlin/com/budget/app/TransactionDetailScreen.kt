@@ -2,6 +2,7 @@ package com.budget.app
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -33,6 +35,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -175,7 +178,48 @@ fun TransactionDetailScreen(
     viewModel: TransactionsViewModel,
     onBack: () -> Unit,
 ) {
-  val txn = state.selectedTransaction ?: return
+  val txn = state.selectedTransaction
+  if (txn == null) {
+    Scaffold(
+        topBar = {
+          TopAppBar(
+              title = { Text("Transaction") },
+              navigationIcon = {
+                IconButton(onClick = onBack) {
+                  Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+              },
+              colors =
+                  TopAppBarDefaults.topAppBarColors(
+                      containerColor = MaterialTheme.colorScheme.surface,
+                  ),
+          )
+        },
+    ) { padding ->
+      Box(
+          modifier = Modifier.padding(padding).fillMaxSize(),
+          contentAlignment = Alignment.Center,
+      ) {
+        if (state.detailLoading) {
+          CircularProgressIndicator()
+        } else {
+          val error = state.error
+          if (error != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              Text(
+                  text = error,
+                  color = MaterialTheme.colorScheme.error,
+              )
+              Spacer(modifier = Modifier.height(12.dp))
+              TextButton(onClick = onBack) { Text("Go back") }
+            }
+          }
+        }
+      }
+    }
+    return
+  }
+
   var showPicker by remember { mutableStateOf(false) }
 
   val fields = buildDetailFields(txn)

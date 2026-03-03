@@ -32,6 +32,8 @@ data class TransactionsUiState(
     val categories: List<DisplayCategory> = emptyList(),
     /** The transaction currently open for category assignment. */
     val selectedTransaction: Transaction? = null,
+    /** True while fetching a single transaction for the detail screen. */
+    val detailLoading: Boolean = false,
     /** True while a categorize/uncategorize request is in flight. */
     val categorizing: Boolean = false,
     /** Search query for filtering the category picker. */
@@ -155,13 +157,15 @@ class TransactionsViewModel(
 
   /** Fetch a transaction by ID and select it for detail view. */
   fun selectTransactionById(id: String) {
-    _uiState.update { it.copy(loading = true, error = null) }
+    _uiState.update { it.copy(detailLoading = true, selectedTransaction = null, error = null) }
     viewModelScope.launch {
       try {
         val txn = fetcher.fetchTransaction(serverUrl, apiKey, id)
-        _uiState.update { it.copy(loading = false, selectedTransaction = txn, categorySearch = "") }
+        _uiState.update {
+          it.copy(detailLoading = false, selectedTransaction = txn, categorySearch = "")
+        }
       } catch (e: Exception) {
-        _uiState.update { it.copy(loading = false, error = e.message ?: "Unknown error") }
+        _uiState.update { it.copy(detailLoading = false, error = e.message ?: "Unknown error") }
       }
     }
   }
@@ -186,21 +190,13 @@ class TransactionsViewModel(
       try {
         val success = fetcher.categorize(serverUrl, apiKey, txn.id, categoryId)
         if (success) {
-          // Update the transaction in our local list
           _uiState.update { state ->
-            val updated =
-                state.transactions.map { t ->
-                  if (t.id == txn.id)
-                      t.copy(
-                          categoryId = categoryId,
-                          categoryMethod = CategoryMethod.MANUAL,
-                      )
-                  else t
-                }
-            // Remove from list since it's no longer uncategorized
+            val categorized =
+                txn.copy(categoryId = categoryId, categoryMethod = CategoryMethod.MANUAL)
+            val updated = state.transactions.map { t -> if (t.id == txn.id) categorized else t }
             state.copy(
                 categorizing = false,
-                selectedTransaction = null,
+                selectedTransaction = categorized,
                 transactions = updated.filter { it.categoryId == null },
                 total = (state.total - 1).coerceAtLeast(0),
             )

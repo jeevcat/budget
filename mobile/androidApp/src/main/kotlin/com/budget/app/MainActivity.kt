@@ -34,6 +34,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -60,6 +61,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object BudgetRoute
 
 @Serializable data object TransactionsRoute
+
+@Serializable data class TransactionDetailRoute(val transactionId: String)
 
 @Serializable data object CategoriesRoute
 
@@ -159,57 +162,65 @@ internal fun AppShell(config: ServerConfig, onLogout: () -> Unit) {
   val navBackStackEntry by navController.currentBackStackEntryAsState()
   val currentDestination = navBackStackEntry?.destination
 
+  val showShellChrome =
+      currentDestination?.hasRoute<TransactionDetailRoute>() != true &&
+          currentDestination?.hasRoute<CategoryEditRoute>() != true
+
   Scaffold(
       topBar = {
-        TopAppBar(
-            title = {
-              val title =
-                  when {
-                    currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
-                    currentDestination?.hasRoute<CategoriesRoute>() == true -> "Categories"
-                    else -> "Budget"
-                  }
-              Text(title)
-            },
-            colors =
-                TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            actions = {
-              IconButton(onClick = onLogout) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Logout,
-                    contentDescription = "Disconnect",
-                )
-              }
-            },
-        )
+        if (showShellChrome) {
+          TopAppBar(
+              title = {
+                val title =
+                    when {
+                      currentDestination?.hasRoute<TransactionsRoute>() == true -> "Transactions"
+                      currentDestination?.hasRoute<CategoriesRoute>() == true -> "Categories"
+                      else -> "Budget"
+                    }
+                Text(title)
+              },
+              colors =
+                  TopAppBarDefaults.topAppBarColors(
+                      containerColor = MaterialTheme.colorScheme.surface,
+                  ),
+              actions = {
+                IconButton(onClick = onLogout) {
+                  Icon(
+                      Icons.AutoMirrored.Filled.Logout,
+                      contentDescription = "Disconnect",
+                  )
+                }
+              },
+          )
+        }
       },
       bottomBar = {
-        NavigationBar {
-          topLevelRoutes.forEach { route ->
-            val selected = currentDestination?.hasRoute(route.route::class) == true
-            NavigationBarItem(
-                selected = selected,
-                onClick = {
-                  navController.navigate(route.route) {
-                    popUpTo(navController.graph.startDestinationId) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                  }
-                },
-                icon = {
-                  val icon = if (selected) route.selectedIcon else route.unselectedIcon
-                  if (route.route is TransactionsRoute && transactionsState.total > 0) {
-                    BadgedBox(badge = { Badge { Text("${transactionsState.total}") } }) {
+        if (showShellChrome) {
+          NavigationBar {
+            topLevelRoutes.forEach { route ->
+              val selected = currentDestination?.hasRoute(route.route::class) == true
+              NavigationBarItem(
+                  selected = selected,
+                  onClick = {
+                    navController.navigate(route.route) {
+                      popUpTo(navController.graph.startDestinationId) { saveState = true }
+                      launchSingleTop = true
+                      restoreState = true
+                    }
+                  },
+                  icon = {
+                    val icon = if (selected) route.selectedIcon else route.unselectedIcon
+                    if (route.route is TransactionsRoute && transactionsState.total > 0) {
+                      BadgedBox(badge = { Badge { Text("${transactionsState.total}") } }) {
+                        Icon(icon, contentDescription = route.label)
+                      }
+                    } else {
                       Icon(icon, contentDescription = route.label)
                     }
-                  } else {
-                    Icon(icon, contentDescription = route.label)
-                  }
-                },
-                label = { Text(route.label) },
-            )
+                  },
+                  label = { Text(route.label) },
+              )
+            }
           }
         }
       },
@@ -243,16 +254,30 @@ private fun AppNavHost(
       DashboardContent(
           viewModel = dashboardVm,
           onTransactionClick = { id ->
-            transactionsVm.selectTransactionById(id)
-            navController.navigate(TransactionsRoute) {
-              popUpTo(navController.graph.startDestinationId) { saveState = true }
-              launchSingleTop = true
-              restoreState = false
-            }
+            navController.navigate(TransactionDetailRoute(transactionId = id))
           },
       )
     }
-    composable<TransactionsRoute> { TransactionsScreen(viewModel = transactionsVm) }
+    composable<TransactionsRoute> {
+      TransactionsScreen(
+          viewModel = transactionsVm,
+          onTransactionClick = { id ->
+            navController.navigate(TransactionDetailRoute(transactionId = id))
+          },
+      )
+    }
+    composable<TransactionDetailRoute> { backStackEntry ->
+      val route = backStackEntry.toRoute<TransactionDetailRoute>()
+      val state by transactionsVm.uiState.collectAsStateWithLifecycle()
+      LaunchedEffect(route.transactionId) {
+        transactionsVm.selectTransactionById(route.transactionId)
+      }
+      TransactionDetailScreen(
+          state = state,
+          viewModel = transactionsVm,
+          onBack = { navController.popBackStack() },
+      )
+    }
     composable<CategoriesRoute> {
       CategoriesScreen(
           viewModel = categoriesVm,
