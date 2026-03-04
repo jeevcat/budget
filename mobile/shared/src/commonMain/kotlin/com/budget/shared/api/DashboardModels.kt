@@ -40,26 +40,29 @@ data class ChildCategoryInfo(
     @SerialName("category_name") val categoryName: String,
 )
 
-interface Summarizable {
-  val budgetAmount: Double
-  val spent: Double
-  val pace: PaceIndicator
-}
+@Serializable
+data class BudgetGroupSummary(
+    @SerialName("total_budget") val totalBudget: Double,
+    @SerialName("total_spent") val totalSpent: Double,
+    val remaining: Double,
+    @SerialName("over_budget_count") val overBudgetCount: Int,
+    @SerialName("bar_max") val barMax: Double,
+)
 
 @Serializable
 data class BudgetStatus(
     @SerialName("category_id") val categoryId: String,
     @SerialName("category_name") val categoryName: String,
-    @SerialName("budget_amount") override val budgetAmount: Double,
-    override val spent: Double,
+    @SerialName("budget_amount") val budgetAmount: Double,
+    val spent: Double,
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long? = null,
-    override val pace: PaceIndicator,
+    val pace: PaceIndicator,
     @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ChildCategoryInfo> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
-) : Summarizable
+)
 
 @Serializable
 data class ProjectChildSpending(
@@ -72,16 +75,16 @@ data class ProjectChildSpending(
 data class ProjectStatusEntry(
     @SerialName("category_id") val categoryId: String,
     @SerialName("category_name") val categoryName: String,
-    @SerialName("budget_amount") override val budgetAmount: Double,
-    override val spent: Double,
+    @SerialName("budget_amount") val budgetAmount: Double,
+    val spent: Double,
     val remaining: Double,
     @SerialName("time_left") val timeLeft: Long? = null,
-    override val pace: PaceIndicator,
+    val pace: PaceIndicator,
     @SerialName("pace_delta") val paceDelta: Double = 0.0,
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ProjectChildSpending> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
-) : Summarizable
+)
 
 @Serializable
 data class TransactionEntry(
@@ -98,6 +101,9 @@ data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
     val projects: List<ProjectStatusEntry> = emptyList(),
+    @SerialName("monthly_summary") val monthlySummary: BudgetGroupSummary,
+    @SerialName("annual_summary") val annualSummary: BudgetGroupSummary,
+    @SerialName("project_summary") val projectSummary: BudgetGroupSummary,
     @SerialName("monthly_transactions")
     val monthlyTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("annual_transactions") val annualTransactions: List<TransactionEntry> = emptyList(),

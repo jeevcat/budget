@@ -2,17 +2,15 @@ package com.budget.shared.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.budget.shared.api.BudgetGroupSummary
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
-import com.budget.shared.api.Summarizable
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.repository.BudgetRepository
 import com.budget.shared.repository.DashboardData
-import kotlin.math.abs
-import kotlin.math.max
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -164,7 +162,7 @@ class DashboardViewModel(
 
     val monthly = sortByUrgency(resp.statuses.filter { it.budgetMode == BudgetMode.MONTHLY })
     val annual = sortByUrgency(resp.statuses.filter { it.budgetMode == BudgetMode.ANNUAL })
-    val projects = sortByUrgency(resp.projects)
+    val projects = sortProjectsByUrgency(resp.projects)
 
     val monthlyTimeLabel =
         if (monthly.isNotEmpty()) {
@@ -187,9 +185,9 @@ class DashboardViewModel(
           monthlyStatuses = monthly,
           annualStatuses = annual,
           projects = projects,
-          monthlySummary = computeSummary(monthly),
-          annualSummary = computeSummary(annual),
-          projectSummary = computeSummary(projects),
+          monthlySummary = resp.monthlySummary.toUiSummary(),
+          annualSummary = resp.annualSummary.toUiSummary(),
+          projectSummary = resp.projectSummary.toUiSummary(),
           monthlyTransactions =
               (resp.monthlyTransactions + resp.unbudgetedTransactions).sortedByDescending { t ->
                 t.postedDate
@@ -218,14 +216,22 @@ class DashboardViewModel(
         PaceIndicator.PENDING -> 4
       }
 
-  private fun <T : Summarizable> sortByUrgency(items: List<T>): List<T> =
-      items.sortedWith(compareBy<T> { paceOrdinal(it.pace) }.thenByDescending { it.spent })
+  private fun sortByUrgency(items: List<BudgetStatus>): List<BudgetStatus> =
+      items.sortedWith(
+          compareBy<BudgetStatus> { paceOrdinal(it.pace) }.thenByDescending { it.spent }
+      )
 
-  private fun computeSummary(items: List<Summarizable>): BudgetSummary {
-    val budget = items.sumOf { it.budgetAmount }
-    val spent = items.sumOf { it.spent }
-    val overCount = items.count { it.pace == PaceIndicator.OVER_BUDGET }
-    val barMax = items.maxOfOrNull { max(abs(it.spent), it.budgetAmount) } ?: 1.0
-    return BudgetSummary(budget, spent, budget - spent, overCount, barMax)
-  }
+  private fun sortProjectsByUrgency(items: List<ProjectStatusEntry>): List<ProjectStatusEntry> =
+      items.sortedWith(
+          compareBy<ProjectStatusEntry> { paceOrdinal(it.pace) }.thenByDescending { it.spent }
+      )
 }
+
+private fun BudgetGroupSummary.toUiSummary() =
+    BudgetSummary(
+        totalBudget = totalBudget,
+        totalSpent = totalSpent,
+        totalRemaining = remaining,
+        overBudgetCount = overBudgetCount,
+        barMax = barMax,
+    )

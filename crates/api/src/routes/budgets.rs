@@ -13,7 +13,7 @@ use budget_core::budget::{
     filter_for_budget, filter_for_project, is_in_budget_month,
 };
 use budget_core::models::{
-    BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId,
+    BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId, PaceIndicator,
     ProjectChildSpending, Transaction,
 };
 
@@ -48,10 +48,22 @@ struct ProjectStatusEntry {
 }
 
 #[derive(Serialize)]
+struct BudgetGroupSummary {
+    total_budget: Decimal,
+    total_spent: Decimal,
+    remaining: Decimal,
+    over_budget_count: usize,
+    bar_max: Decimal,
+}
+
+#[derive(Serialize)]
 struct StatusResponse {
     month: BudgetMonth,
     statuses: Vec<StatusEntry>,
     projects: Vec<ProjectStatusEntry>,
+    monthly_summary: BudgetGroupSummary,
+    annual_summary: BudgetGroupSummary,
+    project_summary: BudgetGroupSummary,
     /// Transactions contributing to monthly budgets in the active month.
     monthly_transactions: Vec<Transaction>,
     /// Transactions contributing to annual budgets across the budget year.
@@ -222,6 +234,71 @@ fn classify_transactions(
     }
 }
 
+/// Compute deduplicated summary totals for a group of budget entries.
+///
+/// Excludes entries that are children of another entry in the list from the
+/// budget/spent totals (they're already reflected in their parent's figures).
+/// Over-budget count and bar scale include all entries.
+fn compute_group_summary(entries: &[&StatusEntry]) -> BudgetGroupSummary {
+    let child_ids: std::collections::HashSet<CategoryId> = entries
+        .iter()
+        .flat_map(|e| e.children.iter().map(|c| c.category_id))
+        .collect();
+
+    let mut total_budget = Decimal::ZERO;
+    let mut total_spent = Decimal::ZERO;
+    let mut over_budget_count = 0;
+    let mut bar_max = Decimal::ZERO;
+
+    for entry in entries {
+        let s = &entry.status;
+
+        if !child_ids.contains(&s.category_id) {
+            total_budget += s.budget_amount;
+            total_spent += s.spent;
+        }
+
+        if s.pace == PaceIndicator::OverBudget {
+            over_budget_count += 1;
+        }
+        bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
+    }
+
+    BudgetGroupSummary {
+        total_budget,
+        total_spent,
+        remaining: total_budget - total_spent,
+        over_budget_count,
+        bar_max,
+    }
+}
+
+/// Compute deduplicated summary totals for project entries.
+fn compute_project_group_summary(entries: &[ProjectStatusEntry]) -> BudgetGroupSummary {
+    let mut total_budget = Decimal::ZERO;
+    let mut total_spent = Decimal::ZERO;
+    let mut over_budget_count = 0;
+    let mut bar_max = Decimal::ZERO;
+
+    for entry in entries {
+        let s = &entry.status;
+        total_budget += s.budget_amount;
+        total_spent += s.spent;
+        if s.pace == PaceIndicator::OverBudget {
+            over_budget_count += 1;
+        }
+        bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
+    }
+
+    BudgetGroupSummary {
+        total_budget,
+        total_spent,
+        remaining: total_budget - total_spent,
+        over_budget_count,
+        bar_max,
+    }
+}
+
 /// Compute project statuses with per-child spending breakdowns.
 fn compute_projects(
     categories: &[Category],
@@ -357,10 +434,25 @@ async fn status(
         reference_date,
     );
 
+    let monthly_entries: Vec<&StatusEntry> = statuses
+        .iter()
+        .filter(|e| e.status.budget_mode == BudgetMode::Monthly)
+        .collect();
+    let annual_entries: Vec<&StatusEntry> = statuses
+        .iter()
+        .filter(|e| e.status.budget_mode == BudgetMode::Annual)
+        .collect();
+    let monthly_summary = compute_group_summary(&monthly_entries);
+    let annual_summary = compute_group_summary(&annual_entries);
+    let project_summary = compute_project_group_summary(&projects);
+
     Ok(Json(StatusResponse {
         month: month.clone(),
         statuses,
         projects,
+        monthly_summary,
+        annual_summary,
+        project_summary,
         monthly_transactions: classified.monthly,
         annual_transactions: classified.annual,
         project_transactions: classified.project,
@@ -379,4 +471,148 @@ async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMon
     let categories = state.db.list_categories().await?;
     let months = derive_months(&state, &categories).await?;
     Ok(Json(months))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn dec(v: i64) -> Decimal {
+        Decimal::from(v)
+    }
+
+    fn make_status(
+        id: u128,
+        name: &str,
+        budget: Decimal,
+        spent: Decimal,
+        pace: PaceIndicator,
+    ) -> BudgetStatus {
+        BudgetStatus {
+            category_id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
+            category_name: name.to_owned(),
+            budget_amount: budget,
+            spent,
+            remaining: budget - spent,
+            time_left: Some(10),
+            pace,
+            pace_delta: Decimal::ZERO,
+            budget_mode: BudgetMode::Monthly,
+        }
+    }
+
+    fn make_entry(status: BudgetStatus, children: Vec<ChildCategoryInfo>) -> StatusEntry {
+        let has_children = !children.is_empty();
+        StatusEntry {
+            status,
+            children,
+            has_children,
+        }
+    }
+
+    fn child_info(id: u128, name: &str) -> ChildCategoryInfo {
+        ChildCategoryInfo {
+            category_id: CategoryId::from_uuid(uuid::Uuid::from_u128(id)),
+            category_name: name.to_owned(),
+        }
+    }
+
+    #[test]
+    fn summary_excludes_child_budget_and_spent() {
+        // House ($5000 budget, $0 direct spent) has children Mortgage and Electricity.
+        // Mortgage ($4032 budget, $4032 spent) and Electricity ($350, $27) are separate entries.
+        // Summary should count House OR its children, not both.
+        let house = make_entry(
+            make_status(1, "House", dec(5000), dec(0), PaceIndicator::OnTrack),
+            vec![child_info(2, "Mortgage"), child_info(3, "Electricity")],
+        );
+        let mortgage = make_entry(
+            make_status(2, "Mortgage", dec(4032), dec(4032), PaceIndicator::OnTrack),
+            vec![],
+        );
+        let electricity = make_entry(
+            make_status(
+                3,
+                "Electricity",
+                dec(350),
+                dec(27),
+                PaceIndicator::UnderBudget,
+            ),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&house, &mortgage, &electricity];
+        let summary = compute_group_summary(&entries);
+
+        // Only House (root) counted: children excluded from budget/spent
+        assert_eq!(summary.total_budget, dec(5000));
+        assert_eq!(summary.total_spent, dec(0));
+        assert_eq!(summary.remaining, dec(5000));
+    }
+
+    #[test]
+    fn summary_counts_independent_roots() {
+        let food = make_entry(
+            make_status(1, "Food", dec(1000), dec(366), PaceIndicator::UnderBudget),
+            vec![],
+        );
+        let savings = make_entry(
+            make_status(2, "Savings", dec(1000), dec(0), PaceIndicator::OnTrack),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&food, &savings];
+        let summary = compute_group_summary(&entries);
+
+        assert_eq!(summary.total_budget, dec(2000));
+        assert_eq!(summary.total_spent, dec(366));
+        assert_eq!(summary.remaining, dec(1634));
+    }
+
+    #[test]
+    fn summary_over_budget_count_includes_all_entries() {
+        // Over-budget count should include children (they're separate budget targets)
+        let parent = make_entry(
+            make_status(1, "Food", dec(500), dec(600), PaceIndicator::OverBudget),
+            vec![child_info(2, "Dining")],
+        );
+        let child = make_entry(
+            make_status(2, "Dining", dec(100), dec(150), PaceIndicator::OverBudget),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&parent, &child];
+        let summary = compute_group_summary(&entries);
+
+        assert_eq!(summary.over_budget_count, 2);
+    }
+
+    #[test]
+    fn summary_bar_max_considers_all_entries() {
+        let parent = make_entry(
+            make_status(1, "House", dec(5000), dec(0), PaceIndicator::OnTrack),
+            vec![child_info(2, "Mortgage")],
+        );
+        let child = make_entry(
+            make_status(2, "Mortgage", dec(4032), dec(4032), PaceIndicator::OnTrack),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&parent, &child];
+        let summary = compute_group_summary(&entries);
+
+        // bar_max should be 5000 (House budget) even though it's a parent
+        assert_eq!(summary.bar_max, dec(5000));
+    }
+
+    #[test]
+    fn summary_empty_entries() {
+        let entries: Vec<&StatusEntry> = vec![];
+        let summary = compute_group_summary(&entries);
+
+        assert_eq!(summary.total_budget, dec(0));
+        assert_eq!(summary.total_spent, dec(0));
+        assert_eq!(summary.remaining, dec(0));
+        assert_eq!(summary.over_budget_count, 0);
+        assert_eq!(summary.bar_max, dec(0));
+    }
 }

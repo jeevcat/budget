@@ -572,39 +572,35 @@ function SpendBar({ items, maxVal, selectedCategoryId, onCategoryClick }) {
 
 function BudgetSection({
   items,
-  totalBudget,
-  totalSpent,
-  totalRemaining,
+  summary,
   barMax,
   selectedCategoryId,
   onCategoryClick,
 }) {
-  const overBudget = items.filter((s) => s.pace === "over_budget");
-
   return html`
     <div class="dash-totals">
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Total Budget</span>
-        <span class="dash-stat-value">${formatAmount(totalBudget, { decimals: 0 })}</span>
+        <span class="dash-stat-value">${formatAmount(summary.total_budget, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${formatAmount(totalSpent, { decimals: 0 })}</span>
+        <span class="dash-stat-value">${formatAmount(summary.total_spent, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Remaining</span>
         <span
-          class="dash-stat-value ${totalRemaining < 0 ? "dash-negative" : ""}"
+          class="dash-stat-value ${Number(summary.remaining) < 0 ? "dash-negative" : ""}"
         >
-          ${formatAmount(totalRemaining, { decimals: 0 })}
+          ${formatAmount(summary.remaining, { decimals: 0 })}
         </span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Categories</span>
         <span class="dash-stat-value">
           ${
-            overBudget.length > 0
-              ? html`<span class="badge danger">${overBudget.length}</span>
+            summary.over_budget_count > 0
+              ? html`<span class="badge danger">${summary.over_budget_count}</span>
                   over`
               : html`All on track`
           }
@@ -700,7 +696,7 @@ function ProjectDrillDown({
   onCategoryClick,
   onBack,
 }) {
-  const remaining = Number(project.budget_amount) - totalSpent;
+  const remaining = Number(project.remaining);
 
   return html`
     <div
@@ -916,25 +912,7 @@ function Dashboard() {
     .map(enrichStatus)
     .sort(byUrgency);
 
-  // Per-group totals helper
-  const groupTotals = (items) => {
-    const budget = items.reduce((sum, s) => sum + Number(s.budget_amount), 0);
-    const spent = items.reduce((sum, s) => sum + Number(s.spent), 0);
-    const remaining = budget - spent;
-    const barMax = Math.max(
-      ...items.map((s) =>
-        Math.max(Math.abs(Number(s.spent)), Number(s.budget_amount)),
-      ),
-      1,
-    );
-    return { budget, spent, remaining, barMax };
-  };
-
-  const mTotals = groupTotals(monthly);
-  const aTotals = groupTotals(annual);
-  const pTotals = groupTotals(projects);
-
-  // All pre-computed by the backend — no client-side budget logic
+  // Summaries pre-computed by the backend (deduplicated for parent/child overlap)
   const monthBudgetTxns = statusResp.monthly_transactions;
   const annualBudgetTxns = statusResp.annual_transactions;
   const projectBudgetTxns = statusResp.project_transactions;
@@ -1097,10 +1075,8 @@ function Dashboard() {
           monthly.length > 0
             ? html`<${BudgetSection}
               items=${monthly}
-              totalBudget=${mTotals.budget}
-              totalSpent=${mTotals.spent}
-              totalRemaining=${mTotals.remaining}
-              barMax=${mTotals.barMax}
+              summary=${statusResp.monthly_summary}
+              barMax=${Number(statusResp.monthly_summary.bar_max)}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
@@ -1132,10 +1108,8 @@ function Dashboard() {
           annual.length > 0
             ? html`<${BudgetSection}
               items=${annual}
-              totalBudget=${aTotals.budget}
-              totalSpent=${aTotals.spent}
-              totalRemaining=${aTotals.remaining}
-              barMax=${aTotals.barMax}
+              summary=${statusResp.annual_summary}
+              barMax=${Number(statusResp.annual_summary.bar_max)}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
@@ -1161,10 +1135,8 @@ function Dashboard() {
               />`
               : html`<${BudgetSection}
                 items=${projects}
-                totalBudget=${pTotals.budget}
-                totalSpent=${pTotals.spent}
-                totalRemaining=${pTotals.remaining}
-                barMax=${pTotals.barMax}
+                summary=${statusResp.project_summary}
+                barMax=${Number(statusResp.project_summary.bar_max)}
                 selectedCategoryId=${selectedCategoryId}
                 onCategoryClick=${handleProjectClick}
               />`

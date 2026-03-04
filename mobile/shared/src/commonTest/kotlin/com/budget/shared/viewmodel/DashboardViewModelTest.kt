@@ -1,5 +1,6 @@
 package com.budget.shared.viewmodel
 
+import com.budget.shared.api.BudgetGroupSummary
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
@@ -291,6 +292,14 @@ private fun makeDashboardData(
     add(BudgetMonth(id = monthId, startDate = "2026-02-28"))
     if (nextMonthId != null) add(BudgetMonth(id = nextMonthId, startDate = "2026-03-28"))
   }
+  val emptySummary =
+      BudgetGroupSummary(
+          totalBudget = 0.0,
+          totalSpent = 0.0,
+          remaining = 0.0,
+          overBudgetCount = 0,
+          barMax = 1.0,
+      )
   val status =
       StatusResponse(
           month = BudgetMonth(id = monthId, startDate = "2026-02-28"),
@@ -308,6 +317,16 @@ private fun makeDashboardData(
                       budgetMode = BudgetMode.MONTHLY,
                   ),
               ),
+          monthlySummary =
+              BudgetGroupSummary(
+                  totalBudget = 500.0,
+                  totalSpent = 250.0,
+                  remaining = 250.0,
+                  overBudgetCount = 0,
+                  barMax = 500.0,
+              ),
+          annualSummary = emptySummary,
+          projectSummary = emptySummary,
           monthlyTransactions =
               listOf(
                   TransactionEntry(
