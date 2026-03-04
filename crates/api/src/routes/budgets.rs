@@ -615,4 +615,71 @@ mod tests {
         assert_eq!(summary.over_budget_count, 0);
         assert_eq!(summary.bar_max, dec(0));
     }
+
+    #[test]
+    fn classify_includes_annual_txns_in_late_december_budget_month() {
+        use budget_core::models::{
+            BudgetConfig, BudgetMonth, BudgetMonthId, BudgetType, Category, CategoryName,
+            Transaction,
+        };
+        use chrono::NaiveDate;
+
+        let cat_id = CategoryId::from_uuid(uuid::Uuid::from_u128(1));
+        let insurance = Category {
+            id: cat_id,
+            name: CategoryName::new("Car Insurance").unwrap(),
+            parent_id: None,
+            budget: BudgetConfig::Annual {
+                amount: Decimal::from(3200),
+                budget_type: BudgetType::Fixed,
+            },
+        };
+        let categories = vec![insurance];
+
+        // Budget month starting Dec 30 covers all of January
+        let bm_dec = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: NaiveDate::from_ymd_opt(2025, 12, 30).unwrap(),
+            end_date: Some(NaiveDate::from_ymd_opt(2026, 1, 29).unwrap()),
+            salary_transactions_detected: 1,
+        };
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: NaiveDate::from_ymd_opt(2026, 1, 30).unwrap(),
+            end_date: Some(NaiveDate::from_ymd_opt(2026, 2, 26).unwrap()),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: NaiveDate::from_ymd_opt(2026, 2, 27).unwrap(),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm_dec.clone(), bm_jan.clone(), bm_feb.clone()];
+        let year_months = budget_core::budget::budget_year_months(&all_months, &bm_feb);
+
+        let txn = |d: (i32, u32, u32), amt: i64| -> Transaction {
+            Transaction {
+                category_id: Some(cat_id),
+                amount: Decimal::from(amt),
+                merchant_name: "Insurer".to_owned(),
+                posted_date: NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap(),
+                ..Default::default()
+            }
+        };
+
+        let transactions = vec![
+            txn((2026, 1, 2), -1208),
+            txn((2026, 1, 5), -1392),
+            txn((2026, 1, 15), -529),
+        ];
+
+        let classified = classify_transactions(&transactions, &categories, &bm_feb, &year_months);
+
+        assert_eq!(
+            classified.annual.len(),
+            3,
+            "all January transactions should appear in annual list even when their budget month starts in December"
+        );
+    }
 }

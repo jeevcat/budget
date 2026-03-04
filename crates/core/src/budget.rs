@@ -397,11 +397,17 @@ pub fn budget_year_months<'a>(
         .position(|bm| bm.id == reference_month.id)
         .unwrap_or(0);
 
-    // Walk backwards to find the January-anchored start
+    // Walk backwards to find the budget month that contains January 1st.
+    // Budget months don't align with calendar months (salary arrives mid-to-late
+    // month), so the month covering Jan 1 may start in late December.
+    let ref_year = reference_month.start_date.year();
+    let jan1 = NaiveDate::from_ymd_opt(ref_year, 1, 1).unwrap_or(reference_month.start_date);
     let mut year_start_idx = ref_idx;
     for i in (0..=ref_idx).rev() {
         year_start_idx = i;
-        if all_months[i].start_date.month() == 1 {
+        let bm = &all_months[i];
+        let contains_jan1 = bm.start_date <= jan1 && bm.end_date.is_none_or(|end| end >= jan1);
+        if contains_jan1 {
             break;
         }
     }
@@ -1173,24 +1179,26 @@ mod tests {
 
     #[test]
     fn budget_year_months_caps_at_twelve() {
-        // 14 months starting from November (no January anchor found before it)
+        // 14 contiguous budget months starting from Nov 2024, mid-month salary
         let months: Vec<BudgetMonth> = (0..14_u32)
             .map(|i| {
                 let y = i32::try_from(2024 + (10 + i) / 12).expect("year fits i32");
                 let m = ((10 + i) % 12) + 1;
+                let next_y = i32::try_from(2024 + (11 + i) / 12).expect("year fits i32");
+                let next_m = ((11 + i) % 12) + 1;
                 BudgetMonth {
                     id: BudgetMonthId::new(),
                     start_date: date(y, m, 15),
-                    end_date: Some(date(y, m, 28)),
+                    end_date: Some(date(next_y, next_m, 14)),
                     salary_transactions_detected: 1,
                 }
             })
             .collect();
 
-        // Reference = month index 5 (March 2025 — first January is at index 2)
+        // Reference = month index 5 (March 2025)
+        // Index 1 = Dec 15 2024 → Jan 14 2025 contains Jan 1 2025
         let year = budget_year_months(&months, &months[5]);
-        // Should start at index 2 (Jan 2025) and take up to 12 months
-        assert_eq!(year[0].start_date.month(), 1);
+        assert_eq!(year[0].start_date, date(2024, 12, 15));
         assert!(year.len() <= 12);
     }
 
@@ -2614,5 +2622,99 @@ mod tests {
         let json = serde_json::to_string(&bc).expect("serialize");
         let parsed: BudgetConfig = serde_json::from_str(&json).expect("deserialize");
         assert!(matches!(parsed, BudgetConfig::None));
+    }
+
+    /// Budget months don't align with calendar months — salary typically arrives
+    /// mid-to-late month, so a "January" budget month might start on Dec 30.
+    /// Annual budget year must include the budget month that *contains* Jan 1,
+    /// not just the one whose start_date falls in January.
+    #[test]
+    fn budget_year_includes_month_containing_january_first() {
+        // Real-world scenario: salary arrives late December, so the budget month
+        // that covers January starts on Dec 30.
+        let bm_dec = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 12, 30),
+            end_date: Some(date(2026, 1, 29)),
+            salary_transactions_detected: 1,
+        };
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2026, 1, 30),
+            end_date: Some(date(2026, 2, 26)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2026, 2, 27),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all = [bm_dec.clone(), bm_jan.clone(), bm_feb.clone()];
+
+        let year = budget_year_months(&all, &bm_feb);
+
+        // The Dec-30-started month covers all of January — it must be included
+        assert_eq!(
+            year[0].id, bm_dec.id,
+            "budget year should start at the month containing Jan 1, not the one starting Jan 30"
+        );
+        assert_eq!(year.len(), 3);
+    }
+
+    /// Annual spending must include transactions in the budget month that
+    /// contains Jan 1, even when that month starts in late December.
+    #[test]
+    fn annual_status_includes_spending_from_month_containing_january() {
+        let mut insurance = make_category(200, "Car Insurance", None);
+        insurance.budget = BudgetConfig::Annual {
+            amount: dec!(3200),
+            budget_type: BudgetType::Fixed,
+        };
+        let categories = vec![insurance.clone()];
+
+        // Budget months mirroring real data: salary arrives late month
+        let bm_dec = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 12, 30),
+            end_date: Some(date(2026, 1, 29)),
+            salary_transactions_detected: 1,
+        };
+        let bm_jan = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2026, 1, 30),
+            end_date: Some(date(2026, 2, 26)),
+            salary_transactions_detected: 1,
+        };
+        let bm_feb = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2026, 2, 27),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let all_months = [bm_dec.clone(), bm_jan.clone(), bm_feb.clone()];
+
+        // Insurance premiums paid in early January (inside bm_dec: Dec 30 → Jan 29)
+        let transactions = vec![
+            make_txn(Some(insurance.id), dec!(-1208), date(2026, 1, 2)),
+            make_txn(Some(insurance.id), dec!(-70), date(2026, 1, 2)),
+            make_txn(Some(insurance.id), dec!(-1392), date(2026, 1, 5)),
+            make_txn(Some(insurance.id), dec!(-529), date(2026, 1, 15)),
+        ];
+
+        let today = date(2026, 3, 4);
+        let status = compute_budget_status(
+            &insurance,
+            &transactions,
+            &bm_feb,
+            &all_months,
+            &categories,
+            today,
+        );
+
+        assert_eq!(status.budget_mode, BudgetMode::Annual);
+        // All four transactions should be counted: 1208 + 70 + 1392 + 529 = 3199
+        assert_eq!(status.spent, dec!(3199));
+        assert_eq!(status.remaining, dec!(1)); // 3200 - 3199
     }
 }
