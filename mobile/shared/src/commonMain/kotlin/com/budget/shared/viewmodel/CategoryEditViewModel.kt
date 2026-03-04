@@ -23,6 +23,7 @@ data class CategoryEditUiState(
     val projectStartDate: String = "",
     val projectEndDate: String = "",
     val availableParents: List<ParentOption> = emptyList(),
+    val hasChildren: Boolean = false,
     val saving: Boolean = false,
     val saved: Boolean = false,
     val error: String? = null,
@@ -57,6 +58,10 @@ class CategoryEditViewModel(
         )
       }
     }
+    val hasChildren =
+        editingCategory != null && allCategories.any { it.parentId == editingCategory.id }
+    _uiState.update { it.copy(hasChildren = hasChildren) }
+
     val currentParentId = editingCategory?.parentId
     val parents =
         allCategories

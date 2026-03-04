@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -41,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.budget.shared.api.BudgetMode
@@ -126,6 +128,12 @@ fun CategoryEditScreen(
               value = state.budgetAmount,
               onValueChange = viewModel::updateBudgetAmount,
               label = { Text("Budget amount") },
+              supportingText = {
+                if (state.hasChildren) {
+                  Text("Extra budget on top of children\u2019s budgets")
+                }
+              },
+              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
               singleLine = true,
               modifier = Modifier.fillMaxWidth(),
               enabled = !state.saving,
