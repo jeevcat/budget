@@ -260,7 +260,7 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
   val options =
       listOf(
           null to "None",
-          BudgetMode.MONTHLY to "Monthly",
+          BudgetMode.MONTHLY to "Month",
           BudgetMode.ANNUAL to "Annual",
           BudgetMode.PROJECT to "Project",
           BudgetMode.SALARY to "Salary",
