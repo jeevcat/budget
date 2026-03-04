@@ -177,7 +177,7 @@ private fun CategoryGroupCard(
     Column {
       // Root header row
       Row(
-          modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(16.dp),
+          modifier = Modifier.fillMaxWidth().clickable(onClick = { onCategoryClick(root.id) }).padding(16.dp),
           verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
@@ -201,6 +201,10 @@ private fun CategoryGroupCard(
               imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
               contentDescription = if (expanded) "Collapse" else "Expand",
               tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier
+                  .clip(CircleShape)
+                  .clickable(onClick = onToggle)
+                  .padding(4.dp),
           )
         }
       }
