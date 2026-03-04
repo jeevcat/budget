@@ -2302,11 +2302,21 @@ function Categories() {
               const children = group.slice(1);
               return html`
                 <details key=${root.id} open class="cat-group">
-                  <summary class="cat-group-summary clickable-row">
+                  <summary class="cat-group-summary clickable-row" onClick=${(e) => {
+                    e.preventDefault();
+                    startEdit(root);
+                  }}>
                     <span style="font-weight:600">${root.name}</span>
                     <span style="margin-left:auto" class="hstack gap-2" style="align-items:center">
                       ${modeDot(root.budget_mode)}
                       <span>${budgetBadge(root) ?? html`<span class="text-light">\u2014</span>`}</span>
+                      ${children.length > 0 && html`<span
+                        class="cat-group-toggle"
+                        onClick=${(e) => {
+                          e.stopPropagation();
+                          e.currentTarget.closest('details').toggleAttribute('open');
+                        }}
+                      >\u25BE</span>`}
                     </span>
                   </summary>
                   ${
