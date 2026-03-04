@@ -236,12 +236,20 @@ fn classify_transactions(
 
 /// Compute summary totals for a group of budget entries.
 ///
-/// Every entry is counted towards budget/spent totals. There is no
-/// parent-vs-child deduplication here because `compute_budget_status`
-/// (via `collect_budget_subtree`) already ensures a parent's `spent`
-/// excludes children that have their own budget — those children appear
-/// as independent entries with their own figures.
+/// A parent's `budget_amount` is an envelope covering its children, but
+/// `compute_budget_status` (via `collect_budget_subtree`) excludes
+/// budgeted children from the parent's `spent`. Therefore:
+///
+/// - **budget**: exclude children that appear as separate entries (the
+///   parent's budget already covers them).
+/// - **spent**: include every entry (children carry spending the parent
+///   does not).
 fn compute_group_summary(entries: &[&StatusEntry]) -> BudgetGroupSummary {
+    let child_ids: std::collections::HashSet<CategoryId> = entries
+        .iter()
+        .flat_map(|e| e.children.iter().map(|c| c.category_id))
+        .collect();
+
     let mut total_budget = Decimal::ZERO;
     let mut total_spent = Decimal::ZERO;
     let mut over_budget_count = 0;
@@ -249,7 +257,10 @@ fn compute_group_summary(entries: &[&StatusEntry]) -> BudgetGroupSummary {
 
     for entry in entries {
         let s = &entry.status;
-        total_budget += s.budget_amount;
+
+        if !child_ids.contains(&s.category_id) {
+            total_budget += s.budget_amount;
+        }
         total_spent += s.spent;
 
         if s.pace == PaceIndicator::OverBudget {
@@ -514,13 +525,12 @@ mod tests {
     fn summary_parent_with_budgeted_children() {
         // House ($5000 budget, $0 direct spent) has children Mortgage and Electricity.
         // Mortgage ($4032 budget, $4032 spent) and Electricity ($350, $27) are separate
-        // entries with their own budgets. The parent's `spent` does NOT roll up
-        // children that have their own budget (collect_budget_subtree skips them),
-        // so the summary must count each budgeted entry independently.
+        // entries with their own budgets.
         //
-        // Expected: total_budget = 5000 + 4032 + 350 = 9382 (would be double-count
-        // only if parent.spent included children — it doesn't).
-        // total_spent = 0 + 4032 + 27 = 4059
+        // The parent's budget_amount ($5000) is an envelope covering children,
+        // so children's budgets are excluded from the total to avoid inflation.
+        // But the parent's `spent` does NOT include children (collect_budget_subtree
+        // skips them), so children's spent must be counted.
         let house = make_entry(
             make_status(1, "House", dec(5000), dec(0), PaceIndicator::OnTrack),
             vec![child_info(2, "Mortgage"), child_info(3, "Electricity")],
@@ -543,11 +553,11 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&house, &mortgage, &electricity];
         let summary = compute_group_summary(&entries);
 
-        // All three are independent budget targets — parent does NOT roll up
-        // children with their own budgets, so all must be counted.
-        assert_eq!(summary.total_budget, dec(9382));
+        // Budget: only House (root); children excluded (covered by parent).
+        // Spent: all three (parent spent excludes children's transactions).
+        assert_eq!(summary.total_budget, dec(5000));
         assert_eq!(summary.total_spent, dec(4059));
-        assert_eq!(summary.remaining, dec(9382 - 4059));
+        assert_eq!(summary.remaining, dec(5000 - 4059));
     }
 
     #[test]
@@ -630,11 +640,11 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&house, &mortgage];
         let summary = compute_group_summary(&entries);
 
-        // Both House and Mortgage should be counted independently.
-        // House spent ($200) is only Maintenance; Mortgage is separate.
-        assert_eq!(summary.total_budget, dec(5000 + 4032));
-        assert_eq!(summary.total_spent, dec(200 + 4032));
-        assert_eq!(summary.remaining, dec(5000 + 4032 - 200 - 4032));
+        // Budget: only House (Mortgage excluded — covered by parent envelope).
+        // Spent: House ($200 from Maintenance) + Mortgage ($4032).
+        assert_eq!(summary.total_budget, dec(5000));
+        assert_eq!(summary.total_spent, dec(4232));
+        assert_eq!(summary.remaining, dec(5000 - 4232));
     }
 
     #[test]
@@ -665,14 +675,16 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&house, &utilities, &electricity];
         let summary = compute_group_summary(&entries);
 
-        assert_eq!(summary.total_budget, dec(5000 + 500 + 200));
-        assert_eq!(summary.total_spent, dec(100 + 50 + 180));
-        assert_eq!(summary.remaining, dec(5700 - 330));
+        // Budget: only House ($5000) — Utilities and Electricity are children.
+        // Spent: all three (100 + 50 + 180 = 330).
+        assert_eq!(summary.total_budget, dec(5000));
+        assert_eq!(summary.total_spent, dec(330));
+        assert_eq!(summary.remaining, dec(5000 - 330));
     }
 
     #[test]
     fn summary_single_budgeted_child() {
-        // Parent with exactly one budgeted child — simplest reproduction of the bug.
+        // Parent with exactly one budgeted child.
         let parent = make_entry(
             make_status(1, "Transport", dec(500), dec(0), PaceIndicator::OnTrack),
             vec![child_info(2, "Fuel")],
@@ -685,9 +697,57 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&parent, &child];
         let summary = compute_group_summary(&entries);
 
-        assert_eq!(summary.total_budget, dec(800));
+        // Budget: only Transport (envelope). Spent: both.
+        assert_eq!(summary.total_budget, dec(500));
         assert_eq!(summary.total_spent, dec(250));
-        assert_eq!(summary.remaining, dec(550));
+        assert_eq!(summary.remaining, dec(250));
+    }
+
+    #[test]
+    fn summary_children_spent_exceeds_parent_budget() {
+        // Children's combined spending exceeds the parent envelope.
+        let parent = make_entry(
+            make_status(1, "House", dec(5000), dec(0), PaceIndicator::OnTrack),
+            vec![child_info(2, "Mortgage"), child_info(3, "Reno")],
+        );
+        let mortgage = make_entry(
+            make_status(2, "Mortgage", dec(4032), dec(4032), PaceIndicator::OnTrack),
+            vec![],
+        );
+        let reno = make_entry(
+            make_status(3, "Reno", dec(2000), dec(1500), PaceIndicator::OnTrack),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&parent, &mortgage, &reno];
+        let summary = compute_group_summary(&entries);
+
+        // Budget: House only ($5000).  Spent: 0 + 4032 + 1500 = 5532.
+        assert_eq!(summary.total_budget, dec(5000));
+        assert_eq!(summary.total_spent, dec(5532));
+        assert_eq!(summary.remaining, dec(-532));
+    }
+
+    #[test]
+    fn summary_children_not_in_entries_are_not_excluded() {
+        // Children listed in children field but NOT present as entries
+        // (unbudgeted categories). Their IDs should not suppress anything.
+        let food = make_entry(
+            make_status(1, "Food", dec(1000), dec(600), PaceIndicator::UnderBudget),
+            vec![child_info(99, "Groceries"), child_info(100, "Coffee")],
+        );
+        let savings = make_entry(
+            make_status(2, "Savings", dec(500), dec(500), PaceIndicator::OnTrack),
+            vec![],
+        );
+
+        let entries: Vec<&StatusEntry> = vec![&food, &savings];
+        let summary = compute_group_summary(&entries);
+
+        // Neither Food nor Savings is a child of the other, so both count fully.
+        assert_eq!(summary.total_budget, dec(1500));
+        assert_eq!(summary.total_spent, dec(1100));
+        assert_eq!(summary.remaining, dec(400));
     }
 
     #[test]
@@ -717,7 +777,9 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&house, &mortgage, &food, &dining, &savings];
         let summary = compute_group_summary(&entries);
 
-        let expected_budget = 5000 + 4032 + 1000 + 200 + 500;
+        // Budget: House + Food + Savings (roots only; Mortgage and Dining excluded)
+        let expected_budget = 5000 + 1000 + 500;
+        // Spent: all five entries
         let expected_spent = 4032 + 100 + 180;
         assert_eq!(summary.total_budget, dec(expected_budget));
         assert_eq!(summary.total_spent, dec(expected_spent));
