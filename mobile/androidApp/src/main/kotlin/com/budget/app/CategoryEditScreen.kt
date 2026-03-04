@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,7 +17,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -27,6 +25,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -256,8 +257,9 @@ private fun ParentPickerSheet(
 @Composable
 private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  val modes =
+  val options =
       listOf(
+          null to "None",
           BudgetMode.MONTHLY to "Monthly",
           BudgetMode.ANNUAL to "Annual",
           BudgetMode.PROJECT to "Project",
@@ -271,19 +273,14 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      FilterChip(
-          selected = state.budgetMode == null,
-          onClick = { viewModel.updateBudgetMode(null) },
-          label = { Text("None") },
-          enabled = !state.saving,
-      )
-      for ((mode, label) in modes) {
-        FilterChip(
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+      options.forEachIndexed { index, (mode, label) ->
+        SegmentedButton(
             selected = state.budgetMode == mode,
-            onClick = { viewModel.updateBudgetMode(if (state.budgetMode == mode) null else mode) },
-            label = { Text(label) },
+            onClick = { viewModel.updateBudgetMode(mode) },
+            shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
             enabled = !state.saving,
+            label = { Text(label) },
         )
       }
     }
@@ -293,7 +290,7 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
 @Composable
 private fun BudgetTypeSelector(viewModel: CategoryEditViewModel) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  val types = listOf(BudgetType.VARIABLE to "Variable", BudgetType.FIXED to "Fixed")
+  val options = listOf(BudgetType.VARIABLE to "Variable", BudgetType.FIXED to "Fixed")
 
   Column {
     Text(
@@ -302,13 +299,14 @@ private fun BudgetTypeSelector(viewModel: CategoryEditViewModel) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      for ((type, label) in types) {
-        FilterChip(
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+      options.forEachIndexed { index, (type, label) ->
+        SegmentedButton(
             selected = state.budgetType == type,
             onClick = { viewModel.updateBudgetType(type) },
-            label = { Text(label) },
+            shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
             enabled = !state.saving,
+            label = { Text(label) },
         )
       }
     }
