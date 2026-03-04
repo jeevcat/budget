@@ -237,21 +237,17 @@ pub fn detect_budget_month_boundaries(
 /// Children that declare their own explicit budget mode different from
 /// `root_mode` are excluded (along with their subtrees), because they are
 /// tracked under a separate budget entry.
-fn collect_budget_subtree(
-    category_id: CategoryId,
-    root_mode: Option<BudgetMode>,
-    categories: &[Category],
-) -> Vec<CategoryId> {
+fn collect_budget_subtree(category_id: CategoryId, categories: &[Category]) -> Vec<CategoryId> {
     let mut result = vec![category_id];
     let mut stack = vec![category_id];
 
     while let Some(current) = stack.pop() {
         for cat in categories {
             if cat.parent_id == Some(current) {
-                // Skip children with their own different budget mode
-                if let Some(child_mode) = cat.budget.mode()
-                    && Some(child_mode) != root_mode
-                {
+                // Skip children that have their own explicit budget —
+                // they get a separate StatusEntry and tracking their
+                // spending here would double-count on the frontend.
+                if cat.budget.mode().is_some() {
                     continue;
                 }
                 result.push(cat.id);
@@ -298,11 +294,7 @@ pub fn compute_category_spending(
     budget_month: &BudgetMonth,
     categories: &[Category],
 ) -> Decimal {
-    let root_mode = categories
-        .iter()
-        .find(|c| c.id == category_id)
-        .and_then(|c| c.budget.mode());
-    let subtree = collect_budget_subtree(category_id, root_mode, categories);
+    let subtree = collect_budget_subtree(category_id, categories);
     let budget_txns = filter_for_budget(transactions, categories);
 
     compute_spending_for_subtree(&budget_txns, &subtree, budget_month)
@@ -470,8 +462,7 @@ fn compute_annual_status(
     let year_months = budget_year_months(all_months, current_month);
 
     // Pre-filter once, then sum across all months in the budget year
-    let root_mode = category.budget.mode();
-    let subtree = collect_budget_subtree(category.id, root_mode, categories);
+    let subtree = collect_budget_subtree(category.id, categories);
     let budget_txns = filter_for_budget(transactions, categories);
 
     let spent = year_months
@@ -1881,7 +1872,7 @@ mod tests {
         let child = make_category(11, "Child", Some(10)); // no mode → inherits
         let categories = vec![parent.clone(), child.clone()];
 
-        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(parent.id, &categories);
         assert!(subtree.contains(&parent.id));
         assert!(subtree.contains(&child.id));
     }
@@ -1906,7 +1897,7 @@ mod tests {
         };
         let categories = vec![parent.clone(), child.clone()];
 
-        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(parent.id, &categories);
         assert!(subtree.contains(&parent.id));
         assert!(!subtree.contains(&child.id));
     }
@@ -1934,13 +1925,15 @@ mod tests {
         let grandchild = make_category(12, "Grandchild", Some(11));
         let categories = vec![parent.clone(), child.clone(), grandchild.clone()];
 
-        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(parent.id, &categories);
         assert_eq!(subtree.len(), 1);
         assert!(subtree.contains(&parent.id));
     }
 
     #[test]
-    fn subtree_children_with_same_explicit_mode_included() {
+    fn subtree_children_with_same_explicit_mode_excluded() {
+        // Children with their own explicit budget (even same mode) are
+        // excluded — they get their own StatusEntry in the API response.
         let parent = {
             let mut c = make_category(10, "Parent", None);
             c.budget = BudgetConfig::Monthly {
@@ -1959,9 +1952,92 @@ mod tests {
         };
         let categories = vec![parent.clone(), child.clone()];
 
-        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(parent.id, &categories);
         assert!(subtree.contains(&parent.id));
-        assert!(subtree.contains(&child.id));
+        assert!(!subtree.contains(&child.id));
+    }
+
+    #[test]
+    fn parent_spending_excludes_child_with_own_budget_same_mode() {
+        // When a child has its own explicit budget (same mode as parent),
+        // the parent's spending should NOT include the child's transactions.
+        // Otherwise the frontend double-counts: parent.spent includes child
+        // spending, AND the child appears as a separate status entry.
+        let parent = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child_with_budget = {
+            let mut c = make_category(11, "Dining Out", Some(10));
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(100),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        // Child without its own budget — should still be included in parent
+        let child_no_budget = make_category(12, "Groceries", Some(10));
+
+        let categories = vec![
+            parent.clone(),
+            child_with_budget.clone(),
+            child_no_budget.clone(),
+        ];
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+
+        let transactions = vec![
+            make_txn(Some(parent.id), dec!(-20), date(2025, 1, 18)),
+            make_txn(Some(child_with_budget.id), dec!(-80), date(2025, 1, 20)),
+            make_txn(Some(child_no_budget.id), dec!(-50), date(2025, 1, 22)),
+        ];
+
+        let parent_spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
+        // Parent should include its own $20 + Groceries $50 (no budget) = $70
+        // but NOT Dining Out's $80 (has its own monthly budget)
+        assert_eq!(parent_spending, dec!(70));
+
+        let child_spending =
+            compute_category_spending(&transactions, child_with_budget.id, &bm, &categories);
+        // Child with its own budget tracks independently
+        assert_eq!(child_spending, dec!(80));
+    }
+
+    #[test]
+    fn subtree_excludes_child_with_own_budget_same_mode() {
+        // collect_budget_subtree should exclude children that have their
+        // own explicit budget, even when the mode matches the parent.
+        let parent = {
+            let mut c = make_category(10, "Parent", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = {
+            let mut c = make_category(11, "Child", Some(10));
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(200),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![parent.clone(), child.clone()];
+
+        let subtree = collect_budget_subtree(parent.id, &categories);
+        assert!(subtree.contains(&parent.id));
+        // Child has its own budget → should NOT be in parent's subtree
+        assert!(!subtree.contains(&child.id));
     }
 
     #[test]
@@ -1993,7 +2069,7 @@ mod tests {
         };
         let categories = vec![parent.clone(), c1, c2];
 
-        let subtree = collect_budget_subtree(parent.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(parent.id, &categories);
         assert_eq!(subtree, vec![parent.id]);
     }
 
@@ -2012,11 +2088,60 @@ mod tests {
         let grandchild = make_category(12, "Grandchild", Some(11));
         let categories = vec![root.clone(), child.clone(), grandchild.clone()];
 
-        let subtree = collect_budget_subtree(root.id, Some(BudgetMode::Monthly), &categories);
+        let subtree = collect_budget_subtree(root.id, &categories);
         assert_eq!(subtree.len(), 3);
         assert!(subtree.contains(&root.id));
         assert!(subtree.contains(&child.id));
         assert!(subtree.contains(&grandchild.id));
+    }
+
+    #[test]
+    fn subtree_grandchild_with_own_budget_excluded_but_inheriting_child_kept() {
+        // Food (Monthly) → Groceries (inherits) → Organic (Monthly $50)
+        // Groceries should be in Food's subtree; Organic should not.
+        let root = {
+            let mut c = make_category(10, "Food", None);
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(500),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let child = make_category(11, "Groceries", Some(10));
+        let grandchild = {
+            let mut c = make_category(12, "Organic", Some(11));
+            c.budget = BudgetConfig::Monthly {
+                amount: dec!(50),
+                budget_type: BudgetType::Variable,
+            };
+            c
+        };
+        let categories = vec![root.clone(), child.clone(), grandchild.clone()];
+
+        let subtree = collect_budget_subtree(root.id, &categories);
+        assert!(subtree.contains(&root.id));
+        assert!(subtree.contains(&child.id));
+        assert!(!subtree.contains(&grandchild.id));
+
+        let bm = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 1, 15),
+            end_date: Some(date(2025, 2, 13)),
+            salary_transactions_detected: 1,
+        };
+        let transactions = vec![
+            make_txn(Some(root.id), dec!(-10), date(2025, 1, 18)),
+            make_txn(Some(child.id), dec!(-40), date(2025, 1, 20)),
+            make_txn(Some(grandchild.id), dec!(-25), date(2025, 1, 22)),
+        ];
+
+        // Food includes itself ($10) + Groceries ($40), but not Organic ($25)
+        let root_spending = compute_category_spending(&transactions, root.id, &bm, &categories);
+        assert_eq!(root_spending, dec!(50));
+
+        // Organic tracks its own spending independently
+        let gc_spending = compute_category_spending(&transactions, grandchild.id, &bm, &categories);
+        assert_eq!(gc_spending, dec!(25));
     }
 
     // -----------------------------------------------------------------------

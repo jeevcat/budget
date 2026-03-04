@@ -2302,7 +2302,9 @@ function Categories() {
               const children = group.slice(1);
               return html`
                 <details key=${root.id} open class="cat-group">
-                  <summary class="cat-group-summary clickable-row" onClick=${(e) => {
+                  <summary class="cat-group-summary clickable-row" onClick=${(
+                    e,
+                  ) => {
                     e.preventDefault();
                     startEdit(root);
                   }}>
@@ -2310,13 +2312,18 @@ function Categories() {
                     <span style="margin-left:auto" class="hstack gap-2" style="align-items:center">
                       ${modeDot(root.budget_mode)}
                       <span>${budgetBadge(root) ?? html`<span class="text-light">\u2014</span>`}</span>
-                      ${children.length > 0 && html`<span
+                      ${
+                        children.length > 0 &&
+                        html`<span
                         class="cat-group-toggle"
                         onClick=${(e) => {
                           e.stopPropagation();
-                          e.currentTarget.closest('details').toggleAttribute('open');
+                          e.currentTarget
+                            .closest("details")
+                            .toggleAttribute("open");
                         }}
-                      >\u25BE</span>`}
+                      >\u25BE</span>`
+                      }
                     </span>
                   </summary>
                   ${
