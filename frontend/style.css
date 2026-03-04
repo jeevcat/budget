@@ -320,6 +320,16 @@ dialog > form > div {
 .dash-negative {
   color: var(--danger);
 }
+.dash-positive {
+  color: var(--success);
+}
+
+.dash-income-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
 
 .dash-grid {
   display: grid;

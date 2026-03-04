@@ -10,7 +10,7 @@ use uuid::Uuid;
 use budget_core::budget::{
     budget_year_months, collect_category_subtree, compute_budget_status,
     compute_project_child_breakdowns, detect_budget_month_boundaries, effective_budget_mode,
-    filter_for_budget, filter_for_project, is_in_budget_month,
+    filter_for_budget, filter_for_project, is_in_budget_month, salary_category_ids,
 };
 use budget_core::models::{
     BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId, PaceIndicator,
@@ -76,6 +76,10 @@ struct StatusResponse {
     unbudgeted_spent: Decimal,
     /// The budget year (calendar year of the January-anchored start).
     budget_year: i32,
+    /// Total income (positive salary-category transactions in the budget month).
+    total_income: Decimal,
+    /// Total spending across all budget modes in the budget month.
+    total_month_spending: Decimal,
 }
 
 /// Build the budgets sub-router.
@@ -135,6 +139,8 @@ struct ClassifiedTransactions {
     unbudgeted: Vec<Transaction>,
     unbudgeted_spent: Decimal,
     budget_year: i32,
+    total_income: Decimal,
+    total_month_spending: Decimal,
 }
 
 /// Classify transactions by budget mode and compute auxiliary dashboard data.
@@ -224,6 +230,30 @@ fn classify_transactions(
         |bm| chrono::Datelike::year(&bm.start_date),
     );
 
+    // Income: positive salary-category transactions in the budget month
+    let salary_cats = salary_category_ids(categories);
+    let total_income = transactions
+        .iter()
+        .filter(|t| {
+            t.category_id.is_some_and(|cid| salary_cats.contains(&cid))
+                && t.amount > Decimal::ZERO
+                && is_in_budget_month(t.posted_date, month)
+        })
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+
+    // Total month spending: budgeted (monthly) + project in-month + unbudgeted
+    let budgeted_month_spending = -budget_txns
+        .iter()
+        .filter(|t| is_in_budget_month(t.posted_date, month))
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+
+    let project_month_spending = -filter_for_project(transactions, categories)
+        .iter()
+        .filter(|t| is_in_budget_month(t.posted_date, month))
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+
+    let total_month_spending = budgeted_month_spending + project_month_spending + unbudgeted_spent;
+
     ClassifiedTransactions {
         monthly,
         annual,
@@ -231,6 +261,8 @@ fn classify_transactions(
         unbudgeted,
         unbudgeted_spent,
         budget_year,
+        total_income,
+        total_month_spending,
     }
 }
 
@@ -457,6 +489,8 @@ async fn status(
         unbudgeted_transactions: classified.unbudgeted,
         unbudgeted_spent: classified.unbudgeted_spent,
         budget_year: classified.budget_year,
+        total_income: classified.total_income,
+        total_month_spending: classified.total_month_spending,
     }))
 }
 
@@ -705,5 +739,74 @@ mod tests {
             3,
             "all January transactions should appear in annual list even when their budget month starts in December"
         );
+    }
+
+    #[test]
+    fn classify_computes_income_and_month_spending() {
+        use budget_core::models::{
+            BudgetConfig, BudgetMonth, BudgetMonthId, BudgetType, Category, CategoryName,
+            Transaction,
+        };
+        use chrono::NaiveDate;
+
+        let salary_id = CategoryId::from_uuid(uuid::Uuid::from_u128(10));
+        let food_id = CategoryId::from_uuid(uuid::Uuid::from_u128(20));
+
+        let salary_cat = Category {
+            id: salary_id,
+            name: CategoryName::new("Salary").unwrap(),
+            parent_id: None,
+            budget: BudgetConfig::Salary,
+        };
+        let food_cat = Category {
+            id: food_id,
+            name: CategoryName::new("Food").unwrap(),
+            parent_id: None,
+            budget: BudgetConfig::Monthly {
+                amount: Decimal::from(500),
+                budget_type: BudgetType::Variable,
+            },
+        };
+        let categories = vec![salary_cat, food_cat];
+
+        let month = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            end_date: Some(NaiveDate::from_ymd_opt(2026, 2, 28).unwrap()),
+            salary_transactions_detected: 1,
+        };
+        let year_months: Vec<&BudgetMonth> = vec![&month];
+
+        let txn = |cat: CategoryId, d: (i32, u32, u32), amt: i64| -> Transaction {
+            Transaction {
+                category_id: Some(cat),
+                amount: Decimal::from(amt),
+                merchant_name: "Test".to_owned(),
+                posted_date: NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap(),
+                ..Default::default()
+            }
+        };
+
+        let transactions = vec![
+            // Salary in-month (positive = income)
+            txn(salary_id, (2026, 2, 5), 3000),
+            txn(salary_id, (2026, 2, 20), 1500),
+            // Salary outside month (should be excluded)
+            txn(salary_id, (2026, 1, 15), 3000),
+            // Non-salary positive transaction (should not count as income)
+            txn(food_id, (2026, 2, 10), 50),
+            // Food spending in-month
+            txn(food_id, (2026, 2, 12), -200),
+            txn(food_id, (2026, 2, 18), -100),
+        ];
+
+        let classified = classify_transactions(&transactions, &categories, &month, &year_months);
+
+        // Income: only salary in-month positive transactions
+        assert_eq!(classified.total_income, dec(4500));
+
+        // Month spending: food transactions (-200 + -100 + 50 = -250, negated = 250)
+        // The +50 refund reduces net spending
+        assert_eq!(classified.total_month_spending, dec(250));
     }
 }

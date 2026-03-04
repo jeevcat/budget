@@ -208,6 +208,26 @@ private fun DashboardTabContent(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      if (state.totalIncome > 0) {
+        item {
+          Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            StatCard(
+                label = "Income",
+                value = formatAmount(state.totalIncome),
+                modifier = Modifier.weight(1f),
+            )
+            StatCard(
+                label = "Saved",
+                value = formatAmount(state.saved, showSign = true),
+                valueColor = if (state.saved < 0) OverBudgetColor else UnderBudgetColor,
+                modifier = Modifier.weight(1f),
+            )
+          }
+        }
+      }
       when (state.selectedTab) {
         BudgetMode.MONTHLY -> monthlyTabContent(state = state, viewModel = viewModel)
         BudgetMode.ANNUAL -> annualTabContent(state = state, viewModel = viewModel)

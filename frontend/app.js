@@ -1039,7 +1039,50 @@ function Dashboard() {
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
   })();
 
+  const totalIncome = Number(statusResp.total_income) || 0;
+  const totalMonthSpending = Number(statusResp.total_month_spending) || 0;
+  const saved = totalIncome - totalMonthSpending;
+
   return html`
+    <div class="hstack" style="margin-bottom:1.25rem">
+      <div class="hstack" style="gap:0.5rem;align-items:center">
+        <button
+          onClick=${goPrev}
+          disabled=${!hasPrev}
+          style="padding:0.25rem 0.5rem;font-size:1rem"
+          aria-label="Previous month"
+        >\u2039</button>
+        <div style="text-align:center">
+          <strong>${formatMonthRange(activeMonth)}</strong>
+          ${
+            isCurrentMonth
+              ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
+              : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
+          }
+        </div>
+        <button
+          onClick=${goNext}
+          disabled=${!hasNext}
+          style="padding:0.25rem 0.5rem;font-size:1rem"
+          aria-label="Next month"
+        >\u203A</button>
+      </div>
+    </div>
+    ${
+      totalIncome > 0 &&
+      html`
+      <div class="dash-income-summary">
+        <article class="card dash-stat-card">
+          <span class="dash-stat-label text-light">Income</span>
+          <span class="dash-stat-value">${formatAmount(totalIncome, { decimals: 0 })}</span>
+        </article>
+        <article class="card dash-stat-card">
+          <span class="dash-stat-label text-light">Saved</span>
+          <span class="dash-stat-value ${saved < 0 ? "dash-negative" : "dash-positive"}">${formatAmount(saved, { decimals: 0, sign: true })}</span>
+        </article>
+      </div>
+    `
+    }
     <ot-tabs ref=${tabsCallbackRef}>
       <div role="tablist">
         <button role="tab">Monthly</button>
@@ -1047,30 +1090,6 @@ function Dashboard() {
         ${hasProjects && html`<button role="tab">Projects</button>`}
       </div>
       <div role="tabpanel">
-        <div class="hstack" style="margin-bottom:1.25rem">
-          <div class="hstack" style="gap:0.5rem;align-items:center">
-            <button
-              onClick=${goPrev}
-              disabled=${!hasPrev}
-              style="padding:0.25rem 0.5rem;font-size:1rem"
-              aria-label="Previous month"
-            >\u2039</button>
-            <div style="text-align:center">
-              <strong>${formatMonthRange(activeMonth)}</strong>
-              ${
-                isCurrentMonth
-                  ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
-                  : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
-              }
-            </div>
-            <button
-              onClick=${goNext}
-              disabled=${!hasNext}
-              style="padding:0.25rem 0.5rem;font-size:1rem"
-              aria-label="Next month"
-            >\u203A</button>
-          </div>
-        </div>
         ${
           monthly.length > 0
             ? html`<${BudgetSection}

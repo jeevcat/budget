@@ -200,6 +200,17 @@ class DashboardViewModelTest {
   }
 
   @Test
+  fun savedIsIncomeMinusSpending() = runTest {
+    val data = makeDashboardData("month-1", totalIncome = 5000.0, totalMonthSpending = 3200.0)
+    val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
+    val vm = DashboardViewModel(repo)
+
+    val state = vm.uiState.value
+    assertEquals(5000.0, state.totalIncome)
+    assertEquals(1800.0, state.saved)
+  }
+
+  @Test
   fun unbudgetedSpentFlowsThroughToUiState() = runTest {
     val unbudgetedTxns =
         listOf(
@@ -286,6 +297,8 @@ private fun makeDashboardData(
     nextMonthId: String? = null,
     unbudgetedSpent: Double = 0.0,
     unbudgetedTransactions: List<TransactionEntry> = emptyList(),
+    totalIncome: Double = 0.0,
+    totalMonthSpending: Double = 0.0,
 ): DashboardData {
   val months = buildList {
     if (prevMonthId != null) add(BudgetMonth(id = prevMonthId, startDate = "2026-01-28"))
@@ -339,6 +352,8 @@ private fun makeDashboardData(
               ),
           unbudgetedSpent = unbudgetedSpent,
           unbudgetedTransactions = unbudgetedTransactions,
+          totalIncome = totalIncome,
+          totalMonthSpending = totalMonthSpending,
       )
   return DashboardData(status = status, months = months)
 }

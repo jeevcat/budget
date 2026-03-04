@@ -49,6 +49,8 @@ data class DashboardUiState(
     val isCurrentMonth: Boolean = false,
     val hasPrevMonth: Boolean = false,
     val hasNextMonth: Boolean = false,
+    val totalIncome: Double = 0.0,
+    val saved: Double = 0.0,
 )
 
 class DashboardViewModel(
@@ -203,6 +205,8 @@ class DashboardViewModel(
           isCurrentMonth = isCurrentMonth,
           hasPrevMonth = activeMonthIndex > 0,
           hasNextMonth = activeMonthIndex < sortedMonths.size - 1,
+          totalIncome = resp.totalIncome,
+          saved = resp.totalIncome - resp.totalMonthSpending,
       )
     }
   }

@@ -70,7 +70,8 @@ fn project_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
 /// Collect category IDs that belong to a salary-mode category (or whose
 /// ancestor is salary-mode). Used to exclude salary transactions from
 /// regular budget math and to discover salary categories by mode.
-fn salary_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
+#[must_use]
+pub fn salary_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
     let salary_roots: Vec<CategoryId> = categories
         .iter()
         .filter(|c| c.budget.mode() == Some(BudgetMode::Salary))
