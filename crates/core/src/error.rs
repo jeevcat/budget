@@ -34,4 +34,19 @@ pub enum Error {
 
     #[error("invalid category name: {0}")]
     InvalidCategoryName(String),
+
+    #[error("invalid currency code: {0}")]
+    InvalidCurrencyCode(String),
+
+    #[error("invalid IBAN: {0}")]
+    InvalidIban(String),
+
+    #[error("invalid BIC: {0}")]
+    InvalidBic(String),
+
+    #[error("invalid merchant category code: {0}")]
+    InvalidMerchantCategoryCode(String),
+
+    #[error("invalid exchange rate type: {0}")]
+    InvalidExchangeRateType(String),
 }

@@ -124,8 +124,8 @@ pub async fn handle_categorize_transaction_job(
         existing_categories: &existing_categories,
         bank_transaction_code: txn.bank_transaction_code.as_deref(),
         counterparty_name: txn.counterparty_name.as_deref(),
-        counterparty_iban: txn.counterparty_iban.as_deref(),
-        counterparty_bic: txn.counterparty_bic.as_deref(),
+        counterparty_iban: txn.counterparty_iban.as_ref().map(AsRef::as_ref),
+        counterparty_bic: txn.counterparty_bic.as_ref().map(AsRef::as_ref),
     };
 
     let result = llm.categorize(&input).await?;

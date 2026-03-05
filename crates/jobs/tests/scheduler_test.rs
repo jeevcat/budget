@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use budget_core::db::Db;
-use budget_core::models::{Account, AccountId, AccountType};
+use budget_core::models::{Account, AccountId, AccountType, CurrencyCode};
 use budget_jobs::schedule_queries::{self, RunStatus, ScheduleRun, TriggerReason};
 use budget_jobs::scheduler::scheduler_tick;
 use budget_jobs::{ApalisPool, PipelineStorage};
@@ -34,7 +34,7 @@ async fn seed_account(db: &Db, name: &str) -> Account {
         nickname: None,
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
-        currency: "USD".to_owned(),
+        currency: CurrencyCode::new("USD").unwrap(),
         connection_id: None,
     };
     db.upsert_account(&account).await.expect("seed account");

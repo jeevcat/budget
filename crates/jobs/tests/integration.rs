@@ -13,8 +13,8 @@ use sqlx::PgPool;
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Category, CategoryId, CategoryName, Connection, ConnectionId,
-    ConnectionStatus, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
-    Transaction,
+    ConnectionStatus, CorrelationType, CurrencyCode, MatchField, Rule, RuleCondition, RuleId,
+    RuleType, Transaction,
 };
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
@@ -58,7 +58,7 @@ async fn seed_checking_account(db: &Db) -> Account {
         nickname: None,
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
-        currency: "USD".to_owned(),
+        currency: CurrencyCode::new("USD").unwrap(),
         connection_id: None,
     };
     db.upsert_account(&account)
@@ -76,7 +76,7 @@ async fn seed_credit_card_account(db: &Db) -> Account {
         nickname: None,
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::CreditCard,
-        currency: "USD".to_owned(),
+        currency: CurrencyCode::new("USD").unwrap(),
         connection_id: None,
     };
     db.upsert_account(&account)
@@ -166,7 +166,7 @@ async fn seed_connected_account(db: &Db, connection_id: ConnectionId) -> Account
         nickname: None,
         institution: "Test Bank".to_owned(),
         account_type: AccountType::Checking,
-        currency: "EUR".to_owned(),
+        currency: CurrencyCode::new("EUR").unwrap(),
         connection_id: Some(connection_id),
     };
     db.upsert_account(&account)

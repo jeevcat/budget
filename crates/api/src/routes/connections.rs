@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::models::{
-    Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus,
+    Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
 };
 use budget_providers::{AspspEntry, EnableBankingAuth};
 
@@ -270,8 +270,9 @@ async fn callback(
             account_type: parse_cash_account_type(session_account.cash_account_type.as_deref()),
             currency: session_account
                 .currency
-                .clone()
-                .unwrap_or_else(|| "EUR".to_owned()),
+                .as_deref()
+                .and_then(|s| s.parse::<CurrencyCode>().ok())
+                .unwrap_or_else(|| CurrencyCode::new("EUR").expect("valid default")),
             connection_id: Some(connection_id),
         };
 

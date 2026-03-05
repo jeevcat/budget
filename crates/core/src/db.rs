@@ -7,8 +7,9 @@ use sqlx::{PgPool, Row};
 
 use crate::models::{
     Account, AccountId, AccountType, BudgetConfig, BudgetMode, BudgetType, Category, CategoryId,
-    CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation, CorrelationType, Rule,
-    RuleCondition, RuleId, RuleType, Transaction, TransactionId,
+    CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation, CorrelationType,
+    ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleId, RuleType, Transaction,
+    TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -137,10 +138,13 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         bank_transaction_code_sub_code: row.try_get("bank_transaction_code_sub_code")?,
         exchange_rate: row.try_get("exchange_rate")?,
         exchange_rate_unit_currency: row.try_get("exchange_rate_unit_currency")?,
-        exchange_rate_type: row.try_get("exchange_rate_type")?,
+        exchange_rate_type: parse_enum_opt::<ExchangeRateType>(row, "exchange_rate_type")?,
         exchange_rate_contract_id: row.try_get("exchange_rate_contract_id")?,
         reference_number: row.try_get("reference_number")?,
-        reference_number_schema: row.try_get("reference_number_schema")?,
+        reference_number_schema: {
+            let s: Option<String> = row.try_get("reference_number_schema")?;
+            s.map(|v| v.parse::<ReferenceNumberSchema>().expect("infallible"))
+        },
         note: row.try_get("note")?,
         balance_after_transaction: row.try_get("balance_after_transaction")?,
         balance_after_transaction_currency: row.try_get("balance_after_transaction_currency")?,
@@ -388,7 +392,7 @@ impl Db {
         .bind(txn.category_id)
         .bind(txn.amount)
         .bind(txn.original_amount)
-        .bind(txn.original_currency.as_deref())
+        .bind(txn.original_currency.as_ref().map(AsRef::<str>::as_ref))
         .bind(&txn.merchant_name)
         .bind(&txn.remittance_information)
         .bind(txn.posted_date)
@@ -397,22 +401,22 @@ impl Db {
         .bind(provider_transaction_id)
         .bind(txn.suggested_category.as_deref())
         .bind(txn.counterparty_name.as_deref())
-        .bind(txn.counterparty_iban.as_deref())
-        .bind(txn.counterparty_bic.as_deref())
+        .bind(txn.counterparty_iban.as_ref().map(AsRef::<str>::as_ref))
+        .bind(txn.counterparty_bic.as_ref().map(AsRef::<str>::as_ref))
         .bind(txn.bank_transaction_code.as_deref())
         .bind(txn.skip_correlation)
-        .bind(txn.merchant_category_code.as_deref())
+        .bind(txn.merchant_category_code.as_ref().map(AsRef::<str>::as_ref))
         .bind(txn.bank_transaction_code_code.as_deref())
         .bind(txn.bank_transaction_code_sub_code.as_deref())
         .bind(txn.exchange_rate.as_deref())
-        .bind(txn.exchange_rate_unit_currency.as_deref())
-        .bind(txn.exchange_rate_type.as_deref())
+        .bind(txn.exchange_rate_unit_currency.as_ref().map(AsRef::<str>::as_ref))
+        .bind(txn.exchange_rate_type.as_ref().map(ToString::to_string))
         .bind(txn.exchange_rate_contract_id.as_deref())
         .bind(txn.reference_number.as_deref())
-        .bind(txn.reference_number_schema.as_deref())
+        .bind(txn.reference_number_schema.as_ref().map(ToString::to_string))
         .bind(txn.note.as_deref())
         .bind(txn.balance_after_transaction)
-        .bind(txn.balance_after_transaction_currency.as_deref())
+        .bind(txn.balance_after_transaction_currency.as_ref().map(AsRef::<str>::as_ref))
         .bind(&txn.creditor_account_additional_id)
         .bind(&txn.debtor_account_additional_id)
         .execute(pool)
@@ -1502,8 +1506,8 @@ mod tests {
 
     use crate::models::{
         Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CategoryName,
-        CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType, Transaction,
-        TransactionId,
+        CorrelationType, CurrencyCode, MatchField, Rule, RuleCondition, RuleId, RuleType,
+        Transaction, TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -1522,7 +1526,7 @@ mod tests {
             nickname: None,
             institution: "Test Bank".into(),
             account_type: AccountType::Checking,
-            currency: "EUR".into(),
+            currency: CurrencyCode::new("EUR").unwrap(),
             connection_id: None,
         }
     }

@@ -289,8 +289,8 @@ async fn generate_rule(
         sibling_merchants,
         existing_rule_patterns,
         counterparty_name: txn.counterparty_name,
-        counterparty_iban: txn.counterparty_iban,
-        counterparty_bic: txn.counterparty_bic,
+        counterparty_iban: txn.counterparty_iban.map(|v| v.to_string()),
+        counterparty_bic: txn.counterparty_bic.map(|v| v.to_string()),
         bank_transaction_code: txn.bank_transaction_code,
     };
 

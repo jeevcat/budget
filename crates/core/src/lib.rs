@@ -12,13 +12,15 @@ pub mod error;
 pub mod models;
 pub mod rules;
 
+use models::CurrencyCode;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub database_url: String,
     pub llm_model: String,
     pub gemini_api_key: Option<String>,
     pub bank_provider: String,
-    pub budget_currency: String,
+    pub budget_currency: CurrencyCode,
     pub expected_salary_count: u32,
     pub secret_key: String,
     pub server_port: u16,
@@ -39,7 +41,7 @@ impl Default for Config {
             llm_model: "gemini-2.5-flash-lite".to_owned(),
             gemini_api_key: None,
             bank_provider: "mock".to_owned(),
-            budget_currency: "USD".to_owned(),
+            budget_currency: CurrencyCode::new("USD").expect("valid default currency"),
             expected_salary_count: 1,
             secret_key: String::new(),
             server_port: 3000,

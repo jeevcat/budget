@@ -4,7 +4,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use budget_core::models::{Account, AccountId, AccountType};
+use budget_core::models::{Account, AccountId, AccountType, CurrencyCode};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -21,7 +21,7 @@ pub struct CreateAccount {
     /// Account type (parsed from `snake_case` at deserialization).
     pub account_type: AccountType,
     /// ISO 4217 currency code.
-    pub currency: String,
+    pub currency: CurrencyCode,
 }
 
 /// Build the accounts sub-router.

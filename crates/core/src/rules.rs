@@ -151,11 +151,11 @@ fn matches_condition(transaction: &Transaction, condition: &CompiledCondition) -
         (CompiledPattern::Regex(regex), MatchField::CounterpartyIban) => transaction
             .counterparty_iban
             .as_ref()
-            .is_some_and(|v| regex.is_match(v)),
+            .is_some_and(|v| regex.is_match(v.as_ref())),
         (CompiledPattern::Regex(regex), MatchField::CounterpartyBic) => transaction
             .counterparty_bic
             .as_ref()
-            .is_some_and(|v| regex.is_match(v)),
+            .is_some_and(|v| regex.is_match(v.as_ref())),
         (CompiledPattern::Regex(regex), MatchField::BankTransactionCode) => transaction
             .bank_transaction_code
             .as_ref()
@@ -645,7 +645,7 @@ mod tests {
         let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(50.00));
-        txn.counterparty_iban = Some("FI1234567890".to_owned());
+        txn.counterparty_iban = Some(crate::models::Iban::new("FI1234567890").unwrap());
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
 
         let txn_none = make_txn("Any", "desc", dec!(50.00));
@@ -665,7 +665,7 @@ mod tests {
         let compiled = vec![compile_rule(&rule).unwrap()];
 
         let mut txn = make_txn("Any", "desc", dec!(50.00));
-        txn.counterparty_bic = Some("NDEAFIHH".to_owned());
+        txn.counterparty_bic = Some(crate::models::Bic::new("NDEAFIHH").unwrap());
         assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
     }
 

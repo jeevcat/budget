@@ -9,6 +9,9 @@ use super::enums::{
     MatchField, PaceIndicator, RuleType,
 };
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
+use super::newtypes::{
+    Bic, CurrencyCode, ExchangeRateType, Iban, MerchantCategoryCode, ReferenceNumberSchema,
+};
 use crate::error::Error;
 
 // ---------------------------------------------------------------------------
@@ -304,7 +307,7 @@ pub struct Account {
     pub nickname: Option<String>,
     pub institution: String,
     pub account_type: AccountType,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub connection_id: Option<ConnectionId>,
 }
 
@@ -386,7 +389,7 @@ pub struct Transaction {
     pub category_id: Option<CategoryId>,
     pub amount: Decimal,
     pub original_amount: Option<Decimal>,
-    pub original_currency: Option<String>,
+    pub original_currency: Option<CurrencyCode>,
     pub merchant_name: String,
     /// Array of free-text payment detail lines from the bank.
     /// May contain "Key: Value" pairs, reference numbers, or plain text.
@@ -400,8 +403,8 @@ pub struct Transaction {
     pub category_method: Option<CategoryMethod>,
     pub suggested_category: Option<String>,
     pub counterparty_name: Option<String>,
-    pub counterparty_iban: Option<String>,
-    pub counterparty_bic: Option<String>,
+    pub counterparty_iban: Option<Iban>,
+    pub counterparty_bic: Option<Bic>,
     /// Human-readable bank transaction label (e.g. "Gehalt/Rente"). Bank-specific, not standardized.
     /// Source: Enable Banking `bank_transaction_code.description`
     pub bank_transaction_code: Option<String>,
@@ -409,7 +412,7 @@ pub struct Transaction {
     pub skip_correlation: bool,
     /// ISO 18245 MCC code (e.g. "5411" = grocery). Only present for card transactions.
     /// Source: Enable Banking `merchant_category_code`
-    pub merchant_category_code: Option<String>,
+    pub merchant_category_code: Option<MerchantCategoryCode>,
     /// ISO 20022 domain code (e.g. "PMNT" for payments).
     /// Source: Enable Banking `bank_transaction_code.code`
     pub bank_transaction_code_code: Option<String>,
@@ -421,10 +424,10 @@ pub struct Transaction {
     pub exchange_rate: Option<String>,
     /// ISO 4217 currency code in which the exchange rate is expressed.
     /// Source: Enable Banking `exchange_rate.unit_currency`
-    pub exchange_rate_unit_currency: Option<String>,
+    pub exchange_rate_unit_currency: Option<CurrencyCode>,
     /// FX rate type: AGRD (agreed/contract), SALE, or SPOT.
     /// Source: Enable Banking `exchange_rate.rate_type`
-    pub exchange_rate_type: Option<String>,
+    pub exchange_rate_type: Option<ExchangeRateType>,
     /// FX contract reference when `rate_type` is AGRD (agreed).
     /// Source: Enable Banking `exchange_rate.contract_identification`
     pub exchange_rate_contract_id: Option<String>,
@@ -433,7 +436,7 @@ pub struct Transaction {
     pub reference_number: Option<String>,
     /// Scheme of the reference number: BERF, FIRF, INTL, NORF, SDDM, SEBG.
     /// Source: Enable Banking `reference_number_schema`
-    pub reference_number_schema: Option<String>,
+    pub reference_number_schema: Option<ReferenceNumberSchema>,
     /// Internal note made by PSU (Payment Service User), distinct from remittance info.
     /// Source: Enable Banking `note`
     pub note: Option<String>,
@@ -442,7 +445,7 @@ pub struct Transaction {
     pub balance_after_transaction: Option<Decimal>,
     /// Currency of the balance after transaction (usually same as account currency).
     /// Source: Enable Banking `balance_after_transaction.currency`
-    pub balance_after_transaction_currency: Option<String>,
+    pub balance_after_transaction_currency: Option<CurrencyCode>,
     /// Non-IBAN creditor account IDs: JSONB array of `{identification, scheme_name, issuer}`.
     /// Source: Enable Banking `creditor_account_additional_identification`
     pub creditor_account_additional_id: Option<serde_json::Value>,
