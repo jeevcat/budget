@@ -514,7 +514,7 @@ pub struct BudgetMonth {
     pub id: BudgetMonthId,
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
-    pub salary_transactions_detected: i32,
+    pub salary_transactions_detected: u32,
 }
 
 impl Category {

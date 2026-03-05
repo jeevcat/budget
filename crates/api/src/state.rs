@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use budget_core::db::Db;
@@ -31,7 +32,7 @@ pub struct AppState {
     /// LLM provider for rule generation.
     pub llm: LlmClient,
     /// Expected number of salary transactions per month for budget boundary detection.
-    pub expected_salary_count: u32,
+    pub expected_salary_count: NonZeroU32,
     /// Public base URL (e.g. `https://budget.example.com`). Derived from
     /// `server_port` when not explicitly configured.
     pub host: String,

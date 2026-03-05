@@ -3,6 +3,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 
 use crate::error::Error;
 use crate::models::{
@@ -174,7 +175,7 @@ pub fn filter_for_budget<'a>(
 /// Returns `Error::NoSalaryCategory` if no salary-mode category exists.
 pub fn detect_budget_month_boundaries(
     transactions: &[Transaction],
-    expected_salary_count: u32,
+    expected_salary_count: NonZeroU32,
     categories: &[Category],
 ) -> Result<Vec<BudgetMonth>, Error> {
     let salary_cat_ids: Vec<CategoryId> = salary_category_ids(categories).into_iter().collect();
@@ -209,10 +210,10 @@ pub fn detect_budget_month_boundaries(
     let mut budget_months: Vec<BudgetMonth> = Vec::new();
 
     for dates in by_month.values() {
-        if dates.len() >= expected_salary_count as usize
+        if dates.len() >= usize::try_from(expected_salary_count.get()).unwrap_or(usize::MAX)
             && let Some(&first_salary_date) = dates.iter().min()
         {
-            let detected: i32 = dates.len().try_into().unwrap_or(i32::MAX);
+            let detected: u32 = dates.len().try_into().unwrap_or(u32::MAX);
             budget_months.push(BudgetMonth {
                 id: deterministic_month_id(first_salary_date),
                 start_date: first_salary_date,
@@ -732,6 +733,10 @@ mod tests {
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
+    fn nz(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).expect("non-zero test value")
+    }
+
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).expect("valid test date")
     }
@@ -815,7 +820,7 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 3, 15)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 3);
@@ -840,7 +845,7 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 2, 24)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
@@ -862,7 +867,7 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 25)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
@@ -888,7 +893,7 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(-1000), date(2026, 1, 2)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
             .expect("should detect 3 months");
 
         assert_eq!(months.len(), 3);
@@ -904,7 +909,7 @@ mod tests {
 
     #[test]
     fn no_salary_category_returns_error() {
-        let result = detect_budget_month_boundaries(&[], 1, &[]);
+        let result = detect_budget_month_boundaries(&[], nz(1), &[]);
         assert!(result.is_err());
     }
 
@@ -934,7 +939,7 @@ mod tests {
             make_txn(Some(sal_id), dec!(1721), date(2026, 1, 30)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 3, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
@@ -964,7 +969,7 @@ mod tests {
             make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 4, 19)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
             .expect("should detect months");
 
         assert_eq!(months[0].start_date, date(2025, 3, 5));
@@ -982,7 +987,7 @@ mod tests {
         ];
 
         // expected_salary_count = 1, so only the positive one counts
-        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 1);
@@ -1008,7 +1013,7 @@ mod tests {
             make_txn(Some(sal_id), dec!(1000), date(2025, 6, 1)),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, 3, &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 1);

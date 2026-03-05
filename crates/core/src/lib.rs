@@ -4,6 +4,8 @@
 //! It defines the shared vocabulary (models, IDs, enums) and persistence layer
 //! used by all other crates.
 
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 
 pub mod budget;
@@ -21,7 +23,7 @@ pub struct Config {
     pub gemini_api_key: Option<String>,
     pub bank_provider: String,
     pub budget_currency: CurrencyCode,
-    pub expected_salary_count: u32,
+    pub expected_salary_count: NonZeroU32,
     pub secret_key: String,
     pub server_port: u16,
     pub enable_banking_app_id: Option<String>,
@@ -42,7 +44,7 @@ impl Default for Config {
             gemini_api_key: None,
             bank_provider: "mock".to_owned(),
             budget_currency: CurrencyCode::new("USD").expect("valid default currency"),
-            expected_salary_count: 1,
+            expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
             secret_key: String::new(),
             server_port: 3000,
             enable_banking_app_id: None,

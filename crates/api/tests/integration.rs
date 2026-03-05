@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -51,7 +53,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         apalis_pool: pool,
         enable_banking_auth: None,
         llm: LlmClient::new(MockLlmProvider::new()),
-        expected_salary_count: 1,
+        expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
         host: "http://localhost:3000".to_owned(),
     };
 
