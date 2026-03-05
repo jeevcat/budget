@@ -15,7 +15,7 @@ use budget_jobs::{JobStorage, PipelineStorage};
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    CurrencyCode, Priority, Rule, RuleCondition, Transaction,
+    CurrencyCode, Priority, Rule, RuleCondition, SecretKey, Transaction,
 };
 
 /// Mirror of the paginated response from `GET /api/transactions`.
@@ -45,7 +45,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
 
     let state = AppState {
         db: db.clone(),
-        secret_key: TEST_SECRET.to_owned(),
+        secret_key: SecretKey::new(TEST_SECRET).expect("valid test secret"),
         sync_storage: JobStorage::new(&pool),
         categorize_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),

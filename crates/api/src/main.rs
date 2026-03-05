@@ -10,6 +10,7 @@ use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
 use budget_core::db::Db;
+use budget_core::models::Host;
 use budget_jobs::{ApalisPool, BankProviderFactory, JobStorage, PipelineStorage};
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, MockBankProvider,
@@ -34,8 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing(&config);
     tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
 
-    let db = Db::connect(&config.database_url).await?;
-    let apalis_pool = ApalisPool::connect(&config.database_url).await?;
+    let db = Db::connect(config.database_url.as_ref()).await?;
+    let apalis_pool = ApalisPool::connect(config.database_url.as_ref()).await?;
 
     run_migrations(&db, &apalis_pool).await?;
     tracing::info!("migrations applied");
@@ -58,9 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // clone() justified: LlmClient wraps an Arc, workers also need their own handle
         llm: llm.clone(),
         expected_salary_count: config.expected_salary_count,
-        host: config
-            .host
-            .unwrap_or_else(|| format!("http://localhost:{}", config.server_port)),
+        host: config.host.map_or_else(
+            || format!("http://localhost:{}", config.server_port),
+            String::from,
+        ),
     };
 
     let frontend_dir = config.frontend_dir.map_or_else(
@@ -102,9 +104,9 @@ fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             match budget_core::load_config() {
                 Ok(config) => {
-                    let host = config.host.as_deref().map_or_else(
+                    let host = config.host.as_ref().map_or_else(
                         || format!("http://localhost:{} (default)", config.server_port),
-                        str::to_owned,
+                        Host::to_string,
                     );
                     println!("host:     {host}");
                     println!(

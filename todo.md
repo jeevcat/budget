@@ -1,13 +1,5 @@
 # Parse Don't Validate — Remaining Opportunities
 
-## Config Validation
-
-### Config struct (`core/src/lib.rs`)
-- `database_url: String` → could validate as URL at load time
-- `bank_provider: String` → enum of supported providers
-- `secret_key: String` → minimum length enforcement
-- `host: Option<String>` → URL newtype
-
 ## Related Option Fields → Enums
 
 ### NicknameUpdate

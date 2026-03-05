@@ -61,4 +61,13 @@ pub enum Error {
 
     #[error("invalid valid_days: {0} (must be 1–365)")]
     InvalidValidDays(u32),
+
+    #[error("invalid database URL: {0} (must start with postgresql:// or postgres://)")]
+    InvalidDatabaseUrl(String),
+
+    #[error("invalid secret key (must be empty or at least 8 characters)")]
+    InvalidSecretKey,
+
+    #[error("invalid host: {0} (must start with http:// or https://)")]
+    InvalidHost(String),
 }

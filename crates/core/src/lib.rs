@@ -14,24 +14,23 @@ pub mod error;
 pub mod models;
 pub mod rules;
 
-use models::CurrencyCode;
+use models::{CurrencyCode, DatabaseUrl, Host, SecretKey};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
-    pub database_url: String,
+    pub database_url: DatabaseUrl,
     pub llm_model: String,
     pub gemini_api_key: Option<String>,
-    pub bank_provider: String,
     pub budget_currency: CurrencyCode,
     pub expected_salary_count: NonZeroU32,
-    pub secret_key: String,
+    pub secret_key: SecretKey,
     pub server_port: u16,
     pub enable_banking_app_id: Option<String>,
     pub enable_banking_private_key_path: Option<String>,
     /// Sandbox credentials for live tests (overrides the main fields in tests).
     pub enable_banking_sandbox_app_id: Option<String>,
     pub enable_banking_sandbox_private_key_path: Option<String>,
-    pub host: Option<String>,
+    pub host: Option<Host>,
     pub log_path: Option<String>,
     pub frontend_dir: Option<String>,
 }
@@ -39,13 +38,13 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            database_url: "postgresql://budget@localhost:5432/budget".to_owned(),
+            database_url: DatabaseUrl::new("postgresql://budget@localhost:5432/budget")
+                .expect("valid default database URL"),
             llm_model: "gemini-2.5-flash-lite".to_owned(),
             gemini_api_key: None,
-            bank_provider: "mock".to_owned(),
             budget_currency: CurrencyCode::new("USD").expect("valid default currency"),
             expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
-            secret_key: String::new(),
+            secret_key: SecretKey::empty(),
             server_port: 3000,
             enable_banking_app_id: None,
             enable_banking_private_key_path: None,

@@ -646,6 +646,181 @@ impl<'de> Deserialize<'de> for ValidDays {
 }
 
 // ---------------------------------------------------------------------------
+// DatabaseUrl — PostgreSQL connection string
+// ---------------------------------------------------------------------------
+
+/// A validated `PostgreSQL` connection URL.
+///
+/// Invariants:
+/// - Non-empty
+/// - Starts with `postgresql://` or `postgres://`
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct DatabaseUrl(String);
+
+impl DatabaseUrl {
+    /// Create a new `DatabaseUrl`, validating the scheme prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidDatabaseUrl`] if the value does not start with
+    /// `postgresql://` or `postgres://`.
+    pub fn new(s: impl Into<String>) -> Result<Self, Error> {
+        let s = s.into();
+        if !s.starts_with("postgresql://") && !s.starts_with("postgres://") {
+            return Err(Error::InvalidDatabaseUrl(s));
+        }
+        Ok(Self(s))
+    }
+}
+
+impl fmt::Display for DatabaseUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for DatabaseUrl {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for DatabaseUrl {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for DatabaseUrl {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SecretKey — API authentication token
+// ---------------------------------------------------------------------------
+
+/// A validated API secret key.
+///
+/// Invariants:
+/// - Empty (development/unconfigured) OR at least 8 characters
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SecretKey(String);
+
+impl SecretKey {
+    /// Create a new `SecretKey`, validating minimum length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidSecretKey`] if the value is non-empty but
+    /// shorter than 8 characters.
+    pub fn new(s: impl Into<String>) -> Result<Self, Error> {
+        let s = s.into();
+        if !s.is_empty() && s.len() < 8 {
+            return Err(Error::InvalidSecretKey);
+        }
+        Ok(Self(s))
+    }
+
+    /// An empty secret key (unconfigured / development mode).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self(String::new())
+    }
+}
+
+impl fmt::Display for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for SecretKey {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for SecretKey {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host — public base URL
+// ---------------------------------------------------------------------------
+
+/// A validated public base URL (e.g. `https://budget.example.com`).
+///
+/// Invariants:
+/// - Starts with `http://` or `https://`
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct Host(String);
+
+impl Host {
+    /// Create a new `Host`, validating the scheme prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHost`] if the value does not start with
+    /// `http://` or `https://`.
+    pub fn new(s: impl Into<String>) -> Result<Self, Error> {
+        let s = s.into();
+        if !s.starts_with("http://") && !s.starts_with("https://") {
+            return Err(Error::InvalidHost(s));
+        }
+        Ok(Self(s))
+    }
+}
+
+impl fmt::Display for Host {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for Host {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<Host> for String {
+    fn from(h: Host) -> Self {
+        h.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Host {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for Host {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1077,5 +1252,119 @@ mod tests {
     fn valid_days_serde_rejects_invalid() {
         assert!(serde_json::from_str::<ValidDays>("0").is_err());
         assert!(serde_json::from_str::<ValidDays>("366").is_err());
+    }
+
+    // -- DatabaseUrl --------------------------------------------------------
+
+    #[test]
+    fn database_url_valid() {
+        assert!(DatabaseUrl::new("postgresql://user@localhost/db").is_ok());
+        assert!(DatabaseUrl::new("postgres://user@localhost/db").is_ok());
+    }
+
+    #[test]
+    fn database_url_rejects_invalid_scheme() {
+        assert!(DatabaseUrl::new("mysql://user@localhost/db").is_err());
+        assert!(DatabaseUrl::new("http://localhost").is_err());
+        assert!(DatabaseUrl::new("").is_err());
+    }
+
+    #[test]
+    fn database_url_display() {
+        let url = DatabaseUrl::new("postgresql://budget@localhost:5432/budget").unwrap();
+        assert_eq!(url.to_string(), "postgresql://budget@localhost:5432/budget");
+    }
+
+    #[test]
+    fn database_url_serde_roundtrip() {
+        let url = DatabaseUrl::new("postgresql://budget@localhost/db").unwrap();
+        let json = serde_json::to_string(&url).unwrap();
+        assert_eq!(json, "\"postgresql://budget@localhost/db\"");
+        let back: DatabaseUrl = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, url);
+    }
+
+    #[test]
+    fn database_url_serde_rejects_invalid() {
+        let result: Result<DatabaseUrl, _> = serde_json::from_str("\"mysql://x\"");
+        assert!(result.is_err());
+    }
+
+    // -- SecretKey ----------------------------------------------------------
+
+    #[test]
+    fn secret_key_empty_allowed() {
+        assert!(SecretKey::new("").is_ok());
+        assert_eq!(SecretKey::empty().as_ref(), "");
+    }
+
+    #[test]
+    fn secret_key_valid_long() {
+        assert!(SecretKey::new("abcdefgh").is_ok());
+        assert!(SecretKey::new("a]very-long-secret-key-1234").is_ok());
+    }
+
+    #[test]
+    fn secret_key_rejects_short() {
+        assert!(SecretKey::new("abc").is_err());
+        assert!(SecretKey::new("1234567").is_err());
+    }
+
+    #[test]
+    fn secret_key_equality() {
+        let a = SecretKey::new("my-secret-key").unwrap();
+        let b = SecretKey::new("my-secret-key").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn secret_key_serde_roundtrip() {
+        let sk = SecretKey::new("my-secret-key").unwrap();
+        let json = serde_json::to_string(&sk).unwrap();
+        assert_eq!(json, "\"my-secret-key\"");
+        let back: SecretKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sk);
+    }
+
+    #[test]
+    fn secret_key_serde_rejects_short() {
+        let result: Result<SecretKey, _> = serde_json::from_str("\"abc\"");
+        assert!(result.is_err());
+    }
+
+    // -- Host ---------------------------------------------------------------
+
+    #[test]
+    fn host_valid() {
+        assert!(Host::new("http://localhost:3000").is_ok());
+        assert!(Host::new("https://budget.example.com").is_ok());
+    }
+
+    #[test]
+    fn host_rejects_invalid_scheme() {
+        assert!(Host::new("ftp://example.com").is_err());
+        assert!(Host::new("localhost:3000").is_err());
+        assert!(Host::new("").is_err());
+    }
+
+    #[test]
+    fn host_display() {
+        let h = Host::new("https://budget.example.com").unwrap();
+        assert_eq!(h.to_string(), "https://budget.example.com");
+    }
+
+    #[test]
+    fn host_serde_roundtrip() {
+        let h = Host::new("https://budget.example.com").unwrap();
+        let json = serde_json::to_string(&h).unwrap();
+        assert_eq!(json, "\"https://budget.example.com\"");
+        let back: Host = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, h);
+    }
+
+    #[test]
+    fn host_serde_rejects_invalid() {
+        let result: Result<Host, _> = serde_json::from_str("\"ftp://x\"");
+        assert!(result.is_err());
     }
 }

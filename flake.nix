@@ -28,7 +28,6 @@
           configFile = pkgs.writeText "budget-config.toml" ''
             database_url = "${cfg.databaseUrl}"
             llm_model = "${cfg.llmModel}"
-            bank_provider = "enable_banking"
             budget_currency = "${cfg.budgetCurrency}"
             expected_salary_count = ${toString cfg.expectedSalaryCount}
             server_port = ${toString cfg.port}

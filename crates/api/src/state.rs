@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use budget_core::db::Db;
+use budget_core::models::SecretKey;
 use budget_jobs::{
     ApalisPool, CategorizeJob, CorrelateJob, JobStorage, LlmClient, PipelineStorage, SyncJob,
 };
@@ -16,7 +17,7 @@ pub struct AppState {
     /// Database handle for all domain queries.
     pub db: Db,
     /// Static bearer token for API authentication.
-    pub secret_key: String,
+    pub secret_key: SecretKey,
     /// Job queue storage for bank account sync jobs.
     pub sync_storage: JobStorage<SyncJob>,
     /// Job queue storage for transaction categorization jobs.

@@ -5,6 +5,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
+use budget_core::models::SecretKey;
 use serde::Deserialize;
 
 use crate::state::AppState;
@@ -33,7 +34,7 @@ pub async fn require_bearer_token(
         .and_then(|v| v.to_str().ok())
         && let Some(token) = value.strip_prefix("Bearer ")
     {
-        if token == state.secret_key {
+        if SecretKey::new(token).ok().as_ref() == Some(&state.secret_key) {
             return Ok(next.run(request).await);
         }
         return Err(StatusCode::UNAUTHORIZED);
@@ -48,7 +49,7 @@ pub async fn require_bearer_token(
         for cookie in cookie_header.split(';') {
             let cookie = cookie.trim();
             if let Some(value) = cookie.strip_prefix("budget_session=") {
-                if value == state.secret_key {
+                if SecretKey::new(value).ok().as_ref() == Some(&state.secret_key) {
                     return Ok(next.run(request).await);
                 }
                 return Err(StatusCode::UNAUTHORIZED);
@@ -61,7 +62,7 @@ pub async fn require_bearer_token(
 
 #[derive(Deserialize)]
 struct LoginRequest {
-    token: String,
+    token: SecretKey,
 }
 
 /// Build the auth sub-router (unauthenticated endpoints).
@@ -80,12 +81,12 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, StatusCode> {
-    if body.token != state.secret_key {
+    if state.secret_key != body.token {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
     let cookie = format!(
-        "{COOKIE_NAME}={token}; `HttpOnly`; SameSite=Strict; Path=/; Max-Age=31536000",
+        "{COOKIE_NAME}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000",
         token = body.token,
     );
 
