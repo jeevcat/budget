@@ -50,6 +50,12 @@ pub enum Error {
     #[error("invalid exchange rate type: {0}")]
     InvalidExchangeRateType(String),
 
+    #[error("invalid domain code: {0}")]
+    InvalidDomainCode(String),
+
+    #[error("invalid sub-family code: {0}")]
+    InvalidSubFamilyCode(String),
+
     #[error("invalid priority: {0} (must be 0–1000)")]
     InvalidPriority(i32),
 

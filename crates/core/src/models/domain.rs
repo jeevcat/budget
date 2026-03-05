@@ -10,8 +10,8 @@ use super::enums::{
 };
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
 use super::newtypes::{
-    Bic, CurrencyCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
-    ReferenceNumberSchema,
+    Bic, CurrencyCode, DomainCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
+    ReferenceNumberSchema, SubFamilyCode,
 };
 use crate::error::Error;
 
@@ -516,10 +516,10 @@ pub struct Transaction {
     pub merchant_category_code: Option<MerchantCategoryCode>,
     /// ISO 20022 domain code (e.g. "PMNT" for payments).
     /// Source: Enable Banking `bank_transaction_code.code`
-    pub bank_transaction_code_code: Option<String>,
+    pub bank_transaction_code_code: Option<DomainCode>,
     /// ISO 20022 sub-family code (e.g. "ICDT-STDO").
     /// Source: Enable Banking `bank_transaction_code.sub_code`
-    pub bank_transaction_code_sub_code: Option<String>,
+    pub bank_transaction_code_sub_code: Option<SubFamilyCode>,
     /// Actual FX rate applied (e.g. "1.0856"), stored as string to preserve bank precision.
     /// Source: Enable Banking `exchange_rate.exchange_rate`
     pub exchange_rate: Option<String>,

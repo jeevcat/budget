@@ -5,8 +5,8 @@ use apalis::prelude::*;
 
 use budget_core::db::Db;
 use budget_core::models::{
-    AccountId, Bic, ConnectionStatus, CurrencyCode, ExchangeRateType, Iban, MerchantCategoryCode,
-    ReferenceNumberSchema, Transaction,
+    AccountId, Bic, ConnectionStatus, CurrencyCode, DomainCode, ExchangeRateType, Iban,
+    MerchantCategoryCode, ReferenceNumberSchema, SubFamilyCode, Transaction,
 };
 
 use super::{BankProviderFactory, SyncJob};
@@ -52,8 +52,14 @@ fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) -> Tra
             .merchant_category_code
             .as_deref()
             .and_then(|s| try_parse::<MerchantCategoryCode, _>(s, "merchant_category_code")),
-        bank_transaction_code_code: ptxn.bank_transaction_code_code.clone(),
-        bank_transaction_code_sub_code: ptxn.bank_transaction_code_sub_code.clone(),
+        bank_transaction_code_code: ptxn
+            .bank_transaction_code_code
+            .as_deref()
+            .and_then(|s| try_parse::<DomainCode, _>(s, "bank_transaction_code_code")),
+        bank_transaction_code_sub_code: ptxn
+            .bank_transaction_code_sub_code
+            .as_deref()
+            .and_then(|s| try_parse::<SubFamilyCode, _>(s, "bank_transaction_code_sub_code")),
         exchange_rate: ptxn.exchange_rate.clone(),
         exchange_rate_unit_currency: ptxn
             .exchange_rate_unit_currency

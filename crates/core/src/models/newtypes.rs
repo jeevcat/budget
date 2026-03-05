@@ -292,6 +292,131 @@ impl std::str::FromStr for MerchantCategoryCode {
 impl_sqlx_text!(MerchantCategoryCode);
 
 // ---------------------------------------------------------------------------
+// DomainCode — ISO 20022 domain code
+// ---------------------------------------------------------------------------
+
+/// A validated ISO 20022 domain code (e.g. "PMNT", "CAMT", "SECU").
+///
+/// Invariants:
+/// - Non-empty
+/// - Uppercase ASCII alphanumeric only (A–Z, 0–9)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct DomainCode(String);
+
+impl DomainCode {
+    /// Create a new `DomainCode`, validating format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidDomainCode`] if the value is empty or contains
+    /// characters other than uppercase ASCII letters and digits.
+    pub fn new(s: impl Into<String>) -> Result<Self, Error> {
+        let s = s.into();
+        if s.is_empty()
+            || !s
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        {
+            return Err(Error::InvalidDomainCode(s));
+        }
+        Ok(Self(s))
+    }
+}
+
+impl fmt::Display for DomainCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for DomainCode {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for DomainCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for DomainCode {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl_sqlx_text!(DomainCode);
+
+// ---------------------------------------------------------------------------
+// SubFamilyCode — ISO 20022 family-subfamily code
+// ---------------------------------------------------------------------------
+
+/// A validated ISO 20022 family-subfamily code (e.g. "ICDT-STDO", "RCDT-ESCT").
+///
+/// Invariants:
+/// - Non-empty
+/// - Uppercase ASCII alphanumeric and hyphens only (A–Z, 0–9, `-`)
+/// - No leading or trailing hyphens
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SubFamilyCode(String);
+
+impl SubFamilyCode {
+    /// Create a new `SubFamilyCode`, validating format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidSubFamilyCode`] if the value is empty, contains
+    /// invalid characters, or has leading/trailing hyphens.
+    pub fn new(s: impl Into<String>) -> Result<Self, Error> {
+        let s = s.into();
+        if s.is_empty()
+            || s.starts_with('-')
+            || s.ends_with('-')
+            || !s
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(Error::InvalidSubFamilyCode(s));
+        }
+        Ok(Self(s))
+    }
+}
+
+impl fmt::Display for SubFamilyCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for SubFamilyCode {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SubFamilyCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for SubFamilyCode {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl_sqlx_text!(SubFamilyCode);
+
+// ---------------------------------------------------------------------------
 // ExchangeRateType — closed enum (AGRD, SALE, SPOT)
 // ---------------------------------------------------------------------------
 
@@ -697,6 +822,112 @@ mod tests {
         assert_eq!(json, "\"5411\"");
         let back: MerchantCategoryCode = serde_json::from_str(&json).unwrap();
         assert_eq!(back, mcc);
+    }
+
+    // -- DomainCode ---------------------------------------------------------
+
+    #[test]
+    fn domain_code_valid() {
+        assert!(DomainCode::new("PMNT").is_ok());
+        assert!(DomainCode::new("CAMT").is_ok());
+        assert!(DomainCode::new("SECU").is_ok());
+        assert!(DomainCode::new("X1").is_ok());
+    }
+
+    #[test]
+    fn domain_code_rejects_empty() {
+        assert!(DomainCode::new("").is_err());
+    }
+
+    #[test]
+    fn domain_code_rejects_lowercase() {
+        assert!(DomainCode::new("pmnt").is_err());
+        assert!(DomainCode::new("Pmnt").is_err());
+    }
+
+    #[test]
+    fn domain_code_rejects_special_chars() {
+        assert!(DomainCode::new("PM-NT").is_err());
+        assert!(DomainCode::new("PM NT").is_err());
+        assert!(DomainCode::new("PM_NT").is_err());
+    }
+
+    #[test]
+    fn domain_code_display() {
+        let dc = DomainCode::new("PMNT").unwrap();
+        assert_eq!(dc.to_string(), "PMNT");
+    }
+
+    #[test]
+    fn domain_code_serde_roundtrip() {
+        let dc = DomainCode::new("PMNT").unwrap();
+        let json = serde_json::to_string(&dc).unwrap();
+        assert_eq!(json, "\"PMNT\"");
+        let back: DomainCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, dc);
+    }
+
+    #[test]
+    fn domain_code_serde_rejects_invalid() {
+        let result: Result<DomainCode, _> = serde_json::from_str("\"pm\"");
+        assert!(result.is_err());
+    }
+
+    // -- SubFamilyCode ------------------------------------------------------
+
+    #[test]
+    fn sub_family_code_valid() {
+        assert!(SubFamilyCode::new("ICDT-STDO").is_ok());
+        assert!(SubFamilyCode::new("RCDT-ESCT").is_ok());
+        assert!(SubFamilyCode::new("STDO").is_ok());
+        assert!(SubFamilyCode::new("A1-B2-C3").is_ok());
+    }
+
+    #[test]
+    fn sub_family_code_rejects_empty() {
+        assert!(SubFamilyCode::new("").is_err());
+    }
+
+    #[test]
+    fn sub_family_code_rejects_lowercase() {
+        assert!(SubFamilyCode::new("icdt-stdo").is_err());
+    }
+
+    #[test]
+    fn sub_family_code_rejects_leading_hyphen() {
+        assert!(SubFamilyCode::new("-STDO").is_err());
+    }
+
+    #[test]
+    fn sub_family_code_rejects_trailing_hyphen() {
+        assert!(SubFamilyCode::new("STDO-").is_err());
+    }
+
+    #[test]
+    fn sub_family_code_rejects_special_chars() {
+        assert!(SubFamilyCode::new("ICDT STDO").is_err());
+        assert!(SubFamilyCode::new("ICDT_STDO").is_err());
+    }
+
+    #[test]
+    fn sub_family_code_display() {
+        let sc = SubFamilyCode::new("ICDT-STDO").unwrap();
+        assert_eq!(sc.to_string(), "ICDT-STDO");
+    }
+
+    #[test]
+    fn sub_family_code_serde_roundtrip() {
+        let sc = SubFamilyCode::new("ICDT-STDO").unwrap();
+        let json = serde_json::to_string(&sc).unwrap();
+        assert_eq!(json, "\"ICDT-STDO\"");
+        let back: SubFamilyCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sc);
+    }
+
+    #[test]
+    fn sub_family_code_serde_rejects_invalid() {
+        let result: Result<SubFamilyCode, _> = serde_json::from_str("\"-BAD\"");
+        assert!(result.is_err());
     }
 
     // -- ExchangeRateType ---------------------------------------------------
