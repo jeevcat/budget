@@ -667,22 +667,6 @@ private fun PaceBadge(pace: PaceIndicator, delta: Double? = null) {
 
 // -- Category name map (for badges) ----------------------------------------
 
-private fun buildCategoryNameMap(state: DashboardUiState): Map<String, String> {
-  val map = mutableMapOf<String, String>()
-  for (s in state.monthlyStatuses) {
-    map[s.categoryId] = s.categoryName
-    for (c in s.children) map[c.categoryId] = c.categoryName
-  }
-  for (s in state.annualStatuses) {
-    map[s.categoryId] = s.categoryName
-    for (c in s.children) map[c.categoryId] = c.categoryName
-  }
-  for (p in state.projects) {
-    map[p.categoryId] = p.categoryName
-  }
-  return map
-}
-
 // -- Category transactions detail screen ------------------------------------
 
 private data class CategoryInfo(
@@ -818,8 +802,6 @@ private fun CategoryTransactionsContent(
   val transactions = resolveTransactions(state, categoryId)
   val status = resolveBudgetStatus(state, categoryId)
   val hasChildren = status?.hasChildren == true
-  val categoryNames = remember(state) { buildCategoryNameMap(state) }
-
   LazyColumn(
       modifier = modifier.fillMaxSize(),
       contentPadding =
@@ -872,7 +854,6 @@ private fun CategoryTransactionsContent(
             merchant = txn.merchantName.ifEmpty { txn.remittanceInformation.firstOrNull() ?: "" },
             date = formatShortDate(txn.postedDate),
             amount = formatAmount(txn.amount),
-            categoryName = txn.categoryId?.let { categoryNames[it] },
             onClick = onTransactionClick?.let { { it(txn.id) } },
         )
       }
