@@ -9,10 +9,6 @@
 
 ## Integer Bounds
 
-### Pagination
-- ~`ListQuery.limit` — should reject values outside 1–200 at deserialization, not clamp in handler~
-- ~`ListQuery.offset` — should reject negative values at deserialization~
-
 ### Priority
 - `Rule.priority` / `CreateRule.priority` — unbounded `i32`, consider newtype with 0–1000 range
 
@@ -28,17 +24,6 @@
 - `host: Option<String>` → URL newtype
 
 ## Related Option Fields → Enums
-
-### Categorization state
-`category_id` + `category_method` + `suggested_category` on Transaction could become:
-```rust
-enum Categorization {
-    Uncategorized,
-    Manual(CategoryId),
-    Rule(CategoryId),
-    Llm { category_id: CategoryId, suggested: String },
-}
-```
 
 ### NicknameUpdate
 `UpdateNickname.nickname: Option<String>` overloads `None` for "clear":
