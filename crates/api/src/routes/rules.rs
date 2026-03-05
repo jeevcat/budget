@@ -5,7 +5,6 @@ use axum::{Json, Router};
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
@@ -20,17 +19,17 @@ use crate::state::AppState;
 /// A single condition in a rule request body.
 #[derive(Deserialize)]
 pub struct ConditionRequest {
-    pub field: String,
+    pub field: MatchField,
     pub pattern: String,
 }
 
 /// Request body for creating or updating a rule.
 #[derive(Deserialize)]
 pub struct CreateRule {
-    pub rule_type: String,
+    pub rule_type: RuleType,
     pub conditions: Vec<ConditionRequest>,
-    pub target_category_id: Option<String>,
-    pub target_correlation_type: Option<String>,
+    pub target_category_id: Option<CategoryId>,
+    pub target_correlation_type: Option<CorrelationType>,
     pub priority: i32,
 }
 
@@ -41,7 +40,7 @@ pub struct CreateRule {
 pub struct PreviewRule {
     #[serde(flatten)]
     pub rule: CreateRule,
-    pub include_transaction_id: Option<String>,
+    pub include_transaction_id: Option<TransactionId>,
 }
 
 /// Build the rules sub-router.
@@ -64,14 +63,9 @@ pub fn router() -> Router<AppState> {
         .route("/preview", axum::routing::post(preview))
 }
 
-/// Parse a `CreateRule` body into domain types, reusing the shared parsing
-/// logic for both create and update handlers.
-fn parse_rule_body(body: &CreateRule, id: RuleId) -> Result<Rule, AppError> {
-    let rule_type: RuleType = body
-        .rule_type
-        .parse()
-        .map_err(|e: budget_core::error::Error| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
+/// Convert a `CreateRule` body into a domain `Rule`, reusing the shared logic
+/// for both create and update handlers.
+fn into_rule(body: CreateRule, id: RuleId) -> Result<Rule, AppError> {
     if body.conditions.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -79,47 +73,21 @@ fn parse_rule_body(body: &CreateRule, id: RuleId) -> Result<Rule, AppError> {
         ));
     }
 
-    let conditions: Vec<RuleCondition> = body
+    let conditions = body
         .conditions
-        .iter()
-        .map(|c| {
-            let field: MatchField = c.field.parse().map_err(|e: budget_core::error::Error| {
-                AppError(StatusCode::BAD_REQUEST, e.to_string())
-            })?;
-            Ok(RuleCondition {
-                field,
-                pattern: c.pattern.clone(),
-            })
+        .into_iter()
+        .map(|c| RuleCondition {
+            field: c.field,
+            pattern: c.pattern,
         })
-        .collect::<Result<Vec<_>, AppError>>()?;
-
-    let target_category_id = body
-        .target_category_id
-        .as_deref()
-        .map(|s| {
-            Uuid::parse_str(s)
-                .map(CategoryId::from_uuid)
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
-    let target_correlation_type = body
-        .target_correlation_type
-        .as_deref()
-        .map(|s| {
-            s.parse::<CorrelationType>()
-                .map_err(|e: budget_core::error::Error| {
-                    AppError(StatusCode::BAD_REQUEST, e.to_string())
-                })
-        })
-        .transpose()?;
+        .collect();
 
     Ok(Rule {
         id,
-        rule_type,
+        rule_type: body.rule_type,
         conditions,
-        target_category_id,
-        target_correlation_type,
+        target_category_id: body.target_category_id,
+        target_correlation_type: body.target_correlation_type,
         priority: body.priority,
     })
 }
@@ -144,7 +112,7 @@ async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateRule>,
 ) -> Result<(StatusCode, Json<Rule>), AppError> {
-    let rule = parse_rule_body(&body, RuleId::new())?;
+    let rule = into_rule(body, RuleId::new())?;
     state.db.insert_rule(&rule).await?;
 
     // Re-evaluate eligible transactions against the new rule
@@ -165,12 +133,10 @@ async fn create(
 /// Returns `AppError` if the database update fails.
 async fn update(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<RuleId>,
     Json(body): Json<CreateRule>,
 ) -> Result<Json<Rule>, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let rule = parse_rule_body(&body, RuleId::from_uuid(uuid))?;
+    let rule = into_rule(body, id)?;
     state.db.update_rule(&rule).await?;
     Ok(Json(rule))
 }
@@ -183,11 +149,9 @@ async fn update(
 /// Returns `AppError` if the database delete fails.
 async fn remove(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<RuleId>,
 ) -> Result<StatusCode, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    state.db.delete_rule(RuleId::from_uuid(uuid)).await?;
+    state.db.delete_rule(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -282,7 +246,8 @@ async fn preview(
     State(state): State<AppState>,
     Json(body): Json<PreviewRule>,
 ) -> Result<Json<PreviewResponse>, AppError> {
-    let rule = parse_rule_body(&body.rule, RuleId::new())?;
+    let include_id = body.include_transaction_id;
+    let rule = into_rule(body.rule, RuleId::new())?;
     let compiled =
         compile_rule(&rule).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -293,15 +258,11 @@ async fn preview(
 
     // Include a specific transaction even if it is not rule-eligible (e.g. it
     // was just manually categorized and the user is generating a rule from it).
-    if let Some(ref id_str) = body.include_transaction_id {
-        let uuid = Uuid::parse_str(id_str)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-        let include_id = TransactionId::from_uuid(uuid);
-        if !transactions.iter().any(|t| t.id == include_id)
-            && let Some(txn) = state.db.get_transaction_by_id(include_id).await?
-        {
-            transactions.push(txn);
-        }
+    if let Some(include_id) = include_id
+        && !transactions.iter().any(|t| t.id == include_id)
+        && let Some(txn) = state.db.get_transaction_by_id(include_id).await?
+    {
+        transactions.push(txn);
     }
 
     let mut match_count: u32 = 0;
@@ -325,4 +286,133 @@ async fn preview(
         match_count,
         sample,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_create_rule_categorization() {
+        let id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "rule_type": "categorization",
+                "conditions": [{{"field": "merchant", "pattern": "^ALDI"}}],
+                "target_category_id": "{id}",
+                "target_correlation_type": null,
+                "priority": 10
+            }}"#,
+        );
+        let rule: CreateRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule.rule_type, RuleType::Categorization);
+        assert_eq!(rule.conditions[0].field, MatchField::Merchant);
+        assert_eq!(*rule.target_category_id.unwrap().as_uuid(), id);
+        assert!(rule.target_correlation_type.is_none());
+    }
+
+    #[test]
+    fn deserialize_create_rule_correlation() {
+        let json = r#"{
+            "rule_type": "correlation",
+            "conditions": [{"field": "counterparty_iban", "pattern": "^DE"}],
+            "target_category_id": null,
+            "target_correlation_type": "transfer",
+            "priority": 5
+        }"#;
+        let rule: CreateRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.rule_type, RuleType::Correlation);
+        assert_eq!(
+            rule.target_correlation_type,
+            Some(CorrelationType::Transfer)
+        );
+    }
+
+    #[test]
+    fn deserialize_create_rule_rejects_invalid_rule_type() {
+        let json = r#"{
+            "rule_type": "bogus",
+            "conditions": [{"field": "merchant", "pattern": "x"}],
+            "priority": 0
+        }"#;
+        assert!(serde_json::from_str::<CreateRule>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_rule_rejects_invalid_match_field() {
+        let json = r#"{
+            "rule_type": "categorization",
+            "conditions": [{"field": "nonexistent", "pattern": "x"}],
+            "priority": 0
+        }"#;
+        assert!(serde_json::from_str::<CreateRule>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_rule_rejects_invalid_category_id() {
+        let json = r#"{
+            "rule_type": "categorization",
+            "conditions": [{"field": "merchant", "pattern": "x"}],
+            "target_category_id": "not-a-uuid",
+            "priority": 0
+        }"#;
+        assert!(serde_json::from_str::<CreateRule>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_rule_rejects_invalid_correlation_type() {
+        let json = r#"{
+            "rule_type": "correlation",
+            "conditions": [{"field": "merchant", "pattern": "x"}],
+            "target_correlation_type": "invalid",
+            "priority": 0
+        }"#;
+        assert!(serde_json::from_str::<CreateRule>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_all_match_fields() {
+        for (name, expected) in [
+            ("merchant", MatchField::Merchant),
+            ("description", MatchField::Description),
+            ("amount_range", MatchField::AmountRange),
+            ("counterparty_name", MatchField::CounterpartyName),
+            ("counterparty_iban", MatchField::CounterpartyIban),
+            ("counterparty_bic", MatchField::CounterpartyBic),
+            ("bank_transaction_code", MatchField::BankTransactionCode),
+        ] {
+            let json = format!(
+                r#"{{"rule_type":"categorization","conditions":[{{"field":"{name}","pattern":"x"}}],"priority":0}}"#,
+            );
+            let rule: CreateRule = serde_json::from_str(&json).unwrap();
+            assert_eq!(rule.conditions[0].field, expected);
+        }
+    }
+
+    #[test]
+    fn deserialize_preview_rule_with_include_id() {
+        let txn_id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "rule_type": "categorization",
+                "conditions": [{{"field": "merchant", "pattern": "x"}}],
+                "priority": 0,
+                "include_transaction_id": "{txn_id}"
+            }}"#,
+        );
+        let preview: PreviewRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(*preview.include_transaction_id.unwrap().as_uuid(), txn_id);
+    }
+
+    #[test]
+    fn into_rule_rejects_empty_conditions() {
+        let body = CreateRule {
+            rule_type: RuleType::Categorization,
+            conditions: vec![],
+            target_category_id: None,
+            target_correlation_type: None,
+            priority: 0,
+        };
+        assert!(into_rule(body, RuleId::new()).is_err());
+    }
 }

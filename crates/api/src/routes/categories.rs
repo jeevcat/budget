@@ -2,35 +2,26 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use budget_core::models::{
-    BudgetConfig, BudgetMode, BudgetType, Category, CategoryId, CategoryName,
-};
+use budget_core::models::{BudgetConfig, Category, CategoryId, CategoryName};
 
 use crate::routes::AppError;
 use crate::state::AppState;
 
-/// Request body for creating a new category.
+/// Request body for creating or updating a category.
+///
+/// All fields are parsed at deserialization time — no manual string parsing
+/// needed in handlers.
 #[derive(Deserialize)]
 pub struct CreateCategory {
-    /// Category display name.
-    pub name: String,
+    /// Category display name (validated by `CategoryName`).
+    pub name: CategoryName,
     /// Optional parent category UUID for nesting.
-    pub parent_id: Option<String>,
-    /// Budget mode: "monthly", "annual", or "project". Null for no budget.
-    pub budget_mode: Option<String>,
-    /// Budget type: "fixed" or "variable". Null defaults to variable.
-    pub budget_type: Option<String>,
-    /// Budget amount as a decimal string (e.g. "500.00").
-    pub budget_amount: Option<String>,
-    /// Project start date (YYYY-MM-DD). Only used when `budget_mode` is "project".
-    pub project_start_date: Option<String>,
-    /// Project end date (YYYY-MM-DD). Only used when `budget_mode` is "project".
-    pub project_end_date: Option<String>,
+    pub parent_id: Option<CategoryId>,
+    /// Budget configuration. Deserialized from flat fields via `BudgetConfig`.
+    #[serde(flatten)]
+    pub budget: BudgetConfig,
 }
 
 /// A single entry in the LLM suggestion histogram.
@@ -125,112 +116,22 @@ async fn suggestions(
     Ok(Json(entries))
 }
 
-/// Parsed budget fields from a create/update request.
-struct BudgetFields {
-    mode: Option<BudgetMode>,
-    budget_type: Option<BudgetType>,
-    amount: Option<Decimal>,
-    start: Option<NaiveDate>,
-    end: Option<NaiveDate>,
-}
-
-/// Parse optional budget fields from a create/update request body.
-fn parse_budget_fields(body: &CreateCategory) -> Result<BudgetFields, AppError> {
-    let mode = body
-        .budget_mode
-        .as_deref()
-        .map(|s| {
-            s.parse::<BudgetMode>()
-                .map_err(|e: budget_core::error::Error| {
-                    AppError(StatusCode::BAD_REQUEST, e.to_string())
-                })
-        })
-        .transpose()?;
-
-    let amount = body
-        .budget_amount
-        .as_deref()
-        .map(|s| {
-            s.parse::<Decimal>()
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
-    let start = body
-        .project_start_date
-        .as_deref()
-        .map(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
-    let end = body
-        .project_end_date
-        .as_deref()
-        .map(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
-    let budget_type = body
-        .budget_type
-        .as_deref()
-        .map(|s| {
-            s.parse::<BudgetType>()
-                .map_err(|e: budget_core::error::Error| {
-                    AppError(StatusCode::BAD_REQUEST, e.to_string())
-                })
-        })
-        .transpose()?;
-
-    Ok(BudgetFields {
-        mode,
-        budget_type,
-        amount,
-        start,
-        end,
-    })
-}
-
 /// Create a new category.
 ///
 /// # Errors
 ///
-/// Returns 400 if `parent_id` is present but not a valid UUID, or if budget
-/// fields are invalid.
+/// Returns 400 if the request body fails deserialization (invalid name,
+/// UUID, enum, decimal, or date).
 /// Returns `AppError` if the database insert fails.
 async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateCategory>,
 ) -> Result<(StatusCode, Json<Category>), AppError> {
-    let budget = parse_budget_fields(&body)?;
-
-    let name = CategoryName::new(body.name)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let parent_id = body
-        .parent_id
-        .as_deref()
-        .map(|s| {
-            Uuid::parse_str(s)
-                .map(CategoryId::from_uuid)
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
     let category = Category {
         id: CategoryId::new(),
-        name,
-        parent_id,
-        budget: BudgetConfig::from_parts(
-            budget.mode,
-            budget.budget_type,
-            budget.amount,
-            budget.start,
-            budget.end,
-        ),
+        name: body.name,
+        parent_id: body.parent_id,
+        budget: body.budget,
     };
 
     state.db.insert_category(&category).await?;
@@ -241,42 +142,18 @@ async fn create(
 ///
 /// # Errors
 ///
-/// Returns 400 if the ID or any field value is invalid.
+/// Returns 400 if the ID is not a valid UUID or the body fails deserialization.
 /// Returns `AppError` if the database update fails.
 async fn update(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<CategoryId>,
     Json(body): Json<CreateCategory>,
 ) -> Result<Json<Category>, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let budget = parse_budget_fields(&body)?;
-
-    let name = CategoryName::new(body.name)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let parent_id = body
-        .parent_id
-        .as_deref()
-        .map(|s| {
-            Uuid::parse_str(s)
-                .map(CategoryId::from_uuid)
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))
-        })
-        .transpose()?;
-
     let category = Category {
-        id: CategoryId::from_uuid(uuid),
-        name,
-        parent_id,
-        budget: BudgetConfig::from_parts(
-            budget.mode,
-            budget.budget_type,
-            budget.amount,
-            budget.start,
-            budget.end,
-        ),
+        id,
+        name: body.name,
+        parent_id: body.parent_id,
+        budget: body.budget,
     };
 
     state.db.update_category(&category).await?;
@@ -291,12 +168,136 @@ async fn update(
 /// Returns `AppError` if the database delete fails.
 async fn remove(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<CategoryId>,
 ) -> Result<StatusCode, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let category_id = CategoryId::from_uuid(uuid);
-
-    state.db.delete_category(category_id).await?;
+    state.db.delete_category(id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use budget_core::models::BudgetMode;
+
+    #[test]
+    fn deserialize_create_category_minimal() {
+        let json = r#"{"name": "Groceries"}"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.name, "Groceries");
+        assert!(cat.parent_id.is_none());
+        assert_eq!(cat.budget, BudgetConfig::None);
+    }
+
+    #[test]
+    fn deserialize_create_category_with_monthly_budget() {
+        let json = r#"{
+            "name": "Food",
+            "budget_mode": "monthly",
+            "budget_type": "variable",
+            "budget_amount": "500.00"
+        }"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.name, "Food");
+        assert_eq!(cat.budget.mode(), Some(BudgetMode::Monthly));
+        assert_eq!(
+            cat.budget.amount(),
+            Some(rust_decimal::Decimal::new(50000, 2))
+        );
+    }
+
+    #[test]
+    fn deserialize_create_category_with_parent_id() {
+        let id = uuid::Uuid::new_v4();
+        let json = format!(r#"{{"name": "Dining", "parent_id": "{id}"}}"#);
+        let cat: CreateCategory = serde_json::from_str(&json).unwrap();
+        assert_eq!(*cat.parent_id.unwrap().as_uuid(), id);
+    }
+
+    #[test]
+    fn deserialize_create_category_with_null_parent() {
+        let json = r#"{"name": "Cash", "parent_id": null}"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert!(cat.parent_id.is_none());
+    }
+
+    #[test]
+    fn deserialize_create_category_with_project_budget() {
+        let json = r#"{
+            "name": "Renovation",
+            "budget_mode": "project",
+            "budget_amount": "10000.00",
+            "project_start_date": "2026-01-01",
+            "project_end_date": "2026-06-30"
+        }"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.budget.mode(), Some(BudgetMode::Project));
+    }
+
+    #[test]
+    fn deserialize_create_category_with_salary() {
+        let json = r#"{"name": "Salary", "budget_mode": "salary"}"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.budget, BudgetConfig::Salary);
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_name() {
+        let json = r#"{"name": ""}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_colon_name() {
+        let json = r#"{"name": "Food:Dining"}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_parent_id() {
+        let json = r#"{"name": "Food", "parent_id": "not-a-uuid"}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_budget_mode() {
+        let json = r#"{"name": "Food", "budget_mode": "invalid"}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_budget_type() {
+        let json = r#"{"name": "Food", "budget_mode": "monthly", "budget_type": "bogus"}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_amount() {
+        let json = r#"{"name": "Food", "budget_mode": "monthly", "budget_amount": "abc"}"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_rejects_invalid_date() {
+        let json = r#"{
+            "name": "Reno",
+            "budget_mode": "project",
+            "budget_amount": "1000",
+            "project_start_date": "not-a-date"
+        }"#;
+        assert!(serde_json::from_str::<CreateCategory>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_create_category_null_budget_fields() {
+        let json = r#"{
+            "name": "Misc",
+            "budget_mode": null,
+            "budget_type": null,
+            "budget_amount": null,
+            "project_start_date": null,
+            "project_end_date": null
+        }"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.budget, BudgetConfig::None);
+    }
 }

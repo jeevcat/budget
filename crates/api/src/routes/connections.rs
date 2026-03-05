@@ -305,15 +305,11 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Connection>>, Ap
 /// DELETE /api/connections/{id}
 async fn revoke(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<ConnectionId>,
 ) -> Result<StatusCode, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let connection_id = ConnectionId::from_uuid(uuid);
-
     let connection = state
         .db
-        .get_connection(connection_id)
+        .get_connection(id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("connection {id} not found")))?;
 
@@ -330,7 +326,7 @@ async fn revoke(
 
     state
         .db
-        .update_connection_status(connection_id, ConnectionStatus::Revoked)
+        .update_connection_status(id, ConnectionStatus::Revoked)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)

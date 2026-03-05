@@ -267,7 +267,7 @@ async fn accounts_get_after_creation(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn accounts_create_invalid_account_type_returns_400(pool: PgPool) {
+async fn accounts_create_invalid_account_type_returns_422(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
@@ -279,7 +279,7 @@ async fn accounts_create_invalid_account_type_returns_400(pool: PgPool) {
     });
 
     let (status, _body) = send(app, post_json("/api/accounts", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ===========================================================================
@@ -402,7 +402,7 @@ async fn transactions_categorize_success(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn transactions_categorize_invalid_uuid_returns_400(pool: PgPool) {
+async fn transactions_categorize_invalid_uuid_returns_422(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
@@ -419,7 +419,7 @@ async fn transactions_categorize_invalid_uuid_returns_400(pool: PgPool) {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ===========================================================================
@@ -605,7 +605,7 @@ async fn categories_create_with_parent(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn categories_create_invalid_budget_mode_returns_400(pool: PgPool) {
+async fn categories_create_invalid_budget_mode_returns_422(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
@@ -614,7 +614,7 @@ async fn categories_create_invalid_budget_mode_returns_400(pool: PgPool) {
     });
 
     let (status, _body) = send(app, post_json("/api/categories", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ===========================================================================
@@ -714,7 +714,7 @@ async fn rules_delete(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn rules_create_invalid_rule_type_returns_400(pool: PgPool) {
+async fn rules_create_invalid_rule_type_returns_422(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
@@ -724,7 +724,7 @@ async fn rules_create_invalid_rule_type_returns_400(pool: PgPool) {
     });
 
     let (status, _body) = send(app, post_json("/api/rules", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ===========================================================================
@@ -1236,7 +1236,7 @@ async fn transactions_categorize_with_invalid_txn_id_returns_400(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn rules_create_invalid_match_field_returns_400(pool: PgPool) {
+async fn rules_create_invalid_match_field_returns_422(pool: PgPool) {
     let (app, _db) = setup(pool).await;
 
     let payload = serde_json::json!({
@@ -1246,7 +1246,7 @@ async fn rules_create_invalid_match_field_returns_400(pool: PgPool) {
     });
 
     let (status, _body) = send(app, post_json("/api/rules", &payload)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[sqlx::test]

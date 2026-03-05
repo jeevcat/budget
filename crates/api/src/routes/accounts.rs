@@ -3,7 +3,6 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
-use uuid::Uuid;
 
 use budget_core::models::{Account, AccountId, AccountType};
 
@@ -19,8 +18,8 @@ pub struct CreateAccount {
     pub name: String,
     /// Financial institution name.
     pub institution: String,
-    /// Account type as a lowercase string (e.g. "checking", "`credit_card`").
-    pub account_type: String,
+    /// Account type (parsed from `snake_case` at deserialization).
+    pub account_type: AccountType,
     /// ISO 4217 currency code.
     pub currency: String,
 }
@@ -63,18 +62,13 @@ async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateAccount>,
 ) -> Result<(StatusCode, Json<Account>), AppError> {
-    let account_type: AccountType = body
-        .account_type
-        .parse()
-        .map_err(|e: budget_core::error::Error| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
     let account = Account {
         id: AccountId::new(),
         provider_account_id: body.provider_account_id,
         name: body.name,
         nickname: None,
         institution: body.institution,
-        account_type,
+        account_type: body.account_type,
         currency: body.currency,
         connection_id: None,
     };
@@ -91,15 +85,11 @@ async fn create(
 /// does not exist.
 async fn get_by_id(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<AccountId>,
 ) -> Result<Json<Account>, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let account_id = AccountId::from_uuid(uuid);
-
     let account = state
         .db
-        .get_account(account_id)
+        .get_account(id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
 
@@ -121,26 +111,22 @@ pub struct UpdateNickname {
 /// does not exist.
 async fn update_nickname(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<AccountId>,
     Json(body): Json<UpdateNickname>,
 ) -> Result<Json<Account>, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let account_id = AccountId::from_uuid(uuid);
-
     // Verify the account exists
     state
         .db
-        .get_account(account_id)
+        .get_account(id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
 
     state
         .db
-        .update_account_nickname(account_id, body.nickname.as_deref())
+        .update_account_nickname(id, body.nickname.as_deref())
         .await?;
 
-    let updated = state.db.get_account(account_id).await?.ok_or_else(|| {
+    let updated = state.db.get_account(id).await?.ok_or_else(|| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "account disappeared".to_owned(),
@@ -148,4 +134,65 @@ async fn update_nickname(
     })?;
 
     Ok(Json(updated))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_create_account() {
+        let json = r#"{
+            "provider_account_id": "abc123",
+            "name": "Main Checking",
+            "institution": "Bank of Test",
+            "account_type": "checking",
+            "currency": "EUR"
+        }"#;
+        let acc: CreateAccount = serde_json::from_str(json).unwrap();
+        assert_eq!(acc.account_type, AccountType::Checking);
+    }
+
+    #[test]
+    fn deserialize_create_account_credit_card() {
+        let json = r#"{
+            "provider_account_id": "x",
+            "name": "Visa",
+            "institution": "Bank",
+            "account_type": "credit_card",
+            "currency": "USD"
+        }"#;
+        let acc: CreateAccount = serde_json::from_str(json).unwrap();
+        assert_eq!(acc.account_type, AccountType::CreditCard);
+    }
+
+    #[test]
+    fn deserialize_create_account_rejects_invalid_type() {
+        let json = r#"{
+            "provider_account_id": "x",
+            "name": "Test",
+            "institution": "Bank",
+            "account_type": "invalid_type",
+            "currency": "EUR"
+        }"#;
+        assert!(serde_json::from_str::<CreateAccount>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_all_account_types() {
+        for (name, expected) in [
+            ("checking", AccountType::Checking),
+            ("savings", AccountType::Savings),
+            ("credit_card", AccountType::CreditCard),
+            ("investment", AccountType::Investment),
+            ("loan", AccountType::Loan),
+            ("other", AccountType::Other),
+        ] {
+            let json = format!(
+                r#"{{"provider_account_id":"x","name":"t","institution":"b","account_type":"{name}","currency":"EUR"}}"#,
+            );
+            let acc: CreateAccount = serde_json::from_str(&json).unwrap();
+            assert_eq!(acc.account_type, expected);
+        }
+    }
 }

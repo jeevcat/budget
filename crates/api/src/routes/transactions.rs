@@ -3,7 +3,6 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use budget_core::models::{CategoryId, CategoryMethod, RuleType, Transaction, TransactionId};
 use budget_core::rules::compile_rule;
@@ -17,7 +16,7 @@ use crate::state::AppState;
 #[derive(Deserialize)]
 pub struct CategorizeRequest {
     /// The category UUID to assign.
-    pub category_id: String,
+    pub category_id: CategoryId,
 }
 
 /// Build the transactions sub-router.
@@ -126,13 +125,11 @@ async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transac
 /// Returns 404 if no transaction exists with the given ID.
 async fn get_one(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<TransactionId>,
 ) -> Result<Json<Transaction>, AppError> {
-    let uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let txn = state
         .db
-        .get_transaction_by_id(TransactionId::from_uuid(uuid))
+        .get_transaction_by_id(id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "transaction not found".to_owned()))?;
     Ok(Json(txn))
@@ -146,18 +143,10 @@ async fn get_one(
 /// Returns `AppError` if the database update fails.
 async fn categorize(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<TransactionId>,
     Json(body): Json<CategorizeRequest>,
 ) -> Result<StatusCode, AppError> {
-    let txn_uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let cat_uuid = Uuid::parse_str(&body.category_id)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let txn_id = TransactionId::from_uuid(txn_uuid);
-    let category_id = CategoryId::from_uuid(cat_uuid);
-
-    if state.db.category_has_children(category_id).await? {
+    if state.db.category_has_children(body.category_id).await? {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "Cannot assign transactions to a parent category; use a leaf category instead"
@@ -167,7 +156,7 @@ async fn categorize(
 
     state
         .db
-        .update_transaction_category(txn_id, category_id, CategoryMethod::Manual, None)
+        .update_transaction_category(id, body.category_id, CategoryMethod::Manual, None)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -180,13 +169,9 @@ async fn categorize(
 /// Returns `AppError` if the database update fails.
 async fn uncategorize(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<TransactionId>,
 ) -> Result<StatusCode, AppError> {
-    let txn_uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let txn_id = TransactionId::from_uuid(txn_uuid);
-
-    state.db.clear_transaction_category(txn_id).await?;
+    state.db.clear_transaction_category(id).await?;
     state
         .categorize_storage
         .push(CategorizeJob)
@@ -213,14 +198,10 @@ pub struct SkipCorrelationRequest {
 /// Returns `AppError` if the database update fails.
 async fn skip_correlation(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<TransactionId>,
     Json(body): Json<SkipCorrelationRequest>,
 ) -> Result<StatusCode, AppError> {
-    let txn_uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let txn_id = TransactionId::from_uuid(txn_uuid);
-
-    state.db.set_skip_correlation(txn_id, body.skip).await?;
+    state.db.set_skip_correlation(id, body.skip).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -255,15 +236,11 @@ struct GenerateRuleResponse {
 /// Returns `AppError` on database or LLM failures.
 async fn generate_rule(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<TransactionId>,
 ) -> Result<Json<GenerateRuleResponse>, AppError> {
-    let txn_uuid =
-        Uuid::parse_str(&id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    let txn_id = TransactionId::from_uuid(txn_uuid);
-
     let txn = state
         .db
-        .get_transaction_by_id(txn_id)
+        .get_transaction_by_id(id)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "transaction not found".to_owned()))?;
 
@@ -377,4 +354,29 @@ fn validate_proposals(
             explanation: p.explanation,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_categorize_request() {
+        let id = uuid::Uuid::new_v4();
+        let json = format!(r#"{{"category_id": "{id}"}}"#);
+        let req: CategorizeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(*req.category_id.as_uuid(), id);
+    }
+
+    #[test]
+    fn deserialize_categorize_request_rejects_invalid_uuid() {
+        let json = r#"{"category_id": "not-a-uuid"}"#;
+        assert!(serde_json::from_str::<CategorizeRequest>(json).is_err());
+    }
+
+    #[test]
+    fn deserialize_categorize_request_rejects_missing_field() {
+        let json = r"{}";
+        assert!(serde_json::from_str::<CategorizeRequest>(json).is_err());
+    }
 }
