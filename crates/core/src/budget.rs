@@ -204,21 +204,21 @@ pub fn detect_budget_month_boundaries(
     }
 
     // For each calendar month that has >= expected_salary_count deposits,
-    // the budget month starts on the last salary date
+    // the budget month starts on the first salary date so all deposits
+    // fall within the month range
     let mut budget_months: Vec<BudgetMonth> = Vec::new();
 
     for dates in by_month.values() {
-        if dates.len() >= expected_salary_count as usize {
-            // Budget month starts on the last salary deposit date
-            if let Some(&last_salary_date) = dates.iter().max() {
-                let detected: i32 = dates.len().try_into().unwrap_or(i32::MAX);
-                budget_months.push(BudgetMonth {
-                    id: deterministic_month_id(last_salary_date),
-                    start_date: last_salary_date,
-                    end_date: None,
-                    salary_transactions_detected: detected,
-                });
-            }
+        if dates.len() >= expected_salary_count as usize
+            && let Some(&first_salary_date) = dates.iter().min()
+        {
+            let detected: i32 = dates.len().try_into().unwrap_or(i32::MAX);
+            budget_months.push(BudgetMonth {
+                id: deterministic_month_id(first_salary_date),
+                start_date: first_salary_date,
+                end_date: None,
+                salary_transactions_detected: detected,
+            });
         }
     }
 
@@ -844,9 +844,9 @@ mod tests {
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        // Budget month starts on last salary of the calendar month
-        assert_eq!(months[0].start_date, date(2025, 1, 25));
-        assert_eq!(months[1].start_date, date(2025, 2, 24));
+        // Budget month starts on first salary of the calendar month
+        assert_eq!(months[0].start_date, date(2025, 1, 10));
+        assert_eq!(months[1].start_date, date(2025, 2, 10));
     }
 
     #[test]
@@ -866,8 +866,8 @@ mod tests {
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        assert_eq!(months[0].start_date, date(2025, 1, 25));
-        assert_eq!(months[1].start_date, date(2025, 3, 25));
+        assert_eq!(months[0].start_date, date(2025, 1, 10));
+        assert_eq!(months[1].start_date, date(2025, 3, 10));
     }
 
     #[test]
@@ -906,6 +906,113 @@ mod tests {
     fn no_salary_category_returns_error() {
         let result = detect_budget_month_boundaries(&[], 1, &[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn month_starts_on_first_salary_all_deposits_in_range() {
+        // With 3 salary deposits per month, the budget month should start
+        // on the earliest one so all deposits fall within the month range.
+        let sal = salary_category();
+        let child_sal = Category {
+            id: CategoryId::from_uuid(uuid::Uuid::from_u128(201)),
+            name: CategoryName::new("Kindergeld").unwrap(),
+            parent_id: None,
+            budget: BudgetConfig::Salary,
+        };
+        let categories = vec![sal, child_sal];
+        let sal_id = salary_cat_id();
+        let child_id = CategoryId::from_uuid(uuid::Uuid::from_u128(201));
+
+        let transactions = vec![
+            // Feb: Kindergeld on 6th, Facebook on 26th, LBV on 27th
+            make_txn(Some(child_id), dec!(518), date(2026, 2, 6)),
+            make_txn(Some(sal_id), dec!(14000), date(2026, 2, 26)),
+            make_txn(Some(sal_id), dec!(1721), date(2026, 2, 27)),
+            // Jan: Kindergeld on 8th, Facebook on 26th, LBV on 30th
+            make_txn(Some(child_id), dec!(518), date(2026, 1, 8)),
+            make_txn(Some(sal_id), dec!(9330), date(2026, 1, 26)),
+            make_txn(Some(sal_id), dec!(1721), date(2026, 1, 30)),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, 3, &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 2);
+        assert_eq!(months[0].start_date, date(2026, 1, 8));
+        assert_eq!(months[1].start_date, date(2026, 2, 6));
+
+        // All Jan salary deposits fall within month 0 (01-08 to 02-05)
+        assert_eq!(months[0].end_date, Some(date(2026, 2, 5)));
+        assert!(date(2026, 1, 8) >= months[0].start_date);
+        assert!(date(2026, 1, 26) <= months[0].end_date.unwrap());
+        assert!(date(2026, 1, 30) <= months[0].end_date.unwrap());
+
+        // All Feb salary deposits fall within month 1 (02-06 to open)
+        assert_eq!(months[1].end_date, None);
+        assert!(date(2026, 2, 6) >= months[1].start_date);
+        assert!(date(2026, 2, 26) >= months[1].start_date);
+        assert!(date(2026, 2, 27) >= months[1].start_date);
+    }
+
+    #[test]
+    fn end_date_is_day_before_next_first_salary() {
+        let categories = vec![salary_category()];
+        let transactions = vec![
+            make_txn(Some(salary_cat_id()), dec!(1000), date(2025, 3, 5)),
+            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 20)),
+            make_txn(Some(salary_cat_id()), dec!(1000), date(2025, 4, 4)),
+            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 4, 19)),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, 2, &categories)
+            .expect("should detect months");
+
+        assert_eq!(months[0].start_date, date(2025, 3, 5));
+        assert_eq!(months[0].end_date, Some(date(2025, 4, 3)));
+        assert_eq!(months[1].start_date, date(2025, 4, 4));
+    }
+
+    #[test]
+    fn negative_salary_transactions_ignored_for_boundary_detection() {
+        let categories = vec![salary_category()];
+        let transactions = vec![
+            make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 1, 15)),
+            // Negative amount in salary category (e.g. correction)
+            make_txn(Some(salary_cat_id()), dec!(-500), date(2025, 1, 10)),
+        ];
+
+        // expected_salary_count = 1, so only the positive one counts
+        let months = detect_budget_month_boundaries(&transactions, 1, &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].start_date, date(2025, 1, 15));
+    }
+
+    #[test]
+    fn three_salaries_same_day() {
+        let sal = salary_category();
+        let child_sal = Category {
+            id: CategoryId::from_uuid(uuid::Uuid::from_u128(201)),
+            name: CategoryName::new("Bonus").unwrap(),
+            parent_id: None,
+            budget: BudgetConfig::Salary,
+        };
+        let categories = vec![sal, child_sal];
+        let sal_id = salary_cat_id();
+        let child_id = CategoryId::from_uuid(uuid::Uuid::from_u128(201));
+
+        let transactions = vec![
+            make_txn(Some(sal_id), dec!(3000), date(2025, 6, 1)),
+            make_txn(Some(child_id), dec!(500), date(2025, 6, 1)),
+            make_txn(Some(sal_id), dec!(1000), date(2025, 6, 1)),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, 3, &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].start_date, date(2025, 6, 1));
     }
 
     #[test]
