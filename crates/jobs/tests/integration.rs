@@ -190,7 +190,7 @@ async fn sync_valid_account_upserts_transactions(pool: PgPool) {
     let bank = make_bank_factory();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
@@ -220,7 +220,7 @@ async fn sync_nonexistent_account_returns_error(pool: PgPool) {
 
     // Valid UUID but no matching row in the accounts table
     let job = SyncJob {
-        account_id: uuid::Uuid::new_v4().to_string(),
+        account_id: AccountId::new(),
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
@@ -234,25 +234,6 @@ async fn sync_nonexistent_account_returns_error(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn sync_invalid_uuid_returns_error(pool: PgPool) {
-    let (db, _pool) = setup_db(pool).await;
-    let bank = make_bank_factory();
-
-    let job = SyncJob {
-        account_id: "not-a-uuid".to_owned(),
-    };
-
-    let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
-    assert!(result.is_err(), "sync with invalid UUID should fail");
-
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("invalid account_id UUID"),
-        "error should mention UUID parsing, got: {err_msg}"
-    );
-}
-
-#[sqlx::test]
 async fn sync_deduplicates_on_rerun(pool: PgPool) {
     let (db, _pool) = setup_db(pool).await;
     let account = seed_checking_account(&db).await;
@@ -261,7 +242,7 @@ async fn sync_deduplicates_on_rerun(pool: PgPool) {
     // Run sync twice
     for _ in 0..2 {
         let job = SyncJob {
-            account_id: account.id.as_uuid().to_string(),
+            account_id: account.id,
         };
         handle_sync_job(job, Data::new(db.clone()), Data::new(bank.clone()))
             .await
@@ -282,7 +263,7 @@ async fn sync_deduplicates_on_rerun(pool: PgPool) {
     let count_after_two = txns.len();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
     handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
         .await
@@ -317,7 +298,7 @@ async fn sync_with_active_connection_uses_factory(pool: PgPool) {
     let factory = make_bank_factory_no_fallback();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -337,7 +318,7 @@ async fn sync_expired_connection_returns_error(pool: PgPool) {
     let factory = make_bank_factory();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -358,7 +339,7 @@ async fn sync_revoked_connection_returns_error(pool: PgPool) {
     let factory = make_bank_factory();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -392,7 +373,7 @@ async fn sync_unsupported_provider_returns_error(pool: PgPool) {
     let factory = make_bank_factory();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -417,7 +398,7 @@ async fn sync_no_connection_no_fallback_returns_error(pool: PgPool) {
     let factory = make_bank_factory_no_fallback();
 
     let job = SyncJob {
-        account_id: account.id.as_uuid().to_string(),
+        account_id: account.id,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -515,7 +496,7 @@ async fn categorize_llm_high_confidence_assigns_category(pool: PgPool) {
     .await;
 
     let job = CategorizeTransactionJob {
-        transaction_id: txn.id.to_string(),
+        transaction_id: txn.id,
     };
     handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
@@ -553,7 +534,7 @@ async fn categorize_llm_low_confidence_leaves_uncategorized(pool: PgPool) {
     .await;
 
     let job = CategorizeTransactionJob {
-        transaction_id: txn.id.to_string(),
+        transaction_id: txn.id,
     };
     handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
@@ -626,7 +607,7 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized(pool: PgPool)
     .await;
 
     let job = CategorizeTransactionJob {
-        transaction_id: txn.id.to_string(),
+        transaction_id: txn.id,
     };
     handle_categorize_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
@@ -741,7 +722,7 @@ async fn correlate_llm_equal_opposite_amounts_links(pool: PgPool) {
 
     // Per-txn handler calls LLM directly for the first transaction
     let job = CorrelateTransactionJob {
-        transaction_id: txn_a.id.to_string(),
+        transaction_id: txn_a.id,
     };
     handle_correlate_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await
@@ -797,7 +778,7 @@ async fn correlate_bidirectional_both_sides_linked(pool: PgPool) {
 
     // Per-txn handler calls LLM directly
     let job = CorrelateTransactionJob {
-        transaction_id: txn_a.id.to_string(),
+        transaction_id: txn_a.id,
     };
     handle_correlate_transaction_job(job, Data::new(db.clone()), Data::new(llm))
         .await

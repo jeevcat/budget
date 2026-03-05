@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
+use budget_core::models::AccountId;
 use budget_jobs::queries::{JobRecord, QueueCount};
 use budget_jobs::schedule_queries::AccountScheduleStatus;
 use budget_jobs::{CategorizeJob, CorrelateJob, PipelineContext, SyncJob};
@@ -76,7 +77,7 @@ async fn schedule_status(
 /// Returns `AppError` if the job cannot be enqueued.
 async fn trigger_sync(
     State(state): State<AppState>,
-    Path(account_id): Path<String>,
+    Path(account_id): Path<AccountId>,
 ) -> Result<StatusCode, AppError> {
     state
         .sync_storage
@@ -128,7 +129,7 @@ async fn trigger_correlate(State(state): State<AppState>) -> Result<StatusCode, 
 /// Returns `AppError` if the pipeline cannot be enqueued.
 async fn trigger_pipeline(
     State(state): State<AppState>,
-    Path(account_id): Path<String>,
+    Path(account_id): Path<AccountId>,
 ) -> Result<StatusCode, AppError> {
     let ctx = PipelineContext {
         account_id,

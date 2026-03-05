@@ -9,6 +9,7 @@ use apalis_workflow::Workflow;
 use serde::{Deserialize, Serialize};
 
 use budget_core::db::Db;
+use budget_core::models::AccountId;
 
 use super::schedule_queries::{self, RunStatus};
 use super::{ApalisPool, BankProviderFactory};
@@ -17,7 +18,7 @@ use super::{ApalisPool, BankProviderFactory};
 /// string so scheduler-triggered runs can record their outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineContext {
-    pub account_id: String,
+    pub account_id: AccountId,
     /// Set when the scheduler triggers the pipeline; `None` for manual triggers.
     pub schedule_run_id: Option<String>,
 }
@@ -40,7 +41,7 @@ pub async fn step_sync(
     factory: Data<BankProviderFactory>,
     pool: Data<ApalisPool>,
 ) -> Result<PipelineContext, BoxDynError> {
-    match super::sync::sync_account(&ctx.account_id, &db, &factory).await {
+    match super::sync::sync_account(ctx.account_id, &db, &factory).await {
         Ok(()) => Ok(ctx),
         Err(e) => {
             fail_schedule_run(&pool, &ctx, &e).await;

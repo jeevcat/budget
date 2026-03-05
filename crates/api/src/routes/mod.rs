@@ -30,6 +30,9 @@ impl From<sqlx::Error> for AppError {
             return Self(StatusCode::CONFLICT, "already exists".to_owned());
         }
         tracing::error!(error = %e, "database error");
-        Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        Self(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database error".to_owned(),
+        )
     }
 }

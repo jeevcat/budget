@@ -14,9 +14,6 @@
 
 ## Architecture Review Findings
 
-### Medium Priority
-- [ ] **Stop leaking DB errors to clients**: `From<sqlx::Error>` in `routes/mod.rs` sends raw `e.to_string()` as response body, exposing schema details. Return generic "Database error" message instead
-
 ### Blocked Upstream
 - [ ] **Gradle in Claude Code sandbox**: `dl.google.com` / `maven.google.com` are blocked by the sandbox egress proxy (403 `host_not_allowed`), so Gradle can't resolve AGP or Google Maven deps. The pre-commit hook gracefully skips Kotlin compilation when this happens. Once [anthropics/claude-code#16222](https://github.com/anthropics/claude-code/issues/16222) is fixed, remove the skip logic from `.github/hooks/pre-commit` and verify `./gradlew compileDebugKotlin` works in sandbox sessions
 

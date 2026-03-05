@@ -2,7 +2,6 @@
 //! into the local database.
 
 use apalis::prelude::*;
-use uuid::Uuid;
 
 use budget_core::db::Db;
 use budget_core::models::{
@@ -91,22 +90,16 @@ fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) -> Tra
 /// # Errors
 ///
 /// Returns an error if:
-/// - `raw_account_id` is not a valid UUID.
 /// - The account does not exist in the database.
 /// - The account's connection is missing, expired, or revoked.
 /// - The bank provider call fails.
 /// - One or more transaction upserts fail (partial failure — successful
 ///   upserts are preserved).
 pub(crate) async fn sync_account(
-    raw_account_id: &str,
+    account_id: AccountId,
     db: &Db,
     factory: &BankProviderFactory,
 ) -> Result<(), BoxDynError> {
-    let uuid: Uuid = raw_account_id
-        .parse()
-        .map_err(|e| format!("invalid account_id UUID: {e}"))?;
-    let account_id = AccountId::from_uuid(uuid);
-
     let account = db
         .get_account(account_id)
         .await?
@@ -208,5 +201,5 @@ pub async fn handle_sync_job(
     db: Data<Db>,
     factory: Data<BankProviderFactory>,
 ) -> Result<(), BoxDynError> {
-    sync_account(&job.account_id, &db, &factory).await
+    sync_account(job.account_id, &db, &factory).await
 }

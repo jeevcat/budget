@@ -7,7 +7,7 @@
 use apalis::prelude::*;
 
 use budget_core::db::Db;
-use budget_core::models::{CategoryMethod, RuleType, TransactionId};
+use budget_core::models::{CategoryMethod, RuleType};
 use budget_core::rules::{CompiledRule, compile_rule, evaluate_categorization_rules};
 
 use super::{ApalisPool, CategorizeJob, CategorizeTransactionJob, LlmClient};
@@ -68,7 +68,7 @@ pub(crate) async fn categorize_fan_out(
 
         storage
             .push(CategorizeTransactionJob {
-                transaction_id: txn.id.to_string(),
+                transaction_id: txn.id,
             })
             .await?;
         enqueued += 1;
@@ -98,11 +98,7 @@ pub async fn handle_categorize_transaction_job(
     db: Data<Db>,
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
-    let txn_id: TransactionId = job
-        .transaction_id
-        .parse::<uuid::Uuid>()
-        .map(TransactionId::from_uuid)
-        .map_err(|e| format!("invalid transaction id: {e}"))?;
+    let txn_id = job.transaction_id;
 
     let txn = db
         .get_transaction_by_id(txn_id)

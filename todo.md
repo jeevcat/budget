@@ -19,14 +19,6 @@
 ### ValidDays
 - `AuthorizeRequest.valid_days` — `u32` with no upper bound, could request absurd durations
 
-## Job Queue Typed IDs
-
-### CategorizeTransactionJob / CorrelateTransactionJob
-- `transaction_id: String` — should be `TransactionId` (parsed at enqueue time, not dequeue)
-
-### SyncJob
-- `account_id: String` — should be `AccountId`
-
 ## Config Validation
 
 ### Config struct (`core/src/lib.rs`)

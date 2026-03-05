@@ -233,7 +233,7 @@ async fn enqueue_pipeline(
     schedule_queries::insert_schedule_run(pool, &run).await?;
 
     let ctx = PipelineContext {
-        account_id: account_id.to_string(),
+        account_id: budget_core::models::AccountId::from_uuid(account_id),
         schedule_run_id: Some(run_id.to_string()),
     };
 

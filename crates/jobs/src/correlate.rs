@@ -116,7 +116,7 @@ pub(crate) async fn correlate_fan_out(
         // -- Enqueue for LLM processing -------------------------------------
         storage
             .push(CorrelateTransactionJob {
-                transaction_id: txn.id.to_string(),
+                transaction_id: txn.id,
             })
             .await?;
         enqueued += 1;
@@ -146,11 +146,7 @@ pub async fn handle_correlate_transaction_job(
     db: Data<Db>,
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
-    let txn_id: TransactionId = job
-        .transaction_id
-        .parse::<uuid::Uuid>()
-        .map(TransactionId::from_uuid)
-        .map_err(|e| format!("invalid transaction id: {e}"))?;
+    let txn_id = job.transaction_id;
 
     let txn = db
         .get_transaction_by_id(txn_id)

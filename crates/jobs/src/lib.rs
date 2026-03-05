@@ -12,6 +12,7 @@ use apalis::prelude::*;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+use budget_core::models::{AccountId, TransactionId};
 use budget_providers::{
     CategorizeInput, CategorizeResult, CorrelationResult, EnableBankingConfig,
     EnableBankingProvider, GeminiProvider, MockLlmProvider, ProposedRule, ProviderError,
@@ -377,8 +378,7 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
 /// Fetch new transactions from a bank provider for a specific account.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncJob {
-    /// The domain `AccountId` (UUID string) to sync.
-    pub account_id: String,
+    pub account_id: AccountId,
 }
 
 /// Run categorization rules and LLM on all uncategorized transactions.
@@ -392,13 +392,13 @@ pub struct CorrelateJob;
 /// Categorize a single transaction via LLM (enqueued by the fan-out job).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CategorizeTransactionJob {
-    pub transaction_id: String,
+    pub transaction_id: TransactionId,
 }
 
 /// Correlate a single transaction via LLM (enqueued by the fan-out job).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CorrelateTransactionJob {
-    pub transaction_id: String,
+    pub transaction_id: TransactionId,
 }
 
 /// A no-op job for health checks and testing the job queue.
