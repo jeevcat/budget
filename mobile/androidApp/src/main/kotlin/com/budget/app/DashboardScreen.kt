@@ -208,26 +208,6 @@ private fun DashboardTabContent(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      if (state.totalIncome > 0) {
-        item {
-          Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            StatCard(
-                label = "Income",
-                value = formatAmount(state.totalIncome),
-                modifier = Modifier.weight(1f),
-            )
-            StatCard(
-                label = "Saved",
-                value = formatAmount(state.saved, showSign = true),
-                valueColor = if (state.saved < 0) OverBudgetColor else UnderBudgetColor,
-                modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
       when (state.selectedTab) {
         BudgetMode.MONTHLY -> monthlyTabContent(state = state, viewModel = viewModel)
         BudgetMode.ANNUAL -> annualTabContent(state = state, viewModel = viewModel)
@@ -255,7 +235,13 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
-  item { SummaryCards(summary = state.monthlySummary) }
+  item {
+    SummaryCards(
+        summary = state.monthlySummary,
+        totalIncome = state.totalIncome,
+        saved = state.saved,
+    )
+  }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -424,8 +410,30 @@ private fun UnbudgetedRow(spent: Double, count: Int, onClick: () -> Unit) {
 // -- Summary cards (2×2) ---------------------------------------------------
 
 @Composable
-private fun SummaryCards(summary: BudgetSummary) {
+private fun SummaryCards(
+    summary: BudgetSummary,
+    totalIncome: Double = 0.0,
+    saved: Double = 0.0,
+) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (totalIncome > 0) {
+      Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        StatCard(
+            label = "Income",
+            value = formatAmount(totalIncome),
+            modifier = Modifier.weight(1f),
+        )
+        StatCard(
+            label = "Saved",
+            value = formatAmount(saved, showSign = true),
+            valueColor = if (saved < 0) OverBudgetColor else UnderBudgetColor,
+            modifier = Modifier.weight(1f),
+        )
+      }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

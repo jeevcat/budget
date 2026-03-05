@@ -574,11 +574,26 @@ function BudgetSection({
   items,
   summary,
   barMax,
+  totalIncome = 0,
+  saved = 0,
   selectedCategoryId,
   onCategoryClick,
 }) {
   return html`
     <div class="dash-totals">
+      ${
+        totalIncome > 0 &&
+        html`
+        <article class="card dash-stat-card">
+          <span class="dash-stat-label text-light">Income</span>
+          <span class="dash-stat-value">${formatAmount(totalIncome, { decimals: 0 })}</span>
+        </article>
+        <article class="card dash-stat-card">
+          <span class="dash-stat-label text-light">Saved</span>
+          <span class="dash-stat-value ${saved < 0 ? "dash-negative" : "dash-positive"}">${formatAmount(saved, { decimals: 0, sign: true })}</span>
+        </article>
+      `
+      }
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Total Budget</span>
         <span class="dash-stat-value">${formatAmount(summary.total_budget, { decimals: 0 })}</span>
@@ -1068,21 +1083,6 @@ function Dashboard() {
         >\u203A</button>
       </div>
     </div>
-    ${
-      totalIncome > 0 &&
-      html`
-      <div class="dash-income-summary">
-        <article class="card dash-stat-card">
-          <span class="dash-stat-label text-light">Income</span>
-          <span class="dash-stat-value">${formatAmount(totalIncome, { decimals: 0 })}</span>
-        </article>
-        <article class="card dash-stat-card">
-          <span class="dash-stat-label text-light">Saved</span>
-          <span class="dash-stat-value ${saved < 0 ? "dash-negative" : "dash-positive"}">${formatAmount(saved, { decimals: 0, sign: true })}</span>
-        </article>
-      </div>
-    `
-    }
     <ot-tabs ref=${tabsCallbackRef}>
       <div role="tablist">
         <button role="tab">Monthly</button>
@@ -1096,6 +1096,8 @@ function Dashboard() {
               items=${monthly}
               summary=${statusResp.monthly_summary}
               barMax=${Number(statusResp.monthly_summary.bar_max)}
+              totalIncome=${totalIncome}
+              saved=${saved}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
