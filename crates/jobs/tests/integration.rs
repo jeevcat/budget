@@ -12,9 +12,9 @@ use sqlx::PgPool;
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, Category, CategoryId, CategoryName, Connection, ConnectionId,
-    ConnectionStatus, CorrelationType, CurrencyCode, MatchField, Rule, RuleCondition, RuleId,
-    RuleType, Transaction,
+    Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
+    Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField, Rule,
+    RuleCondition, RuleId, RuleType, Transaction,
 };
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
@@ -118,9 +118,13 @@ async fn seed_transaction(
     posted_date: NaiveDate,
     category_id: Option<CategoryId>,
 ) -> Transaction {
+    let categorization = match category_id {
+        Some(id) => Categorization::Manual(id),
+        None => Categorization::Uncategorized,
+    };
     let txn = Transaction {
         account_id,
-        category_id,
+        categorization,
         amount,
         merchant_name: merchant.to_owned(),
         posted_date,
@@ -465,7 +469,7 @@ async fn categorize_rule_based_assignment(pool: PgPool) {
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
-        found.category_id,
+        found.categorization.category_id(),
         Some(groceries_cat.id),
         "transaction should be categorized by the rule"
     );
@@ -506,7 +510,7 @@ async fn categorize_llm_high_confidence_assigns_category(pool: PgPool) {
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
-        found.category_id,
+        found.categorization.category_id(),
         Some(groceries_cat.id),
         "LLM high-confidence result should assign the category"
     );
@@ -544,7 +548,8 @@ async fn categorize_llm_low_confidence_leaves_uncategorized(pool: PgPool) {
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
-        found.category_id, None,
+        found.categorization,
+        Categorization::Uncategorized,
         "LLM confidence 0.70 < 0.80 threshold: transaction should stay uncategorized"
     );
 }
@@ -579,7 +584,7 @@ async fn categorize_no_uncategorized_transactions_is_noop(pool: PgPool) {
     let txns = db.list_transactions().await.expect("list txns");
     assert_eq!(txns.len(), 1);
     assert_eq!(
-        txns[0].category_id,
+        txns[0].categorization.category_id(),
         Some(cat.id),
         "already-categorized transaction should be unchanged"
     );
@@ -617,7 +622,8 @@ async fn categorize_llm_unknown_category_name_leaves_uncategorized(pool: PgPool)
     let found = updated.iter().find(|t| t.id == txn.id).expect("find txn");
 
     assert_eq!(
-        found.category_id, None,
+        found.categorization,
+        Categorization::Uncategorized,
         "LLM proposed a category name not in the DB: transaction should stay uncategorized"
     );
 }

@@ -151,11 +151,17 @@ pub fn filter_for_budget<'a>(
         .iter()
         .filter(|t| {
             // Exclude transactions in project-mode categories
-            if t.category_id.is_some_and(|cid| project_cats.contains(&cid)) {
+            if t.categorization
+                .category_id()
+                .is_some_and(|cid| project_cats.contains(&cid))
+            {
                 return false;
             }
             // Exclude transactions in salary-mode categories
-            if t.category_id.is_some_and(|cid| salary_cats.contains(&cid)) {
+            if t.categorization
+                .category_id()
+                .is_some_and(|cid| salary_cats.contains(&cid))
+            {
                 return false;
             }
             !is_correlated_exclusion(t, &reimbursed_ids)
@@ -187,7 +193,8 @@ pub fn detect_budget_month_boundaries(
     let mut salary_txns: Vec<&Transaction> = transactions
         .iter()
         .filter(|t| {
-            t.category_id
+            t.categorization
+                .category_id()
                 .is_some_and(|cid| salary_cat_ids.contains(&cid))
                 && t.amount > Decimal::ZERO
         })
@@ -277,7 +284,9 @@ fn compute_spending_for_subtree(
     -filtered_txns
         .iter()
         .filter(|t| {
-            t.category_id.is_some_and(|cid| subtree.contains(&cid))
+            t.categorization
+                .category_id()
+                .is_some_and(|cid| subtree.contains(&cid))
                 && is_in_budget_month(t.posted_date, budget_month)
         })
         .fold(Decimal::ZERO, |acc, t| acc + t.amount)
@@ -538,7 +547,10 @@ fn compute_project_status(
     let spent: Decimal = -transactions
         .iter()
         .filter(|t| {
-            let in_subtree = t.category_id.is_some_and(|cid| subtree.contains(&cid));
+            let in_subtree = t
+                .categorization
+                .category_id()
+                .is_some_and(|cid| subtree.contains(&cid));
             if !in_subtree {
                 return false;
             }
@@ -639,7 +651,10 @@ pub fn filter_for_project<'a>(
     transactions
         .iter()
         .filter(|t| {
-            let in_project = t.category_id.is_some_and(|cid| project_cats.contains(&cid));
+            let in_project = t
+                .categorization
+                .category_id()
+                .is_some_and(|cid| project_cats.contains(&cid));
             if !in_project {
                 return false;
             }
@@ -681,7 +696,7 @@ pub fn compute_project_child_breakdowns(
     let mut direct_spent = Decimal::ZERO;
 
     for t in project_transactions {
-        let Some(cid) = t.category_id else {
+        let Some(cid) = t.categorization.category_id() else {
             continue;
         };
         let amt = -t.amount; // expenses are negative, flip to positive
@@ -729,7 +744,7 @@ pub fn compute_project_child_breakdowns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CategoryId, CategoryName, Correlation};
+    use crate::models::{Categorization, CategoryId, CategoryName, Correlation};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
 
@@ -742,12 +757,12 @@ mod tests {
     }
 
     fn make_txn(
-        category_id: Option<CategoryId>,
+        categorization: Categorization,
         amount: Decimal,
         posted_date: NaiveDate,
     ) -> Transaction {
         Transaction {
-            category_id,
+            categorization,
             amount,
             merchant_name: "Test".to_owned(),
             remittance_information: vec!["Test transaction".to_owned()],
@@ -815,9 +830,21 @@ mod tests {
     fn detect_single_salary_budget_months() {
         let categories = vec![salary_category()];
         let transactions = vec![
-            make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 1, 15)),
-            make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 2, 14)),
-            make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 3, 15)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 14),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 3, 15),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
@@ -839,10 +866,26 @@ mod tests {
     fn detect_two_salary_budget_months() {
         let categories = vec![salary_category()];
         let transactions = vec![
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 1, 10)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 1, 25)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 2, 10)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 2, 24)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 1, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 1, 25),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 2, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 2, 24),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
@@ -859,12 +902,32 @@ mod tests {
         let categories = vec![salary_category()];
         // Only 1 salary in February when 2 expected
         let transactions = vec![
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 1, 10)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 1, 25)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 2, 10)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 1, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 1, 25),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 2, 10),
+            ),
             // Missing second salary in Feb
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 10)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 25)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 3, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 3, 25),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
@@ -882,15 +945,35 @@ mod tests {
         let categories = vec![salary_category(), food_category()];
         let transactions = vec![
             // Dec salary
-            make_txn(Some(salary_cat_id()), dec!(10376.32), date(2025, 12, 18)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(10376.32),
+                date(2025, 12, 18),
+            ),
             // Jan salary
-            make_txn(Some(salary_cat_id()), dec!(9330.13), date(2026, 1, 26)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330.13),
+                date(2026, 1, 26),
+            ),
             // Feb salary
-            make_txn(Some(salary_cat_id()), dec!(14000.19), date(2026, 2, 26)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000.19),
+                date(2026, 2, 26),
+            ),
             // Non-salary positive transactions should be ignored
-            make_txn(Some(food_category().id), dec!(50), date(2026, 2, 23)),
+            make_txn(
+                Categorization::Manual(food_category().id),
+                dec!(50),
+                date(2026, 2, 23),
+            ),
             // Negative salary-category transactions (transfers out) should be ignored
-            make_txn(Some(salary_cat_id()), dec!(-1000), date(2026, 1, 2)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(-1000),
+                date(2026, 1, 2),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
@@ -930,13 +1013,37 @@ mod tests {
 
         let transactions = vec![
             // Feb: Kindergeld on 6th, Facebook on 26th, LBV on 27th
-            make_txn(Some(child_id), dec!(518), date(2026, 2, 6)),
-            make_txn(Some(sal_id), dec!(14000), date(2026, 2, 26)),
-            make_txn(Some(sal_id), dec!(1721), date(2026, 2, 27)),
+            make_txn(
+                Categorization::Manual(child_id),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(sal_id),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+            make_txn(
+                Categorization::Manual(sal_id),
+                dec!(1721),
+                date(2026, 2, 27),
+            ),
             // Jan: Kindergeld on 8th, Facebook on 26th, LBV on 30th
-            make_txn(Some(child_id), dec!(518), date(2026, 1, 8)),
-            make_txn(Some(sal_id), dec!(9330), date(2026, 1, 26)),
-            make_txn(Some(sal_id), dec!(1721), date(2026, 1, 30)),
+            make_txn(
+                Categorization::Manual(child_id),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(sal_id),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(sal_id),
+                dec!(1721),
+                date(2026, 1, 30),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
@@ -963,10 +1070,26 @@ mod tests {
     fn end_date_is_day_before_next_first_salary() {
         let categories = vec![salary_category()];
         let transactions = vec![
-            make_txn(Some(salary_cat_id()), dec!(1000), date(2025, 3, 5)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 3, 20)),
-            make_txn(Some(salary_cat_id()), dec!(1000), date(2025, 4, 4)),
-            make_txn(Some(salary_cat_id()), dec!(2000), date(2025, 4, 19)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1000),
+                date(2025, 3, 5),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 3, 20),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1000),
+                date(2025, 4, 4),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 4, 19),
+            ),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
@@ -981,9 +1104,17 @@ mod tests {
     fn negative_salary_transactions_ignored_for_boundary_detection() {
         let categories = vec![salary_category()];
         let transactions = vec![
-            make_txn(Some(salary_cat_id()), dec!(3000), date(2025, 1, 15)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
             // Negative amount in salary category (e.g. correction)
-            make_txn(Some(salary_cat_id()), dec!(-500), date(2025, 1, 10)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(-500),
+                date(2025, 1, 10),
+            ),
         ];
 
         // expected_salary_count = 1, so only the positive one counts
@@ -1008,9 +1139,13 @@ mod tests {
         let child_id = CategoryId::from_uuid(uuid::Uuid::from_u128(201));
 
         let transactions = vec![
-            make_txn(Some(sal_id), dec!(3000), date(2025, 6, 1)),
-            make_txn(Some(child_id), dec!(500), date(2025, 6, 1)),
-            make_txn(Some(sal_id), dec!(1000), date(2025, 6, 1)),
+            make_txn(Categorization::Manual(sal_id), dec!(3000), date(2025, 6, 1)),
+            make_txn(
+                Categorization::Manual(child_id),
+                dec!(500),
+                date(2025, 6, 1),
+            ),
+            make_txn(Categorization::Manual(sal_id), dec!(1000), date(2025, 6, 1)),
         ];
 
         let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
@@ -1035,11 +1170,27 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(groceries.id), dec!(-50), date(2025, 1, 20)),
-            make_txn(Some(restaurants.id), dec!(-30), date(2025, 1, 22)),
-            make_txn(Some(food.id), dec!(-10), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(groceries.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(restaurants.id),
+                dec!(-30),
+                date(2025, 1, 22),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-10),
+                date(2025, 1, 25),
+            ),
             // Outside budget month — should be excluded
-            make_txn(Some(groceries.id), dec!(-100), date(2025, 2, 14)),
+            make_txn(
+                Categorization::Manual(groceries.id),
+                dec!(-100),
+                date(2025, 2, 14),
+            ),
         ];
 
         // Spending on Food (parent) includes all children
@@ -1077,8 +1228,16 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(groceries.id), dec!(-50), date(2025, 1, 20)),
-            make_txn(Some(christmas_food.id), dec!(-80), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(groceries.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(christmas_food.id),
+                dec!(-80),
+                date(2025, 1, 25),
+            ),
         ];
 
         // Monthly parent should NOT include the annual subcategory's spending
@@ -1111,9 +1270,17 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
             // This transaction is in a project category — excluded from budget
-            make_txn(Some(project_cat.id), dec!(-500), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(project_cat.id),
+                dec!(-500),
+                date(2025, 1, 20),
+            ),
         ];
 
         let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
@@ -1133,8 +1300,16 @@ mod tests {
         let categories = vec![food.clone(), salary.clone()];
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
-            make_txn(Some(salary.id), dec!(3000), date(2025, 1, 15)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(salary.id),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
         ];
 
         let filtered = filter_for_budget(&transactions, &categories);
@@ -1154,14 +1329,22 @@ mod tests {
             salary_transactions_detected: 1,
         };
 
-        let mut transfer_txn = make_txn(Some(food.id), dec!(-200), date(2025, 1, 20));
+        let mut transfer_txn = make_txn(
+            Categorization::Manual(food.id),
+            dec!(-200),
+            date(2025, 1, 20),
+        );
         transfer_txn.correlation = Some(crate::models::Correlation {
             partner_id: TransactionId::new(),
             correlation_type: CorrelationType::Transfer,
         });
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
             transfer_txn,
         ];
 
@@ -1182,18 +1365,30 @@ mod tests {
         };
 
         // Original expense that gets reimbursed
-        let original_txn = make_txn(Some(food.id), dec!(-200), date(2025, 1, 20));
+        let original_txn = make_txn(
+            Categorization::Manual(food.id),
+            dec!(-200),
+            date(2025, 1, 20),
+        );
         let original_id = original_txn.id;
 
         // Reimbursement linked to the original (positive: money coming back)
-        let mut reimbursement = make_txn(Some(food.id), dec!(200), date(2025, 1, 25));
+        let mut reimbursement = make_txn(
+            Categorization::Manual(food.id),
+            dec!(200),
+            date(2025, 1, 25),
+        );
         reimbursement.correlation = Some(crate::models::Correlation {
             partner_id: original_id,
             correlation_type: CorrelationType::Reimbursement,
         });
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-50), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
             original_txn,
             reimbursement,
         ];
@@ -1216,7 +1411,11 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(food.id), dec!(-100), date(2025, 1, 20))];
+        let transactions = vec![make_txn(
+            Categorization::Manual(food.id),
+            dec!(-100),
+            date(2025, 1, 20),
+        )];
 
         let today = date(2025, 1, 25);
         let status =
@@ -1247,7 +1446,11 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(food.id), dec!(-250), date(2025, 1, 20))];
+        let transactions = vec![make_txn(
+            Categorization::Manual(food.id),
+            dec!(-250),
+            date(2025, 1, 20),
+        )];
 
         let today = date(2025, 1, 25);
         let status =
@@ -1341,9 +1544,21 @@ mod tests {
         let all_months = [bm_jan.clone(), bm_feb.clone(), bm_mar.clone()];
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-400), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(-600), date(2025, 2, 20)),
-            make_txn(Some(food.id), dec!(-200), date(2025, 3, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-400),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-600),
+                date(2025, 2, 20),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-200),
+                date(2025, 3, 20),
+            ),
         ];
 
         let today = date(2025, 3, 25);
@@ -1384,11 +1599,27 @@ mod tests {
         let all_months = [bm.clone()];
 
         let transactions = vec![
-            make_txn(Some(project.id), dec!(-2000), date(2025, 2, 15)),
-            make_txn(Some(project.id), dec!(-3000), date(2025, 4, 10)),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-2000),
+                date(2025, 2, 15),
+            ),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-3000),
+                date(2025, 4, 10),
+            ),
             // Outside project range — excluded
-            make_txn(Some(project.id), dec!(-500), date(2024, 12, 20)),
-            make_txn(Some(project.id), dec!(-500), date(2025, 7, 1)),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-500),
+                date(2024, 12, 20),
+            ),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-500),
+                date(2025, 7, 1),
+            ),
         ];
 
         let today = date(2025, 4, 15);
@@ -1426,7 +1657,11 @@ mod tests {
         };
         let all_months = [bm.clone()];
 
-        let transactions = vec![make_txn(Some(project.id), dec!(-1000), date(2025, 2, 1))];
+        let transactions = vec![make_txn(
+            Categorization::Manual(project.id),
+            dec!(-1000),
+            date(2025, 2, 1),
+        )];
 
         let today = date(2025, 4, 1);
         let status = compute_budget_status(
@@ -1458,10 +1693,18 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-80), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(-45), date(2025, 1, 22)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-80),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-45),
+                date(2025, 1, 22),
+            ),
             // Refund credited back (positive amount from the bank)
-            make_txn(Some(food.id), dec!(25), date(2025, 1, 24)),
+            make_txn(Categorization::Manual(food.id), dec!(25), date(2025, 1, 24)),
         ];
 
         let spending = compute_category_spending(&transactions, food.id, &bm, &categories);
@@ -1495,11 +1738,27 @@ mod tests {
 
         let transactions = vec![
             // Food expenses across two months
-            make_txn(Some(food.id), dec!(-300), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(-200), date(2025, 2, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-300),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-200),
+                date(2025, 2, 20),
+            ),
             // Insurance in both months
-            make_txn(Some(insurance.id), dec!(-100), date(2025, 1, 25)),
-            make_txn(Some(insurance.id), dec!(-150), date(2025, 2, 18)),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-100),
+                date(2025, 1, 25),
+            ),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-150),
+                date(2025, 2, 18),
+            ),
         ];
 
         let today = date(2025, 2, 25);
@@ -1552,9 +1811,17 @@ mod tests {
         let all_months = [bm.clone()];
 
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-120), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-120),
+                date(2025, 1, 20),
+            ),
             // Large annual insurance payment in the same month
-            make_txn(Some(insurance.id), dec!(-1200), date(2025, 1, 18)),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-1200),
+                date(2025, 1, 18),
+            ),
         ];
 
         let today = date(2025, 1, 25);
@@ -1615,17 +1882,41 @@ mod tests {
 
         let transactions = vec![
             // Jan food
-            make_txn(Some(food.id), dec!(-350), date(2025, 1, 20)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-350),
+                date(2025, 1, 20),
+            ),
             // Jan transport
-            make_txn(Some(transport.id), dec!(-180), date(2025, 1, 22)),
+            make_txn(
+                Categorization::Manual(transport.id),
+                dec!(-180),
+                date(2025, 1, 22),
+            ),
             // Jan insurance (annual)
-            make_txn(Some(insurance.id), dec!(-200), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-200),
+                date(2025, 1, 25),
+            ),
             // Feb food
-            make_txn(Some(food.id), dec!(-420), date(2025, 2, 18)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-420),
+                date(2025, 2, 18),
+            ),
             // Feb transport
-            make_txn(Some(transport.id), dec!(-90), date(2025, 2, 20)),
+            make_txn(
+                Categorization::Manual(transport.id),
+                dec!(-90),
+                date(2025, 2, 20),
+            ),
             // Feb insurance (annual)
-            make_txn(Some(insurance.id), dec!(-200), date(2025, 2, 16)),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-200),
+                date(2025, 2, 16),
+            ),
         ];
 
         let today = date(2025, 2, 25);
@@ -1709,8 +2000,16 @@ mod tests {
 
         // Net positive inflow in an expense category (e.g. large refund)
         let transactions = vec![
-            make_txn(Some(food.id), dec!(-100), date(2025, 1, 20)),
-            make_txn(Some(food.id), dec!(300), date(2025, 1, 22)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-100),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(300),
+                date(2025, 1, 22),
+            ),
         ];
 
         let today = date(2025, 1, 25);
@@ -1742,10 +2041,22 @@ mod tests {
         let all_months = [bm.clone()];
 
         let transactions = vec![
-            make_txn(Some(project.id), dec!(-5000), date(2025, 2, 15)),
-            make_txn(Some(project.id), dec!(-3000), date(2025, 4, 10)),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-5000),
+                date(2025, 2, 15),
+            ),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(-3000),
+                date(2025, 4, 10),
+            ),
             // Partial refund on materials
-            make_txn(Some(project.id), dec!(800), date(2025, 4, 20)),
+            make_txn(
+                Categorization::Manual(project.id),
+                dec!(800),
+                date(2025, 4, 20),
+            ),
         ];
 
         let today = date(2025, 4, 25);
@@ -2117,9 +2428,21 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(parent.id), dec!(-20), date(2025, 1, 18)),
-            make_txn(Some(child_with_budget.id), dec!(-80), date(2025, 1, 20)),
-            make_txn(Some(child_no_budget.id), dec!(-50), date(2025, 1, 22)),
+            make_txn(
+                Categorization::Manual(parent.id),
+                dec!(-20),
+                date(2025, 1, 18),
+            ),
+            make_txn(
+                Categorization::Manual(child_with_budget.id),
+                dec!(-80),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(child_no_budget.id),
+                dec!(-50),
+                date(2025, 1, 22),
+            ),
         ];
 
         let parent_spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
@@ -2251,9 +2574,21 @@ mod tests {
             salary_transactions_detected: 1,
         };
         let transactions = vec![
-            make_txn(Some(root.id), dec!(-10), date(2025, 1, 18)),
-            make_txn(Some(child.id), dec!(-40), date(2025, 1, 20)),
-            make_txn(Some(grandchild.id), dec!(-25), date(2025, 1, 22)),
+            make_txn(
+                Categorization::Manual(root.id),
+                dec!(-10),
+                date(2025, 1, 18),
+            ),
+            make_txn(
+                Categorization::Manual(child.id),
+                dec!(-40),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(grandchild.id),
+                dec!(-25),
+                date(2025, 1, 22),
+            ),
         ];
 
         // Food includes itself ($10) + Groceries ($40), but not Organic ($25)
@@ -2445,8 +2780,16 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(parent.id), dec!(-100), date(2025, 1, 20)),
-            make_txn(Some(child.id), dec!(-50), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(parent.id),
+                dec!(-100),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(child.id),
+                dec!(-50),
+                date(2025, 1, 25),
+            ),
         ];
 
         // Annual parent spending should NOT include the monthly child
@@ -2483,8 +2826,16 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(parent.id), dec!(-200), date(2025, 1, 20)),
-            make_txn(Some(child.id), dec!(-5000), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(parent.id),
+                dec!(-200),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(child.id),
+                dec!(-5000),
+                date(2025, 1, 25),
+            ),
         ];
 
         // Monthly parent should NOT include the project child
@@ -2514,8 +2865,8 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(c1.id), dec!(-100), date(2025, 1, 20)),
-            make_txn(Some(c2.id), dec!(-80), date(2025, 1, 25)),
+            make_txn(Categorization::Manual(c1.id), dec!(-100), date(2025, 1, 20)),
+            make_txn(Categorization::Manual(c2.id), dec!(-80), date(2025, 1, 25)),
         ];
 
         let spending = compute_category_spending(&transactions, parent.id, &bm, &categories);
@@ -2551,8 +2902,16 @@ mod tests {
         };
 
         let transactions = vec![
-            make_txn(Some(inherits.id), dec!(-100), date(2025, 1, 20)),
-            make_txn(Some(overrides.id), dec!(-200), date(2025, 1, 25)),
+            make_txn(
+                Categorization::Manual(inherits.id),
+                dec!(-100),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(overrides.id),
+                dec!(-200),
+                date(2025, 1, 25),
+            ),
         ];
 
         // Only groceries (inherits) contributes to monthly parent
@@ -2809,10 +3168,26 @@ mod tests {
 
         // Insurance premiums paid in early January (inside bm_dec: Dec 30 → Jan 29)
         let transactions = vec![
-            make_txn(Some(insurance.id), dec!(-1208), date(2026, 1, 2)),
-            make_txn(Some(insurance.id), dec!(-70), date(2026, 1, 2)),
-            make_txn(Some(insurance.id), dec!(-1392), date(2026, 1, 5)),
-            make_txn(Some(insurance.id), dec!(-529), date(2026, 1, 15)),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-1208),
+                date(2026, 1, 2),
+            ),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-70),
+                date(2026, 1, 2),
+            ),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-1392),
+                date(2026, 1, 5),
+            ),
+            make_txn(
+                Categorization::Manual(insurance.id),
+                dec!(-529),
+                date(2026, 1, 15),
+            ),
         ];
 
         let today = date(2026, 3, 4);

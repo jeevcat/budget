@@ -4,7 +4,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use budget_core::models::{CategoryId, CategoryMethod, RuleType, Transaction, TransactionId};
+use budget_core::models::{
+    Categorization, CategoryId, CategoryMethod, RuleType, Transaction, TransactionId,
+};
 use budget_core::rules::compile_rule;
 use budget_jobs::CategorizeJob;
 use budget_providers::{MatchField, RuleContext};
@@ -308,14 +310,14 @@ async fn generate_rule(
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "transaction not found".to_owned()))?;
 
-    let category_id = txn.category_id.ok_or_else(|| {
+    let category_id = txn.categorization.category_id().ok_or_else(|| {
         AppError(
             StatusCode::BAD_REQUEST,
             "transaction is not categorized".to_owned(),
         )
     })?;
 
-    if txn.category_method == Some(CategoryMethod::Rule) {
+    if matches!(txn.categorization, Categorization::Rule(_)) {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "transaction was categorized by a rule".to_owned(),

@@ -6,10 +6,10 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use crate::models::{
-    Account, AccountId, AccountType, BudgetConfig, BudgetMode, BudgetType, Category, CategoryId,
-    CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation, CorrelationType,
-    ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleId, RuleType, Transaction,
-    TransactionId,
+    Account, AccountId, AccountType, BudgetConfig, BudgetMode, BudgetType, Categorization,
+    Category, CategoryId, CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation,
+    CorrelationType, ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleId,
+    RuleType, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -114,10 +114,13 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         _ => None,
     };
 
+    let category_id: Option<CategoryId> = row.try_get("category_id")?;
+    let category_method = parse_enum_opt::<CategoryMethod>(row, "category_method")?;
+
     Ok(Transaction {
         id: row.try_get("id")?,
         account_id: row.try_get("account_id")?,
-        category_id: row.try_get("category_id")?,
+        categorization: Categorization::from_parts(category_id, category_method),
         amount: row.try_get("amount")?,
         original_amount: row.try_get("original_amount")?,
         original_currency: row.try_get("original_currency")?,
@@ -125,7 +128,6 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
         remittance_information: row.try_get("remittance_information")?,
         posted_date: row.try_get("posted_date")?,
         correlation,
-        category_method: parse_enum_opt::<CategoryMethod>(row, "category_method")?,
         suggested_category: row.try_get("suggested_category")?,
         counterparty_name: row.try_get("counterparty_name")?,
         counterparty_iban: row.try_get("counterparty_iban")?,
@@ -389,7 +391,7 @@ impl Db {
         )
         .bind(txn.id)
         .bind(txn.account_id)
-        .bind(txn.category_id)
+        .bind(txn.categorization.category_id())
         .bind(txn.amount)
         .bind(txn.original_amount)
         .bind(txn.original_currency.as_ref().map(AsRef::<str>::as_ref))
@@ -1661,7 +1663,7 @@ mod tests {
             fetched.posted_date,
             NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()
         );
-        assert!(fetched.category_id.is_none());
+        assert_eq!(fetched.categorization, Categorization::Uncategorized);
         assert!(fetched.correlation.is_none());
     }
 
@@ -1722,7 +1724,7 @@ mod tests {
         let fetched = &all[0];
         assert_eq!(fetched.merchant_name, "Coffee Shop (corrected)");
         assert_eq!(fetched.amount, dec!(-43.00));
-        assert_eq!(fetched.category_id, Some(cat.id));
+        assert_eq!(fetched.categorization.category_id(), Some(cat.id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1738,7 +1740,7 @@ mod tests {
         db.upsert_transaction(&txn_uncat, None).await.unwrap();
 
         let mut txn_cat = make_transaction(acct.id);
-        txn_cat.category_id = Some(cat.id);
+        txn_cat.categorization = Categorization::Manual(cat.id);
         db.upsert_transaction(&txn_cat, None).await.unwrap();
 
         let uncat = db.get_uncategorized_transactions().await.unwrap();
@@ -1759,11 +1761,11 @@ mod tests {
         db.upsert_transaction(&txn_uncat, None).await.unwrap();
 
         let mut txn_uncorr = make_transaction(acct.id);
-        txn_uncorr.category_id = Some(cat.id);
+        txn_uncorr.categorization = Categorization::Manual(cat.id);
         db.upsert_transaction(&txn_uncorr, None).await.unwrap();
 
         let mut txn_corr = make_transaction(acct.id);
-        txn_corr.category_id = Some(cat.id);
+        txn_corr.categorization = Categorization::Manual(cat.id);
         txn_corr.correlation = Some(Correlation {
             partner_id: txn_uncorr.id,
             correlation_type: CorrelationType::Transfer,
@@ -1792,8 +1794,7 @@ mod tests {
             .unwrap();
 
         let all = db.list_transactions().await.unwrap();
-        assert_eq!(all[0].category_id, Some(cat.id));
-        assert_eq!(all[0].category_method, Some(CategoryMethod::Manual));
+        assert_eq!(all[0].categorization, Categorization::Manual(cat.id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1818,7 +1819,10 @@ mod tests {
                 .unwrap();
 
             let fetched = db.get_transaction_by_id(txn.id).await.unwrap().unwrap();
-            assert_eq!(fetched.category_method, Some(method));
+            assert_eq!(
+                fetched.categorization,
+                Categorization::from_parts(Some(cat.id), Some(method))
+            );
         }
     }
 
@@ -1832,7 +1836,7 @@ mod tests {
         db.upsert_transaction(&txn, None).await.unwrap();
 
         let fetched = db.get_transaction_by_id(txn.id).await.unwrap().unwrap();
-        assert!(fetched.category_method.is_none());
+        assert_eq!(fetched.categorization, Categorization::Uncategorized);
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -1862,8 +1866,7 @@ mod tests {
         let fetched = db.list_transactions().await.unwrap();
         assert_eq!(fetched.len(), 1);
         assert_eq!(fetched[0].merchant_name, "Updated Merchant");
-        assert_eq!(fetched[0].category_id, Some(cat.id));
-        assert_eq!(fetched[0].category_method, Some(CategoryMethod::Rule));
+        assert_eq!(fetched[0].categorization, Categorization::Rule(cat.id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2230,7 +2233,7 @@ mod tests {
         db.insert_category(&cat).await.unwrap();
 
         let mut txn = make_transaction(acct.id);
-        txn.category_id = Some(cat.id);
+        txn.categorization = Categorization::Manual(cat.id);
         txn.merchant_name = "LIDL 1234".into();
         db.upsert_transaction(&txn, None).await.unwrap();
 
@@ -2249,7 +2252,7 @@ mod tests {
 
         for _ in 0..3 {
             let mut txn = make_transaction(acct.id);
-            txn.category_id = Some(cat.id);
+            txn.categorization = Categorization::Manual(cat.id);
             txn.merchant_name = "LIDL 1234".into();
             db.upsert_transaction(&txn, None).await.unwrap();
         }
@@ -2288,14 +2291,14 @@ mod tests {
 
         for _ in 0..2 {
             let mut txn = make_transaction(acct.id);
-            txn.category_id = Some(cat.id);
+            txn.categorization = Categorization::Manual(cat.id);
             txn.merchant_name = "ALDI".into();
             db.upsert_transaction(&txn, None).await.unwrap();
         }
 
         for _ in 0..4 {
             let mut txn = make_transaction(acct.id);
-            txn.category_id = Some(cat.id);
+            txn.categorization = Categorization::Manual(cat.id);
             txn.merchant_name = "LIDL".into();
             db.upsert_transaction(&txn, None).await.unwrap();
         }
@@ -2322,12 +2325,12 @@ mod tests {
         db.insert_category(&cat).await.unwrap();
 
         let mut txn_a = make_transaction(acct.id);
-        txn_a.category_id = Some(cat.id);
+        txn_a.categorization = Categorization::Manual(cat.id);
         txn_a.amount = dec!(-500.00);
         db.upsert_transaction(&txn_a, None).await.unwrap();
 
         let mut txn_b = make_transaction(acct.id);
-        txn_b.category_id = Some(cat.id);
+        txn_b.categorization = Categorization::Manual(cat.id);
         txn_b.amount = dec!(500.00);
         db.upsert_transaction(&txn_b, None).await.unwrap();
 
@@ -2358,17 +2361,17 @@ mod tests {
         db.insert_category(&cat).await.unwrap();
 
         let mut txn_a = make_transaction(acct.id);
-        txn_a.category_id = Some(cat.id);
+        txn_a.categorization = Categorization::Manual(cat.id);
         txn_a.amount = dec!(-500.00);
         db.upsert_transaction(&txn_a, None).await.unwrap();
 
         let mut txn_b = make_transaction(acct.id);
-        txn_b.category_id = Some(cat.id);
+        txn_b.categorization = Categorization::Manual(cat.id);
         txn_b.amount = dec!(500.00);
         db.upsert_transaction(&txn_b, None).await.unwrap();
 
         let mut txn_c = make_transaction(acct.id);
-        txn_c.category_id = Some(cat.id);
+        txn_c.categorization = Categorization::Manual(cat.id);
         txn_c.amount = dec!(500.00);
         db.upsert_transaction(&txn_c, None).await.unwrap();
 
@@ -2401,12 +2404,12 @@ mod tests {
         db.insert_category(&cat).await.unwrap();
 
         let mut txn_a = make_transaction(acct.id);
-        txn_a.category_id = Some(cat.id);
+        txn_a.categorization = Categorization::Manual(cat.id);
         txn_a.amount = dec!(-100.00);
         db.upsert_transaction(&txn_a, None).await.unwrap();
 
         let mut txn_b = make_transaction(acct.id);
-        txn_b.category_id = Some(cat.id);
+        txn_b.categorization = Categorization::Manual(cat.id);
         txn_b.amount = dec!(100.00);
         db.upsert_transaction(&txn_b, None).await.unwrap();
 
@@ -2562,7 +2565,10 @@ mod tests {
         assert_eq!(total, 1);
         assert_eq!(txns[0].id.to_string(), txn_id);
         assert_eq!(txns[0].account_id.to_string(), acct_id);
-        assert_eq!(txns[0].category_id.unwrap().to_string(), cat_id);
+        assert_eq!(
+            txns[0].categorization.category_id().unwrap().to_string(),
+            cat_id
+        );
 
         let rules = db.list_rules().await.unwrap();
         assert_eq!(rules.len(), 1);
@@ -2583,14 +2589,14 @@ mod tests {
 
         // Near candidate: within 45 days
         let mut txn_near = make_transaction(acct.id);
-        txn_near.category_id = Some(cat.id);
+        txn_near.categorization = Categorization::Manual(cat.id);
         txn_near.amount = dec!(100.00);
         txn_near.posted_date = NaiveDate::from_ymd_opt(2025, 6, 20).unwrap();
         db.upsert_transaction(&txn_near, None).await.unwrap();
 
         // Far candidate: outside 45 days
         let mut txn_far = make_transaction(acct.id);
-        txn_far.category_id = Some(cat.id);
+        txn_far.categorization = Categorization::Manual(cat.id);
         txn_far.amount = dec!(100.00);
         txn_far.posted_date = NaiveDate::from_ymd_opt(2025, 3, 1).unwrap();
         db.upsert_transaction(&txn_far, None).await.unwrap();

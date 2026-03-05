@@ -40,7 +40,8 @@ fn to_summary(
         remittance_information: txn.remittance_information.clone(),
         posted_date: txn.posted_date,
         category: txn
-            .category_id
+            .categorization
+            .category_id()
             .and_then(|cid| categories.get(&cid).cloned()),
     }
 }

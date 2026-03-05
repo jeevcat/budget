@@ -61,7 +61,7 @@ pub(crate) async fn categorize_fan_out(
 
         // Only enqueue truly uncategorized transactions for LLM; already
         // LLM-categorized ones that didn't match a rule keep their category.
-        if txn.category_id.is_some() {
+        if txn.categorization.is_categorized() {
             skipped += 1;
             continue;
         }
@@ -106,7 +106,7 @@ pub async fn handle_categorize_transaction_job(
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
 
     // Race-safe: already categorized by another job or rule
-    if txn.category_id.is_some() {
+    if txn.categorization.is_categorized() {
         tracing::debug!(txn_id = %txn_id, "already categorized, skipping");
         return Ok(());
     }

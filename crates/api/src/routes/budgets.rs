@@ -168,7 +168,8 @@ fn classify_transactions(
     let monthly: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
-            t.category_id
+            t.categorization
+                .category_id()
                 .is_some_and(|cid| monthly_cat_ids.contains(&cid))
                 && is_in_budget_month(t.posted_date, month)
         })
@@ -180,7 +181,8 @@ fn classify_transactions(
     let annual: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
-            t.category_id
+            t.categorization
+                .category_id()
                 .is_some_and(|cid| annual_cat_ids.contains(&cid))
                 && year_start.is_none_or(|ys| t.posted_date >= ys)
                 && year_end.is_none_or(|ye| t.posted_date <= ye)
@@ -198,7 +200,7 @@ fn classify_transactions(
         .iter()
         .filter(|t| {
             is_in_budget_month(t.posted_date, month)
-                && t.category_id.is_none()
+                && !t.categorization.is_categorized()
                 && t.correlation.is_none()
         })
         .cloned()
@@ -207,7 +209,9 @@ fn classify_transactions(
     let mut unbudgeted: Vec<Transaction> = budget_txns
         .iter()
         .filter(|t| {
-            t.category_id.is_some_and(|cid| none_cat_ids.contains(&cid))
+            t.categorization
+                .category_id()
+                .is_some_and(|cid| none_cat_ids.contains(&cid))
                 && is_in_budget_month(t.posted_date, month)
         })
         .map(|t| (*t).clone())
@@ -249,7 +253,9 @@ fn compute_income(
     transactions
         .iter()
         .filter(|t| {
-            t.category_id.is_some_and(|cid| salary_cats.contains(&cid))
+            t.categorization
+                .category_id()
+                .is_some_and(|cid| salary_cats.contains(&cid))
                 && t.amount > Decimal::ZERO
                 && t.posted_date >= start
                 && end.is_none_or(|e| t.posted_date <= e)
@@ -417,7 +423,11 @@ fn compute_projects(
                         .collect();
                 let subtree_txns: Vec<&Transaction> = project_txns
                     .iter()
-                    .filter(|t| t.category_id.is_some_and(|cid| subtree_ids.contains(&cid)))
+                    .filter(|t| {
+                        t.categorization
+                            .category_id()
+                            .is_some_and(|cid| subtree_ids.contains(&cid))
+                    })
                     .copied()
                     .collect();
                 compute_project_child_breakdowns(cat, &subtree_txns, categories)
@@ -562,6 +572,8 @@ async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMon
 #[cfg(test)]
 mod tests {
     use super::*;
+    use budget_core::models::Categorization;
+
     fn dec(v: i64) -> Decimal {
         Decimal::from(v)
     }
@@ -772,7 +784,7 @@ mod tests {
 
         let txn = |d: (i32, u32, u32), amt: i64| -> Transaction {
             Transaction {
-                category_id: Some(cat_id),
+                categorization: Categorization::Manual(cat_id),
                 amount: Decimal::from(amt),
                 merchant_name: "Insurer".to_owned(),
                 posted_date: NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap(),
@@ -823,7 +835,7 @@ mod tests {
 
         let txn = |cat: CategoryId, d: (i32, u32, u32), amt: i64| -> Transaction {
             Transaction {
-                category_id: Some(cat),
+                categorization: Categorization::Manual(cat),
                 amount: Decimal::from(amt),
                 merchant_name: "Test".to_owned(),
                 posted_date: NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap(),

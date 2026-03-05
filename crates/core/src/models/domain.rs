@@ -332,6 +332,104 @@ pub struct Category {
     pub budget: BudgetConfig,
 }
 
+// ---------------------------------------------------------------------------
+// Categorization — replaces two independent Option fields on Transaction
+// ---------------------------------------------------------------------------
+
+/// How a transaction is categorized: uncategorized, or by manual/rule/LLM method.
+///
+/// Collapses `category_id: Option<CategoryId>` + `category_method: Option<CategoryMethod>`
+/// into a single sum type, making invalid states (e.g. method without ID) unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Categorization {
+    Uncategorized,
+    Manual(CategoryId),
+    Rule(CategoryId),
+    Llm(CategoryId),
+}
+
+impl Categorization {
+    /// The assigned category ID, if categorized.
+    #[must_use]
+    pub fn category_id(&self) -> Option<CategoryId> {
+        match self {
+            Self::Uncategorized => None,
+            Self::Manual(id) | Self::Rule(id) | Self::Llm(id) => Some(*id),
+        }
+    }
+
+    /// The categorization method, if categorized.
+    #[must_use]
+    pub fn method(&self) -> Option<CategoryMethod> {
+        match self {
+            Self::Uncategorized => None,
+            Self::Manual(_) => Some(CategoryMethod::Manual),
+            Self::Rule(_) => Some(CategoryMethod::Rule),
+            Self::Llm(_) => Some(CategoryMethod::Llm),
+        }
+    }
+
+    /// Whether the transaction has a category assigned.
+    #[must_use]
+    pub fn is_categorized(&self) -> bool {
+        !matches!(self, Self::Uncategorized)
+    }
+
+    /// Construct from the flat DB/API representation.
+    ///
+    /// Falls back to `Uncategorized` when `category_id` is `None`.
+    #[must_use]
+    pub fn from_parts(category_id: Option<CategoryId>, method: Option<CategoryMethod>) -> Self {
+        match (category_id, method) {
+            (Some(id), Some(CategoryMethod::Rule)) => Self::Rule(id),
+            (Some(id), Some(CategoryMethod::Llm)) => Self::Llm(id),
+            // ID with explicit Manual or missing method defaults to Manual
+            (Some(id), Some(CategoryMethod::Manual) | None) => Self::Manual(id),
+            (None, _) => Self::Uncategorized,
+        }
+    }
+}
+
+/// Flat serde for `Categorization` — serializes/deserializes as two
+/// top-level fields `category_id` and `category_method` for API compat.
+mod categorization_serde {
+    use super::{Categorization, CategoryId, CategoryMethod};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize)]
+    struct Flat {
+        category_id: Option<CategoryId>,
+        category_method: Option<CategoryMethod>,
+    }
+
+    #[derive(Deserialize)]
+    struct FlatDe {
+        category_id: Option<CategoryId>,
+        category_method: Option<CategoryMethod>,
+    }
+
+    pub fn serialize<S: Serializer>(
+        value: &Categorization,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let flat = Flat {
+            category_id: value.category_id(),
+            category_method: value.method(),
+        };
+        flat.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Categorization, D::Error> {
+        let flat = FlatDe::deserialize(deserializer)?;
+        Ok(Categorization::from_parts(
+            flat.category_id,
+            flat.category_method,
+        ))
+    }
+}
+
 /// Flat serde for `Option<Correlation>` — serializes/deserializes as two
 /// top-level fields `correlation_id` and `correlation_type` for API compat.
 mod correlation_serde {
@@ -386,7 +484,10 @@ mod correlation_serde {
 pub struct Transaction {
     pub id: TransactionId,
     pub account_id: AccountId,
-    pub category_id: Option<CategoryId>,
+    /// Categorization state: uncategorized, or categorized by manual/rule/LLM.
+    /// Serialized as flat `category_id` + `category_method` fields.
+    #[serde(flatten, with = "categorization_serde")]
+    pub categorization: Categorization,
     pub amount: Decimal,
     pub original_amount: Option<Decimal>,
     pub original_currency: Option<CurrencyCode>,
@@ -400,7 +501,6 @@ pub struct Transaction {
     /// Serialized as flat `correlation_id` + `correlation_type` fields.
     #[serde(flatten, with = "correlation_serde")]
     pub correlation: Option<Correlation>,
-    pub category_method: Option<CategoryMethod>,
     pub suggested_category: Option<String>,
     pub counterparty_name: Option<String>,
     pub counterparty_iban: Option<Iban>,
@@ -459,7 +559,7 @@ impl Default for Transaction {
         Self {
             id: TransactionId::new(),
             account_id: AccountId::new(),
-            category_id: None,
+            categorization: Categorization::Uncategorized,
             amount: Decimal::ZERO,
             original_amount: None,
             original_currency: None,
@@ -467,7 +567,6 @@ impl Default for Transaction {
             remittance_information: Vec::new(),
             posted_date: NaiveDate::from_ymd_opt(2025, 1, 1).expect("valid date"),
             correlation: None,
-            category_method: None,
             suggested_category: None,
             counterparty_name: None,
             counterparty_iban: None,
@@ -1198,5 +1297,120 @@ mod tests {
     fn category_name_special_punctuation() {
         let name = CategoryName::new("Food & Drink - Misc.").unwrap();
         assert_eq!(name.to_string(), "Food & Drink - Misc.");
+    }
+
+    // -----------------------------------------------------------------------
+    // Categorization — helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn categorization_uncategorized_helpers() {
+        let c = Categorization::Uncategorized;
+        assert!(c.category_id().is_none());
+        assert!(c.method().is_none());
+        assert!(!c.is_categorized());
+    }
+
+    #[test]
+    fn categorization_manual_helpers() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(1));
+        let c = Categorization::Manual(id);
+        assert_eq!(c.category_id(), Some(id));
+        assert_eq!(c.method(), Some(CategoryMethod::Manual));
+        assert!(c.is_categorized());
+    }
+
+    #[test]
+    fn categorization_rule_helpers() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(2));
+        let c = Categorization::Rule(id);
+        assert_eq!(c.category_id(), Some(id));
+        assert_eq!(c.method(), Some(CategoryMethod::Rule));
+    }
+
+    #[test]
+    fn categorization_llm_helpers() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(3));
+        let c = Categorization::Llm(id);
+        assert_eq!(c.category_id(), Some(id));
+        assert_eq!(c.method(), Some(CategoryMethod::Llm));
+    }
+
+    #[test]
+    fn categorization_from_parts_all_variants() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(1));
+
+        assert_eq!(
+            Categorization::from_parts(None, None),
+            Categorization::Uncategorized
+        );
+        assert_eq!(
+            Categorization::from_parts(None, Some(CategoryMethod::Manual)),
+            Categorization::Uncategorized
+        );
+        assert_eq!(
+            Categorization::from_parts(Some(id), Some(CategoryMethod::Manual)),
+            Categorization::Manual(id)
+        );
+        assert_eq!(
+            Categorization::from_parts(Some(id), Some(CategoryMethod::Rule)),
+            Categorization::Rule(id)
+        );
+        assert_eq!(
+            Categorization::from_parts(Some(id), Some(CategoryMethod::Llm)),
+            Categorization::Llm(id)
+        );
+        assert_eq!(
+            Categorization::from_parts(Some(id), None),
+            Categorization::Manual(id)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Categorization — serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn categorization_serde_roundtrip_uncategorized() {
+        let txn = Transaction::default();
+        let json = serde_json::to_value(&txn).unwrap();
+        assert_eq!(json["category_id"], serde_json::Value::Null);
+        assert_eq!(json["category_method"], serde_json::Value::Null);
+        let back: Transaction = serde_json::from_value(json).unwrap();
+        assert_eq!(back.categorization, Categorization::Uncategorized);
+    }
+
+    #[test]
+    fn categorization_serde_roundtrip_manual() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(42));
+        let mut txn = Transaction::default();
+        txn.categorization = Categorization::Manual(id);
+        let json = serde_json::to_value(&txn).unwrap();
+        assert_eq!(json["category_id"], id.as_uuid().to_string());
+        assert_eq!(json["category_method"], "manual");
+        let back: Transaction = serde_json::from_value(json).unwrap();
+        assert_eq!(back.categorization, Categorization::Manual(id));
+    }
+
+    #[test]
+    fn categorization_serde_roundtrip_rule() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(99));
+        let mut txn = Transaction::default();
+        txn.categorization = Categorization::Rule(id);
+        let json = serde_json::to_value(&txn).unwrap();
+        assert_eq!(json["category_method"], "rule");
+        let back: Transaction = serde_json::from_value(json).unwrap();
+        assert_eq!(back.categorization, Categorization::Rule(id));
+    }
+
+    #[test]
+    fn categorization_serde_roundtrip_llm() {
+        let id = CategoryId::from_uuid(uuid::Uuid::from_u128(7));
+        let mut txn = Transaction::default();
+        txn.categorization = Categorization::Llm(id);
+        let json = serde_json::to_value(&txn).unwrap();
+        assert_eq!(json["category_method"], "llm");
+        let back: Transaction = serde_json::from_value(json).unwrap();
+        assert_eq!(back.categorization, Categorization::Llm(id));
     }
 }

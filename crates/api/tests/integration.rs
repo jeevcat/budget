@@ -14,8 +14,8 @@ use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::db::Db;
 use budget_core::models::{
-    Account, AccountId, AccountType, Category, CategoryId, CategoryName, CurrencyCode, Rule,
-    RuleCondition, Transaction,
+    Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
+    CurrencyCode, Rule, RuleCondition, Transaction,
 };
 
 /// Mirror of the paginated response from `GET /api/transactions`.
@@ -322,7 +322,7 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
 
     // Insert one categorized and one uncategorized transaction
     let mut txn_categorized = make_txn(account.id, "Grocery Store", 15);
-    txn_categorized.category_id = Some(category.id);
+    txn_categorized.categorization = Categorization::Manual(category.id);
     txn_categorized.amount = rust_decimal::Decimal::new(2500, 2);
     txn_categorized.remittance_information = vec!["Weekly groceries".to_owned()];
     db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
@@ -342,7 +342,7 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
     let txns: Vec<Transaction> = serde_json::from_slice(&body).expect("parse");
     assert_eq!(txns.len(), 1);
     assert_eq!(txns[0].merchant_name, "Coffee Shop");
-    assert!(txns[0].category_id.is_none());
+    assert_eq!(txns[0].categorization, Categorization::Uncategorized);
 
     // GET / should return both
     let (status, body) = send(app, get("/api/transactions")).await;
@@ -400,7 +400,7 @@ async fn transactions_categorize_success(pool: PgPool) {
         .iter()
         .find(|t| t.id == txn.id)
         .expect("find txn");
-    assert_eq!(updated.category_id, Some(category.id));
+    assert_eq!(updated.categorization.category_id(), Some(category.id));
 }
 
 #[sqlx::test]
@@ -754,7 +754,7 @@ async fn generate_rule_for_categorized_transaction(pool: PgPool) {
 
     // Manually categorized transaction
     let mut txn = make_txn(account.id, "WHOLE FOODS MARKET", 15);
-    txn.category_id = Some(category.id);
+    txn.categorization = Categorization::Manual(category.id);
     txn.amount = rust_decimal::Decimal::new(7234, 2);
     txn.remittance_information = vec!["Weekly groceries".to_owned()];
     db.upsert_transaction(&txn, None).await.expect("insert txn");
@@ -809,7 +809,7 @@ async fn generate_rule_rejects_rule_categorized_transaction(pool: PgPool) {
     db.insert_category(&category).await.expect("category");
 
     let mut txn = make_txn(account.id, "STARBUCKS", 10);
-    txn.category_id = Some(category.id);
+    txn.categorization = Categorization::Manual(category.id);
     db.upsert_transaction(&txn, None).await.expect("insert txn");
     db.update_transaction_category(
         txn.id,
@@ -945,21 +945,21 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
         .await
         .expect("query")
         .expect("found");
-    assert_eq!(updated_1.category_id, Some(category.id));
+    assert_eq!(updated_1.categorization.category_id(), Some(category.id));
 
     let updated_2 = db
         .get_transaction_by_id(txn_match_2.id)
         .await
         .expect("query")
         .expect("found");
-    assert_eq!(updated_2.category_id, Some(category.id));
+    assert_eq!(updated_2.categorization.category_id(), Some(category.id));
 
     let unchanged = db
         .get_transaction_by_id(txn_nomatch.id)
         .await
         .expect("query")
         .expect("found");
-    assert!(unchanged.category_id.is_none());
+    assert_eq!(unchanged.categorization, Categorization::Uncategorized);
 }
 
 #[sqlx::test]
@@ -999,7 +999,7 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
 
     // Already-categorized transaction — should not be re-categorized
     let mut txn = make_txn(account.id, "STARBUCKS RESERVE", 1);
-    txn.category_id = Some(category_b.id);
+    txn.categorization = Categorization::Manual(category_b.id);
     txn.amount = rust_decimal::Decimal::new(550, 2);
     txn.remittance_information = vec!["Coffee".to_owned()];
     txn.posted_date = chrono::NaiveDate::from_ymd_opt(2025, 2, 1).expect("date");
@@ -1017,7 +1017,7 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
         .await
         .expect("query")
         .expect("found");
-    assert_eq!(fetched.category_id, Some(category_b.id));
+    assert_eq!(fetched.categorization.category_id(), Some(category_b.id));
 }
 
 // ===========================================================================
@@ -1082,7 +1082,7 @@ async fn budgets_status_with_current_month(pool: PgPool) {
     // Insert a salary transaction so budget months are derived
     let today = chrono::Utc::now().date_naive();
     let mut salary_txn = make_txn(account.id, "EMPLOYER INC", 1);
-    salary_txn.category_id = Some(salary_cat.id);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
     salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
     salary_txn.posted_date = today - chrono::Duration::days(5);
     db.upsert_transaction(&salary_txn, Some("salary-1"))
