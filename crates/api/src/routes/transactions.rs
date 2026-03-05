@@ -41,13 +41,77 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/skip-correlation", post(skip_correlation))
 }
 
-const DEFAULT_PAGE_LIMIT: i64 = 50;
+/// Page size for transaction listing (1–200, default 50).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(transparent)]
+struct PageLimit(i64);
+
+impl PageLimit {
+    const DEFAULT: Self = Self(50);
+    const MIN: i64 = 1;
+    const MAX: i64 = 200;
+
+    fn new(n: i64) -> Result<Self, String> {
+        if !(Self::MIN..=Self::MAX).contains(&n) {
+            return Err(format!(
+                "limit must be between {} and {}, got {n}",
+                Self::MIN,
+                Self::MAX,
+            ));
+        }
+        Ok(Self(n))
+    }
+
+    fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl Default for PageLimit {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl<'de> Deserialize<'de> for PageLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let n = i64::deserialize(deserializer)?;
+        Self::new(n).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Row offset for transaction listing (>= 0, default 0).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(transparent)]
+struct PageOffset(i64);
+
+impl PageOffset {
+    fn new(n: i64) -> Result<Self, String> {
+        if n < 0 {
+            return Err(format!("offset must be non-negative, got {n}"));
+        }
+        Ok(Self(n))
+    }
+
+    fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for PageOffset {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let n = i64::deserialize(deserializer)?;
+        Self::new(n).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Query parameters for paginated transaction listing.
 #[derive(Deserialize)]
 struct ListQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
+    #[serde(default)]
+    limit: PageLimit,
+    #[serde(default)]
+    offset: PageOffset,
     search: Option<String>,
     category_id: Option<String>,
     account_id: Option<String>,
@@ -80,8 +144,8 @@ async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<TransactionPage>, AppError> {
-    let limit = query.limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, 200);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let limit = query.limit.get();
+    let offset = query.offset.get();
     let search = query.search.as_deref().unwrap_or("");
     let category_id = query.category_id.as_deref().unwrap_or("");
     let account_id = query.account_id.as_deref().unwrap_or("");
@@ -378,5 +442,59 @@ mod tests {
     fn deserialize_categorize_request_rejects_missing_field() {
         let json = r"{}";
         assert!(serde_json::from_str::<CategorizeRequest>(json).is_err());
+    }
+
+    #[test]
+    fn page_limit_defaults_to_50() {
+        let q: ListQuery = serde_json::from_str(r"{}").unwrap();
+        assert_eq!(q.limit.get(), 50);
+    }
+
+    #[test]
+    fn page_limit_accepts_valid_range() {
+        for n in [1, 50, 200] {
+            let json = format!(r#"{{"limit": {n}}}"#);
+            let q: ListQuery = serde_json::from_str(&json).unwrap();
+            assert_eq!(q.limit.get(), n);
+        }
+    }
+
+    #[test]
+    fn page_limit_rejects_zero() {
+        let json = r#"{"limit": 0}"#;
+        assert!(serde_json::from_str::<ListQuery>(json).is_err());
+    }
+
+    #[test]
+    fn page_limit_rejects_negative() {
+        let json = r#"{"limit": -1}"#;
+        assert!(serde_json::from_str::<ListQuery>(json).is_err());
+    }
+
+    #[test]
+    fn page_limit_rejects_over_max() {
+        let json = r#"{"limit": 201}"#;
+        assert!(serde_json::from_str::<ListQuery>(json).is_err());
+    }
+
+    #[test]
+    fn page_offset_defaults_to_0() {
+        let q: ListQuery = serde_json::from_str(r"{}").unwrap();
+        assert_eq!(q.offset.get(), 0);
+    }
+
+    #[test]
+    fn page_offset_accepts_zero_and_positive() {
+        for n in [0, 1, 1000] {
+            let json = format!(r#"{{"offset": {n}}}"#);
+            let q: ListQuery = serde_json::from_str(&json).unwrap();
+            assert_eq!(q.offset.get(), n);
+        }
+    }
+
+    #[test]
+    fn page_offset_rejects_negative() {
+        let json = r#"{"offset": -1}"#;
+        assert!(serde_json::from_str::<ListQuery>(json).is_err());
     }
 }

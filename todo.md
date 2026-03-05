@@ -10,8 +10,8 @@
 ## Integer Bounds
 
 ### Pagination
-- `ListQuery.limit` — should reject values outside 1–200 at deserialization, not clamp in handler
-- `ListQuery.offset` — should reject negative values at deserialization
+- ~`ListQuery.limit` — should reject values outside 1–200 at deserialization, not clamp in handler~
+- ~`ListQuery.offset` — should reject negative values at deserialization~
 
 ### Priority
 - `Rule.priority` / `CreateRule.priority` — unbounded `i32`, consider newtype with 0–1000 range
