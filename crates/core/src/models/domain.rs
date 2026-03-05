@@ -10,7 +10,8 @@ use super::enums::{
 };
 use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
 use super::newtypes::{
-    Bic, CurrencyCode, ExchangeRateType, Iban, MerchantCategoryCode, ReferenceNumberSchema,
+    Bic, CurrencyCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
+    ReferenceNumberSchema,
 };
 use crate::error::Error;
 
@@ -605,7 +606,7 @@ pub struct Rule {
     pub conditions: Vec<RuleCondition>,
     pub target_category_id: Option<CategoryId>,
     pub target_correlation_type: Option<CorrelationType>,
-    pub priority: i32,
+    pub priority: Priority,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

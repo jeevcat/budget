@@ -403,7 +403,7 @@ fn validate_proposals(
                 }],
                 target_category_id: Some(category_id),
                 target_correlation_type: None,
-                priority: 0,
+                priority: budget_core::models::Priority::default(),
             };
             compile_rule(&test_rule).is_ok()
         })

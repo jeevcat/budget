@@ -7,8 +7,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use budget_core::models::{
-    CategoryId, CategoryMethod, CorrelationType, MatchField, Rule, RuleCondition, RuleId, RuleType,
-    TransactionId,
+    CategoryId, CategoryMethod, CorrelationType, MatchField, Priority, Rule, RuleCondition, RuleId,
+    RuleType, TransactionId,
 };
 use budget_core::rules::{compile_rule, evaluate_categorization_rules, matches_rule};
 use budget_jobs::CategorizeJob;
@@ -30,7 +30,7 @@ pub struct CreateRule {
     pub conditions: Vec<ConditionRequest>,
     pub target_category_id: Option<CategoryId>,
     pub target_correlation_type: Option<CorrelationType>,
-    pub priority: i32,
+    pub priority: Priority,
 }
 
 /// Request body for previewing a rule, extending `CreateRule` with an optional
@@ -411,7 +411,7 @@ mod tests {
             conditions: vec![],
             target_category_id: None,
             target_correlation_type: None,
-            priority: 0,
+            priority: Priority::new(0).unwrap(),
         };
         assert!(into_rule(body, RuleId::new()).is_err());
     }

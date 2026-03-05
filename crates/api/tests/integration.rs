@@ -15,7 +15,7 @@ use budget_jobs::{JobStorage, PipelineStorage};
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    CurrencyCode, Rule, RuleCondition, Transaction,
+    CurrencyCode, Priority, Rule, RuleCondition, Transaction,
 };
 
 /// Mirror of the paginated response from `GET /api/transactions`.
@@ -643,7 +643,7 @@ async fn rules_create_and_list(pool: PgPool) {
     let created: Rule = serde_json::from_slice(&body).expect("parse");
     assert_eq!(created.conditions.len(), 1);
     assert_eq!(created.conditions[0].pattern, "GROCERY.*");
-    assert_eq!(created.priority, 10);
+    assert_eq!(created.priority, Priority::new(10).unwrap());
 
     // List should contain the created rule
     let (status, body) = send(app, get("/api/rules")).await;
@@ -685,7 +685,7 @@ async fn rules_update(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
 
     let updated: Rule = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(updated.priority, 20);
+    assert_eq!(updated.priority, Priority::new(20).unwrap());
     assert_eq!(updated.conditions[0].pattern, "UBER.*|LYFT.*");
     assert_eq!(updated.id, created.id);
 }
@@ -914,7 +914,7 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
         }],
         target_category_id: Some(category.id),
         target_correlation_type: None,
-        priority: 10,
+        priority: Priority::new(10).unwrap(),
     };
     db.insert_rule(&rule).await.expect("rule");
 
@@ -993,7 +993,7 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
         }],
         target_category_id: Some(category_a.id),
         target_correlation_type: None,
-        priority: 10,
+        priority: Priority::new(10).unwrap(),
     };
     db.insert_rule(&rule).await.expect("rule");
 

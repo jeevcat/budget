@@ -396,6 +396,131 @@ impl std::str::FromStr for ReferenceNumberSchema {
 }
 
 // ---------------------------------------------------------------------------
+// Shared sqlx boilerplate — delegates to an integer column
+// ---------------------------------------------------------------------------
+
+macro_rules! impl_sqlx_int {
+    ($ty:ident, $inner:ty) => {
+        impl sqlx::Type<sqlx::Postgres> for $ty {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <$inner as sqlx::Type<sqlx::Postgres>>::type_info()
+            }
+
+            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+                <$inner as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+            }
+        }
+
+        impl sqlx::Encode<'_, sqlx::Postgres> for $ty {
+            fn encode_by_ref(
+                &self,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
+            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+                <$inner as sqlx::Encode<'_, sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+            }
+        }
+
+        impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $ty {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'r>,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                let v = <$inner as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+                Ok(Self(v))
+            }
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Priority — rule ordering (0–1000)
+// ---------------------------------------------------------------------------
+
+/// A validated rule priority (0–1000).
+///
+/// Higher values indicate higher priority. Rules are evaluated in descending
+/// priority order; the first match wins.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct Priority(i32);
+
+impl Priority {
+    /// Create a new `Priority`, validating the range 0–1000.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidPriority`] if the value is outside 0–1000.
+    pub fn new(value: i32) -> Result<Self, Error> {
+        if !(0..=1000).contains(&value) {
+            return Err(Error::InvalidPriority(value));
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the inner `i32` value.
+    #[must_use]
+    pub fn get(self) -> i32 {
+        self.0
+    }
+}
+
+impl fmt::Display for Priority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Priority {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let v = i32::deserialize(deserializer)?;
+        Self::new(v).map_err(serde::de::Error::custom)
+    }
+}
+
+impl_sqlx_int!(Priority, i32);
+
+// ---------------------------------------------------------------------------
+// ValidDays — authorization validity window (1–365)
+// ---------------------------------------------------------------------------
+
+/// A validated authorization validity period in days (1–365).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ValidDays(u32);
+
+impl ValidDays {
+    /// Create a new `ValidDays`, validating the range 1–365.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidValidDays`] if the value is outside 1–365.
+    pub fn new(value: u32) -> Result<Self, Error> {
+        if !(1..=365).contains(&value) {
+            return Err(Error::InvalidValidDays(value));
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the inner `u32` value.
+    #[must_use]
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Display for ValidDays {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ValidDays {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let v = u32::deserialize(deserializer)?;
+        Self::new(v).map_err(serde::de::Error::custom)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -643,5 +768,83 @@ mod tests {
     fn ref_schema_serde_unknown() {
         let back: ReferenceNumberSchema = serde_json::from_str("\"NEWX\"").unwrap();
         assert_eq!(back, ReferenceNumberSchema::Other("NEWX".to_owned()));
+    }
+
+    // -- Priority -----------------------------------------------------------
+
+    #[test]
+    fn priority_valid_boundaries() {
+        assert!(Priority::new(0).is_ok());
+        assert!(Priority::new(1000).is_ok());
+        assert!(Priority::new(500).is_ok());
+    }
+
+    #[test]
+    fn priority_rejects_out_of_range() {
+        assert!(Priority::new(-1).is_err());
+        assert!(Priority::new(1001).is_err());
+        assert!(Priority::new(i32::MIN).is_err());
+        assert!(Priority::new(i32::MAX).is_err());
+    }
+
+    #[test]
+    fn priority_default_is_zero() {
+        assert_eq!(Priority::default().get(), 0);
+    }
+
+    #[test]
+    fn priority_display() {
+        assert_eq!(Priority::new(42).unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn priority_serde_roundtrip() {
+        let p = Priority::new(10).unwrap();
+        let json = serde_json::to_string(&p).unwrap();
+        assert_eq!(json, "10");
+        let back: Priority = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn priority_serde_rejects_invalid() {
+        assert!(serde_json::from_str::<Priority>("1001").is_err());
+        assert!(serde_json::from_str::<Priority>("-1").is_err());
+    }
+
+    // -- ValidDays ----------------------------------------------------------
+
+    #[test]
+    fn valid_days_boundaries() {
+        assert!(ValidDays::new(1).is_ok());
+        assert!(ValidDays::new(365).is_ok());
+        assert!(ValidDays::new(90).is_ok());
+    }
+
+    #[test]
+    fn valid_days_rejects_out_of_range() {
+        assert!(ValidDays::new(0).is_err());
+        assert!(ValidDays::new(366).is_err());
+        assert!(ValidDays::new(u32::MAX).is_err());
+    }
+
+    #[test]
+    fn valid_days_display() {
+        assert_eq!(ValidDays::new(90).unwrap().to_string(), "90");
+    }
+
+    #[test]
+    fn valid_days_serde_roundtrip() {
+        let v = ValidDays::new(90).unwrap();
+        let json = serde_json::to_string(&v).unwrap();
+        assert_eq!(json, "90");
+        let back: ValidDays = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn valid_days_serde_rejects_invalid() {
+        assert!(serde_json::from_str::<ValidDays>("0").is_err());
+        assert!(serde_json::from_str::<ValidDays>("366").is_err());
     }
 }

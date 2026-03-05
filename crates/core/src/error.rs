@@ -49,4 +49,10 @@ pub enum Error {
 
     #[error("invalid exchange rate type: {0}")]
     InvalidExchangeRateType(String),
+
+    #[error("invalid priority: {0} (must be 0–1000)")]
+    InvalidPriority(i32),
+
+    #[error("invalid valid_days: {0} (must be 1–365)")]
+    InvalidValidDays(u32),
 }

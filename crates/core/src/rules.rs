@@ -313,7 +313,7 @@ mod tests {
                 .collect(),
             target_category_id,
             target_correlation_type,
-            priority,
+            priority: Priority::new(priority).unwrap(),
         }
     }
 

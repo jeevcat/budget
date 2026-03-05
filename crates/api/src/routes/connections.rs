@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use budget_core::models::{
     Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
+    ValidDays,
 };
 use budget_providers::{AspspEntry, EnableBankingAuth};
 
@@ -49,13 +50,13 @@ pub struct AuthorizeRequest {
     pub aspsp_name: String,
     pub aspsp_country: String,
     #[serde(default = "default_valid_days")]
-    pub valid_days: u32,
+    pub valid_days: ValidDays,
     #[serde(default = "default_psu_type")]
     pub psu_type: String,
 }
 
-fn default_valid_days() -> u32 {
-    90
+fn default_valid_days() -> ValidDays {
+    ValidDays::new(90).expect("90 is within 1–365")
 }
 
 fn default_psu_type() -> String {
@@ -127,7 +128,7 @@ async fn authorize(
     let redirect_url = format!("{}/api/connections/callback", state.host);
 
     let valid_until = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(i64::from(body.valid_days)))
+        .checked_add_signed(chrono::Duration::days(i64::from(body.valid_days.get())))
         .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "invalid valid_days".to_owned()))?;
 
     let token = generate_state_token();

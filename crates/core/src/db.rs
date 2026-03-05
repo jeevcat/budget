@@ -1508,7 +1508,7 @@ mod tests {
 
     use crate::models::{
         Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CategoryName,
-        CorrelationType, CurrencyCode, MatchField, Rule, RuleCondition, RuleId, RuleType,
+        CorrelationType, CurrencyCode, MatchField, Priority, Rule, RuleCondition, RuleId, RuleType,
         Transaction, TransactionId,
     };
 
@@ -1563,7 +1563,7 @@ mod tests {
             }],
             target_category_id: None,
             target_correlation_type: None,
-            priority,
+            priority: Priority::new(priority).unwrap(),
         }
     }
 
@@ -2126,7 +2126,7 @@ mod tests {
         assert_eq!(fetched.conditions[0].pattern, "Coffee.*");
         assert_eq!(fetched.target_category_id, Some(cat.id));
         assert!(fetched.target_correlation_type.is_none());
-        assert_eq!(fetched.priority, 10);
+        assert_eq!(fetched.priority, Priority::new(10).unwrap());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2147,8 +2147,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cat_rules.len(), 2);
-        assert_eq!(cat_rules[0].priority, 100);
-        assert_eq!(cat_rules[1].priority, 1);
+        assert_eq!(cat_rules[0].priority, Priority::new(100).unwrap());
+        assert_eq!(cat_rules[1].priority, Priority::new(1).unwrap());
 
         let corr_rules = db.list_rules_by_type(RuleType::Correlation).await.unwrap();
         assert_eq!(corr_rules.len(), 1);
@@ -2166,7 +2166,7 @@ mod tests {
 
         let fetched = db.get_rule(rule.id).await.unwrap().unwrap();
         assert_eq!(fetched.id, rule.id);
-        assert_eq!(fetched.priority, 5);
+        assert_eq!(fetched.priority, Priority::new(5).unwrap());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -2184,7 +2184,7 @@ mod tests {
             pattern: "Hotel.*".into(),
         }];
         rule.target_category_id = Some(cat.id);
-        rule.priority = 20;
+        rule.priority = Priority::new(20).unwrap();
 
         db.update_rule(&rule).await.unwrap();
 
@@ -2193,7 +2193,7 @@ mod tests {
         assert_eq!(fetched.conditions[0].field, MatchField::Description);
         assert_eq!(fetched.conditions[0].pattern, "Hotel.*");
         assert_eq!(fetched.target_category_id, Some(cat.id));
-        assert_eq!(fetched.priority, 20);
+        assert_eq!(fetched.priority, Priority::new(20).unwrap());
     }
 
     #[sqlx::test(migrations = "../../migrations")]

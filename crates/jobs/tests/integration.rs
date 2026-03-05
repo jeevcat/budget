@@ -13,8 +13,8 @@ use sqlx::PgPool;
 use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField, Rule,
-    RuleCondition, RuleId, RuleType, Transaction,
+    Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField,
+    Priority, Rule, RuleCondition, RuleId, RuleType, Transaction,
 };
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
@@ -439,7 +439,7 @@ async fn categorize_rule_based_assignment(pool: PgPool) {
         }],
         target_category_id: Some(groceries_cat.id),
         target_correlation_type: None,
-        priority: 100,
+        priority: Priority::new(100).unwrap(),
     };
     db.insert_rule(&rule)
         .await
@@ -672,7 +672,7 @@ async fn correlate_rule_based_linking(pool: PgPool) {
         }],
         target_category_id: None,
         target_correlation_type: Some(CorrelationType::Transfer),
-        priority: 100,
+        priority: Priority::new(100).unwrap(),
     };
     db.insert_rule(&rule)
         .await
