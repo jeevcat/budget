@@ -235,13 +235,7 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
-  item {
-    SummaryCards(
-        summary = state.monthlySummary,
-        totalIncome = state.totalIncome,
-        saved = state.saved,
-    )
-  }
+  item { SummaryCards(summary = state.monthlySummary) }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -410,26 +404,22 @@ private fun UnbudgetedRow(spent: Double, count: Int, onClick: () -> Unit) {
 // -- Summary cards (2×2) ---------------------------------------------------
 
 @Composable
-private fun SummaryCards(
-    summary: BudgetSummary,
-    totalIncome: Double = 0.0,
-    saved: Double = 0.0,
-) {
+private fun SummaryCards(summary: BudgetSummary) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    if (totalIncome > 0) {
+    if (summary.totalIncome > 0) {
       Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         StatCard(
             label = "Income",
-            value = formatAmount(totalIncome),
+            value = formatAmount(summary.totalIncome),
             modifier = Modifier.weight(1f),
         )
         StatCard(
             label = "Saved",
-            value = formatAmount(saved, showSign = true),
-            valueColor = if (saved < 0) OverBudgetColor else UnderBudgetColor,
+            value = formatAmount(summary.saved, showSign = true),
+            valueColor = if (summary.saved < 0) OverBudgetColor else UnderBudgetColor,
             modifier = Modifier.weight(1f),
         )
       }

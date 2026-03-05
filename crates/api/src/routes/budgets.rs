@@ -54,6 +54,10 @@ struct BudgetGroupSummary {
     remaining: Decimal,
     over_budget_count: usize,
     bar_max: Decimal,
+    /// Total income (positive salary-category transactions) in the period.
+    total_income: Decimal,
+    /// Total spending across all budget modes in the period.
+    total_spending: Decimal,
 }
 
 #[derive(Serialize)]
@@ -76,10 +80,6 @@ struct StatusResponse {
     unbudgeted_spent: Decimal,
     /// The budget year (calendar year of the January-anchored start).
     budget_year: i32,
-    /// Total income (positive salary-category transactions in the budget month).
-    total_income: Decimal,
-    /// Total spending across all budget modes in the budget month.
-    total_month_spending: Decimal,
 }
 
 /// Build the budgets sub-router.
@@ -139,8 +139,6 @@ struct ClassifiedTransactions {
     unbudgeted: Vec<Transaction>,
     unbudgeted_spent: Decimal,
     budget_year: i32,
-    total_income: Decimal,
-    total_month_spending: Decimal,
 }
 
 /// Classify transactions by budget mode and compute auxiliary dashboard data.
@@ -230,30 +228,6 @@ fn classify_transactions(
         |bm| chrono::Datelike::year(&bm.start_date),
     );
 
-    // Income: positive salary-category transactions in the budget month
-    let salary_cats = salary_category_ids(categories);
-    let total_income = transactions
-        .iter()
-        .filter(|t| {
-            t.category_id.is_some_and(|cid| salary_cats.contains(&cid))
-                && t.amount > Decimal::ZERO
-                && is_in_budget_month(t.posted_date, month)
-        })
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
-
-    // Total month spending: budgeted (monthly) + project in-month + unbudgeted
-    let budgeted_month_spending = -budget_txns
-        .iter()
-        .filter(|t| is_in_budget_month(t.posted_date, month))
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
-
-    let project_month_spending = -filter_for_project(transactions, categories)
-        .iter()
-        .filter(|t| is_in_budget_month(t.posted_date, month))
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
-
-    let total_month_spending = budgeted_month_spending + project_month_spending + unbudgeted_spent;
-
     ClassifiedTransactions {
         monthly,
         annual,
@@ -261,9 +235,33 @@ fn classify_transactions(
         unbudgeted,
         unbudgeted_spent,
         budget_year,
-        total_income,
-        total_month_spending,
     }
+}
+
+/// Compute total income (positive salary-category transactions) within a date range.
+fn compute_income(
+    transactions: &[Transaction],
+    categories: &[Category],
+    start: chrono::NaiveDate,
+    end: Option<chrono::NaiveDate>,
+) -> Decimal {
+    let salary_cats = salary_category_ids(categories);
+    transactions
+        .iter()
+        .filter(|t| {
+            t.category_id.is_some_and(|cid| salary_cats.contains(&cid))
+                && t.amount > Decimal::ZERO
+                && t.posted_date >= start
+                && end.is_none_or(|e| t.posted_date <= e)
+        })
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount)
+}
+
+/// Negated sum of transaction amounts (positive = money spent).
+fn negate_sum(transactions: &[Transaction]) -> Decimal {
+    -transactions
+        .iter()
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount)
 }
 
 /// Compute summary totals for a group of budget entries.
@@ -275,6 +273,8 @@ fn classify_transactions(
 fn compute_group_summary(
     entries: &[&StatusEntry],
     transactions: &[Transaction],
+    total_income: Decimal,
+    total_spending: Decimal,
 ) -> BudgetGroupSummary {
     let mut total_budget = Decimal::ZERO;
     let mut over_budget_count = 0;
@@ -290,9 +290,7 @@ fn compute_group_summary(
         bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
     }
 
-    let total_spent = -transactions
-        .iter()
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+    let total_spent = negate_sum(transactions);
 
     BudgetGroupSummary {
         total_budget,
@@ -300,6 +298,8 @@ fn compute_group_summary(
         remaining: total_budget - total_spent,
         over_budget_count,
         bar_max,
+        total_income,
+        total_spending,
     }
 }
 
@@ -326,7 +326,65 @@ fn compute_project_group_summary(entries: &[ProjectStatusEntry]) -> BudgetGroupS
         remaining: total_budget - total_spent,
         over_budget_count,
         bar_max,
+        total_income: Decimal::ZERO,
+        total_spending: Decimal::ZERO,
     }
+}
+
+/// Build all three summaries (monthly, annual, project) with income/spending data.
+fn build_summaries(
+    statuses: &[StatusEntry],
+    classified: &ClassifiedTransactions,
+    transactions: &[Transaction],
+    categories: &[Category],
+    month: &BudgetMonth,
+    year_months: &[&BudgetMonth],
+    projects: &[ProjectStatusEntry],
+) -> (BudgetGroupSummary, BudgetGroupSummary, BudgetGroupSummary) {
+    let monthly_entries: Vec<&StatusEntry> = statuses
+        .iter()
+        .filter(|e| e.status.budget_mode == BudgetMode::Monthly)
+        .collect();
+    let annual_entries: Vec<&StatusEntry> = statuses
+        .iter()
+        .filter(|e| e.status.budget_mode == BudgetMode::Annual)
+        .collect();
+
+    // Monthly income & total spending (scoped to the budget month)
+    let monthly_income = compute_income(transactions, categories, month.start_date, month.end_date);
+    let project_month_txns: Vec<_> = classified
+        .project
+        .iter()
+        .filter(|t| is_in_budget_month(t.posted_date, month))
+        .cloned()
+        .collect();
+    let monthly_spending = negate_sum(&classified.monthly)
+        + negate_sum(&project_month_txns)
+        + classified.unbudgeted_spent;
+    let monthly_summary = compute_group_summary(
+        &monthly_entries,
+        &classified.monthly,
+        monthly_income,
+        monthly_spending,
+    );
+
+    // Annual income & total spending (scoped to the budget year)
+    let year_start = year_months
+        .first()
+        .map_or(month.start_date, |bm| bm.start_date);
+    let year_end = year_months.last().and_then(|bm| bm.end_date);
+    let annual_income = compute_income(transactions, categories, year_start, year_end);
+    let annual_spending = negate_sum(&classified.annual);
+    let annual_summary = compute_group_summary(
+        &annual_entries,
+        &classified.annual,
+        annual_income,
+        annual_spending,
+    );
+
+    let project_summary = compute_project_group_summary(projects);
+
+    (monthly_summary, annual_summary, project_summary)
 }
 
 /// Compute project statuses with per-child spending breakdowns.
@@ -464,17 +522,15 @@ async fn status(
         reference_date,
     );
 
-    let monthly_entries: Vec<&StatusEntry> = statuses
-        .iter()
-        .filter(|e| e.status.budget_mode == BudgetMode::Monthly)
-        .collect();
-    let annual_entries: Vec<&StatusEntry> = statuses
-        .iter()
-        .filter(|e| e.status.budget_mode == BudgetMode::Annual)
-        .collect();
-    let monthly_summary = compute_group_summary(&monthly_entries, &classified.monthly);
-    let annual_summary = compute_group_summary(&annual_entries, &classified.annual);
-    let project_summary = compute_project_group_summary(&projects);
+    let (monthly_summary, annual_summary, project_summary) = build_summaries(
+        &statuses,
+        &classified,
+        &transactions,
+        &categories,
+        month,
+        &year_months,
+        &projects,
+    );
 
     Ok(Json(StatusResponse {
         month: month.clone(),
@@ -489,8 +545,6 @@ async fn status(
         unbudgeted_transactions: classified.unbudgeted,
         unbudgeted_spent: classified.unbudgeted_spent,
         budget_year: classified.budget_year,
-        total_income: classified.total_income,
-        total_month_spending: classified.total_month_spending,
     }))
 }
 
@@ -582,7 +636,7 @@ mod tests {
 
         let entries: Vec<&StatusEntry> = vec![&house, &mortgage, &electricity];
         let txns = txns_for_spent(dec(4059));
-        let summary = compute_group_summary(&entries, &txns);
+        let summary = compute_group_summary(&entries, &txns, Decimal::ZERO, Decimal::ZERO);
 
         assert_eq!(summary.total_budget, dec(4452));
         assert_eq!(summary.total_spent, dec(4059));
@@ -599,7 +653,7 @@ mod tests {
 
         let entries: Vec<&StatusEntry> = vec![&food];
         let txns = txns_for_spent(dec(366));
-        let summary = compute_group_summary(&entries, &txns);
+        let summary = compute_group_summary(&entries, &txns, Decimal::ZERO, Decimal::ZERO);
 
         // entry.spent ($999) is irrelevant — only transactions matter
         assert_eq!(summary.total_spent, dec(366));
@@ -619,7 +673,7 @@ mod tests {
 
         let entries: Vec<&StatusEntry> = vec![&food, &savings];
         let txns = txns_for_spent(dec(366));
-        let summary = compute_group_summary(&entries, &txns);
+        let summary = compute_group_summary(&entries, &txns, Decimal::ZERO, Decimal::ZERO);
 
         assert_eq!(summary.total_budget, dec(2000));
         assert_eq!(summary.total_spent, dec(366));
@@ -639,7 +693,7 @@ mod tests {
 
         let entries: Vec<&StatusEntry> = vec![&parent, &child];
         let txns = txns_for_spent(dec(750));
-        let summary = compute_group_summary(&entries, &txns);
+        let summary = compute_group_summary(&entries, &txns, Decimal::ZERO, Decimal::ZERO);
 
         assert_eq!(summary.over_budget_count, 2);
     }
@@ -657,7 +711,7 @@ mod tests {
 
         let entries: Vec<&StatusEntry> = vec![&parent, &child];
         let txns = txns_for_spent(dec(4032));
-        let summary = compute_group_summary(&entries, &txns);
+        let summary = compute_group_summary(&entries, &txns, Decimal::ZERO, Decimal::ZERO);
 
         assert_eq!(summary.bar_max, dec(5000));
     }
@@ -665,7 +719,7 @@ mod tests {
     #[test]
     fn summary_empty() {
         let entries: Vec<&StatusEntry> = vec![];
-        let summary = compute_group_summary(&entries, &[]);
+        let summary = compute_group_summary(&entries, &[], Decimal::ZERO, Decimal::ZERO);
 
         assert_eq!(summary.total_budget, dec(0));
         assert_eq!(summary.total_spent, dec(0));
@@ -742,40 +796,30 @@ mod tests {
     }
 
     #[test]
-    fn classify_computes_income_and_month_spending() {
-        use budget_core::models::{
-            BudgetConfig, BudgetMonth, BudgetMonthId, BudgetType, Category, CategoryName,
-            Transaction,
-        };
+    fn compute_income_filters_by_salary_and_date_range() {
+        use budget_core::models::{BudgetConfig, BudgetType, Category, CategoryName, Transaction};
         use chrono::NaiveDate;
 
         let salary_id = CategoryId::from_uuid(uuid::Uuid::from_u128(10));
         let food_id = CategoryId::from_uuid(uuid::Uuid::from_u128(20));
 
-        let salary_cat = Category {
-            id: salary_id,
-            name: CategoryName::new("Salary").unwrap(),
-            parent_id: None,
-            budget: BudgetConfig::Salary,
-        };
-        let food_cat = Category {
-            id: food_id,
-            name: CategoryName::new("Food").unwrap(),
-            parent_id: None,
-            budget: BudgetConfig::Monthly {
-                amount: Decimal::from(500),
-                budget_type: BudgetType::Variable,
+        let categories = vec![
+            Category {
+                id: salary_id,
+                name: CategoryName::new("Salary").unwrap(),
+                parent_id: None,
+                budget: BudgetConfig::Salary,
             },
-        };
-        let categories = vec![salary_cat, food_cat];
-
-        let month = BudgetMonth {
-            id: BudgetMonthId::new(),
-            start_date: NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
-            end_date: Some(NaiveDate::from_ymd_opt(2026, 2, 28).unwrap()),
-            salary_transactions_detected: 1,
-        };
-        let year_months: Vec<&BudgetMonth> = vec![&month];
+            Category {
+                id: food_id,
+                name: CategoryName::new("Food").unwrap(),
+                parent_id: None,
+                budget: BudgetConfig::Monthly {
+                    amount: Decimal::from(500),
+                    budget_type: BudgetType::Variable,
+                },
+            },
+        ];
 
         let txn = |cat: CategoryId, d: (i32, u32, u32), amt: i64| -> Transaction {
             Transaction {
@@ -795,18 +839,12 @@ mod tests {
             txn(salary_id, (2026, 1, 15), 3000),
             // Non-salary positive transaction (should not count as income)
             txn(food_id, (2026, 2, 10), 50),
-            // Food spending in-month
-            txn(food_id, (2026, 2, 12), -200),
-            txn(food_id, (2026, 2, 18), -100),
         ];
 
-        let classified = classify_transactions(&transactions, &categories, &month, &year_months);
+        let start = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        let end = Some(NaiveDate::from_ymd_opt(2026, 2, 28).unwrap());
 
-        // Income: only salary in-month positive transactions
-        assert_eq!(classified.total_income, dec(4500));
-
-        // Month spending: food transactions (-200 + -100 + 50 = -250, negated = 250)
-        // The +50 refund reduces net spending
-        assert_eq!(classified.total_month_spending, dec(250));
+        let income = compute_income(&transactions, &categories, start, end);
+        assert_eq!(income, dec(4500));
     }
 }

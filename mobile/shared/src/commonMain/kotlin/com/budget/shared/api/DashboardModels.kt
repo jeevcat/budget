@@ -47,6 +47,8 @@ data class BudgetGroupSummary(
     val remaining: Double,
     @SerialName("over_budget_count") val overBudgetCount: Int,
     @SerialName("bar_max") val barMax: Double,
+    @SerialName("total_income") val totalIncome: Double = 0.0,
+    @SerialName("total_spending") val totalSpending: Double = 0.0,
 )
 
 @Serializable
@@ -113,6 +115,4 @@ data class StatusResponse(
     val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("unbudgeted_spent") val unbudgetedSpent: Double = 0.0,
     @SerialName("budget_year") val budgetYear: Int = 0,
-    @SerialName("total_income") val totalIncome: Double = 0.0,
-    @SerialName("total_month_spending") val totalMonthSpending: Double = 0.0,
 )

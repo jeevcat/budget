@@ -23,6 +23,8 @@ data class BudgetSummary(
     val totalRemaining: Double = 0.0,
     val overBudgetCount: Int = 0,
     val barMax: Double = 1.0,
+    val totalIncome: Double = 0.0,
+    val saved: Double = 0.0,
 )
 
 data class DashboardUiState(
@@ -49,8 +51,6 @@ data class DashboardUiState(
     val isCurrentMonth: Boolean = false,
     val hasPrevMonth: Boolean = false,
     val hasNextMonth: Boolean = false,
-    val totalIncome: Double = 0.0,
-    val saved: Double = 0.0,
 )
 
 class DashboardViewModel(
@@ -205,8 +205,6 @@ class DashboardViewModel(
           isCurrentMonth = isCurrentMonth,
           hasPrevMonth = activeMonthIndex > 0,
           hasNextMonth = activeMonthIndex < sortedMonths.size - 1,
-          totalIncome = resp.totalIncome,
-          saved = resp.totalIncome - resp.totalMonthSpending,
       )
     }
   }
@@ -238,4 +236,6 @@ private fun BudgetGroupSummary.toUiSummary() =
         totalRemaining = remaining,
         overBudgetCount = overBudgetCount,
         barMax = barMax,
+        totalIncome = totalIncome,
+        saved = totalIncome - totalSpending,
     )

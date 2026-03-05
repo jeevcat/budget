@@ -574,11 +574,11 @@ function BudgetSection({
   items,
   summary,
   barMax,
-  totalIncome = 0,
-  saved = 0,
   selectedCategoryId,
   onCategoryClick,
 }) {
+  const totalIncome = Number(summary.total_income) || 0;
+  const saved = totalIncome - (Number(summary.total_spending) || 0);
   return html`
     <div class="dash-totals">
       ${
@@ -1054,10 +1054,6 @@ function Dashboard() {
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
   })();
 
-  const totalIncome = Number(statusResp.total_income) || 0;
-  const totalMonthSpending = Number(statusResp.total_month_spending) || 0;
-  const saved = totalIncome - totalMonthSpending;
-
   return html`
     <div class="hstack" style="margin-bottom:1.25rem">
       <div class="hstack" style="gap:0.5rem;align-items:center">
@@ -1096,8 +1092,6 @@ function Dashboard() {
               items=${monthly}
               summary=${statusResp.monthly_summary}
               barMax=${Number(statusResp.monthly_summary.bar_max)}
-              totalIncome=${totalIncome}
-              saved=${saved}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
