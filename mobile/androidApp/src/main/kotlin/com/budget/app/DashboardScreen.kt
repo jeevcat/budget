@@ -62,6 +62,7 @@ import com.budget.shared.viewmodel.DashboardViewModel
 import kotlin.math.abs
 
 private const val UNBUDGETED_CATEGORY_ID = "__unbudgeted__"
+private const val INCOME_CATEGORY_ID = "__income__"
 
 // -- Pace colors -----------------------------------------------------------
 
@@ -235,7 +236,12 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
-  item { SummaryCards(summary = state.monthlySummary) }
+  item {
+    SummaryCards(
+        summary = state.monthlySummary,
+        onIncomeClick = { viewModel.selectCategory(INCOME_CATEGORY_ID) },
+    )
+  }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -270,7 +276,12 @@ private fun LazyListScope.annualTabContent(
         timeLabel = state.annualTimeLabel,
     )
   }
-  item { SummaryCards(summary = state.annualSummary) }
+  item {
+    SummaryCards(
+        summary = state.annualSummary,
+        onIncomeClick = { viewModel.selectCategory(INCOME_CATEGORY_ID) },
+    )
+  }
   items(state.annualStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -404,7 +415,7 @@ private fun UnbudgetedRow(spent: Double, count: Int, onClick: () -> Unit) {
 // -- Summary cards (2×2) ---------------------------------------------------
 
 @Composable
-private fun SummaryCards(summary: BudgetSummary) {
+private fun SummaryCards(summary: BudgetSummary, onIncomeClick: (() -> Unit)? = null) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     if (summary.totalIncome > 0) {
       Row(
@@ -415,6 +426,7 @@ private fun SummaryCards(summary: BudgetSummary) {
             label = "Income",
             value = formatAmount(summary.totalIncome),
             modifier = Modifier.weight(1f),
+            onClick = onIncomeClick,
         )
         StatCard(
             label = "Saved",
@@ -467,9 +479,14 @@ private fun StatCard(
     value: String,
     modifier: Modifier = Modifier,
     valueColor: Color? = null,
+    onClick: (() -> Unit)? = null,
 ) {
   ElevatedCard(modifier = modifier) {
-    Column(modifier = Modifier.padding(12.dp)) {
+    Column(
+        modifier =
+            Modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(12.dp),
+    ) {
       Text(
           text = label,
           style = MaterialTheme.typography.labelMedium,
@@ -679,6 +696,22 @@ private data class CategoryInfo(
 )
 
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
+  if (categoryId == INCOME_CATEGORY_ID) {
+    val summary =
+        when (state.selectedTab) {
+          BudgetMode.ANNUAL -> state.annualSummary
+          else -> state.monthlySummary
+        }
+    return CategoryInfo(
+        name = "Income",
+        spent = summary.totalIncome,
+        budget = 0.0,
+        remaining = 0.0,
+        pace = PaceIndicator.PENDING,
+        paceDelta = 0.0,
+        barMax = summary.totalIncome,
+    )
+  }
   if (categoryId == UNBUDGETED_CATEGORY_ID) {
     return CategoryInfo(
         name = "Unbudgeted",
@@ -750,6 +783,12 @@ private fun resolveTransactions(
     state: DashboardUiState,
     categoryId: String,
 ): List<TransactionEntry> {
+  if (categoryId == INCOME_CATEGORY_ID) {
+    return when (state.selectedTab) {
+      BudgetMode.ANNUAL -> state.annualIncomeTransactions
+      else -> state.incomeTransactions
+    }
+  }
   if (categoryId == UNBUDGETED_CATEGORY_ID) {
     return state.unbudgetedTransactions
   }

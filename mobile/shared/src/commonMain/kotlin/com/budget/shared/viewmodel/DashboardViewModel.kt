@@ -45,6 +45,8 @@ data class DashboardUiState(
     val selectedCategoryId: String? = null,
     val unbudgetedSpent: Double = 0.0,
     val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
+    val incomeTransactions: List<TransactionEntry> = emptyList(),
+    val annualIncomeTransactions: List<TransactionEntry> = emptyList(),
     val budgetYear: Int = 0,
     val monthlyTimeLabel: String = "",
     val annualTimeLabel: String = "",
@@ -197,6 +199,9 @@ class DashboardViewModel(
           unbudgetedSpent = resp.unbudgetedSpent,
           unbudgetedTransactions =
               resp.unbudgetedTransactions.sortedByDescending { t -> t.postedDate },
+          incomeTransactions = resp.incomeTransactions.sortedByDescending { t -> t.postedDate },
+          annualIncomeTransactions =
+              resp.annualIncomeTransactions.sortedByDescending { t -> t.postedDate },
           annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
           projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
           budgetYear = resp.budgetYear,

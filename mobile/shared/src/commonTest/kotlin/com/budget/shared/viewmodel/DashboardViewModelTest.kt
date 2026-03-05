@@ -211,6 +211,78 @@ class DashboardViewModelTest {
   }
 
   @Test
+  fun incomeTransactionsFlowThroughToUiState() = runTest {
+    val incomeTxns =
+        listOf(
+            TransactionEntry(
+                id = "txn-inc-1",
+                categoryId = "cat-salary",
+                amount = 3000.0,
+                merchantName = "Employer",
+                postedDate = "2026-02-05",
+            ),
+            TransactionEntry(
+                id = "txn-inc-2",
+                categoryId = "cat-salary",
+                amount = 500.0,
+                merchantName = "Bonus",
+                postedDate = "2026-02-15",
+            ),
+        )
+    val data =
+        makeDashboardData(
+            "month-1",
+            totalIncome = 3500.0,
+            incomeTransactions = incomeTxns,
+        )
+    val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
+    val vm = DashboardViewModel(repo)
+
+    val state = vm.uiState.value
+    assertEquals(2, state.incomeTransactions.size)
+    val sum = state.incomeTransactions.sumOf { it.amount }
+    assertEquals(state.monthlySummary.totalIncome, sum)
+    // Sorted by date descending
+    assertEquals("txn-inc-2", state.incomeTransactions.first().id)
+  }
+
+  @Test
+  fun annualIncomeTransactionsFlowThroughToUiState() = runTest {
+    val annualIncomeTxns =
+        listOf(
+            TransactionEntry(
+                id = "txn-ainc-1",
+                categoryId = "cat-salary",
+                amount = 3000.0,
+                merchantName = "Employer",
+                postedDate = "2026-01-15",
+            ),
+            TransactionEntry(
+                id = "txn-ainc-2",
+                categoryId = "cat-salary",
+                amount = 3000.0,
+                merchantName = "Employer",
+                postedDate = "2026-02-15",
+            ),
+        )
+    val data =
+        makeDashboardData(
+            "month-1",
+            annualTotalIncome = 6000.0,
+            annualIncomeTransactions = annualIncomeTxns,
+        )
+    val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
+    val vm = DashboardViewModel(repo)
+
+    val state = vm.uiState.value
+    assertEquals(2, state.annualIncomeTransactions.size)
+    val sum = state.annualIncomeTransactions.sumOf { it.amount }
+    assertEquals(state.annualSummary.totalIncome, sum)
+    // Sorted by date descending
+    assertEquals("txn-ainc-2", state.annualIncomeTransactions.first().id)
+  }
+
+  @Test
   fun unbudgetedSpentFlowsThroughToUiState() = runTest {
     val unbudgetedTxns =
         listOf(
@@ -299,6 +371,9 @@ private fun makeDashboardData(
     unbudgetedTransactions: List<TransactionEntry> = emptyList(),
     totalIncome: Double = 0.0,
     totalSpending: Double = 0.0,
+    incomeTransactions: List<TransactionEntry> = emptyList(),
+    annualIncomeTransactions: List<TransactionEntry> = emptyList(),
+    annualTotalIncome: Double = 0.0,
 ): DashboardData {
   val months = buildList {
     if (prevMonthId != null) add(BudgetMonth(id = prevMonthId, startDate = "2026-01-28"))
@@ -340,7 +415,15 @@ private fun makeDashboardData(
                   totalIncome = totalIncome,
                   totalSpending = totalSpending,
               ),
-          annualSummary = emptySummary,
+          annualSummary =
+              BudgetGroupSummary(
+                  totalBudget = 0.0,
+                  totalSpent = 0.0,
+                  remaining = 0.0,
+                  overBudgetCount = 0,
+                  barMax = 1.0,
+                  totalIncome = annualTotalIncome,
+              ),
           projectSummary = emptySummary,
           monthlyTransactions =
               listOf(
@@ -354,6 +437,8 @@ private fun makeDashboardData(
               ),
           unbudgetedSpent = unbudgetedSpent,
           unbudgetedTransactions = unbudgetedTransactions,
+          incomeTransactions = incomeTransactions,
+          annualIncomeTransactions = annualIncomeTransactions,
       )
   return DashboardData(status = status, months = months)
 }

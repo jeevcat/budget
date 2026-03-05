@@ -113,6 +113,9 @@ data class StatusResponse(
     val projectTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("unbudgeted_transactions")
     val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("income_transactions") val incomeTransactions: List<TransactionEntry> = emptyList(),
+    @SerialName("annual_income_transactions")
+    val annualIncomeTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("unbudgeted_spent") val unbudgetedSpent: Double = 0.0,
     @SerialName("budget_year") val budgetYear: Int = 0,
 )
