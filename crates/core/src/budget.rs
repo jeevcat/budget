@@ -238,6 +238,25 @@ pub fn detect_budget_month_boundaries(
         budget_months[i].end_date = next_start.pred_opt();
     }
 
+    // Extend the first budget month backwards to cover any non-salary
+    // transactions that predate it, so they aren't orphaned without a budget month.
+    if let Some(first_month) = budget_months.first_mut() {
+        let earliest = transactions
+            .iter()
+            .filter(|t| {
+                !t.categorization
+                    .category_id()
+                    .is_some_and(|cid| salary_cat_ids.contains(&cid))
+            })
+            .map(|t| t.posted_date)
+            .min();
+        if let Some(earliest) = earliest
+            && earliest < first_month.start_date
+        {
+            first_month.start_date = earliest;
+        }
+    }
+
     Ok(budget_months)
 }
 
@@ -3204,5 +3223,285 @@ mod tests {
         // All four transactions should be counted: 1208 + 70 + 1392 + 529 = 3199
         assert_eq!(status.spent, dec!(3199));
         assert_eq!(status.remaining, dec!(1)); // 3200 - 3199
+    }
+
+    // -----------------------------------------------------------------------
+    // Inter-month gap transaction assignment
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gap_transaction_before_salary_belongs_to_previous_month() {
+        let categories = vec![salary_category(), food_category()];
+        let transactions = vec![
+            // Dec salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 12, 18),
+            ),
+            // Jan salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 26),
+            ),
+            // Feb salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 2, 26),
+            ),
+            // Gap transaction: Jan 5 is between calendar month start and Jan 26 salary
+            make_txn(
+                Categorization::Manual(food_category().id),
+                dec!(-50),
+                date(2026, 1, 5),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 3);
+        // Jan 5 falls in month 0 (Dec 18 – Jan 25)
+        assert!(is_in_budget_month(date(2026, 1, 5), &months[0]));
+        assert!(!is_in_budget_month(date(2026, 1, 5), &months[1]));
+    }
+
+    #[test]
+    fn gap_transaction_day_before_salary_belongs_to_previous_month() {
+        let categories = vec![salary_category(), food_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 12, 18),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 2, 26),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        // Jan 25 is the day before the Jan 26 salary — still in month 0
+        assert!(is_in_budget_month(date(2026, 1, 25), &months[0]));
+        assert!(!is_in_budget_month(date(2026, 1, 25), &months[1]));
+    }
+
+    #[test]
+    fn transaction_on_salary_day_belongs_to_new_month() {
+        let categories = vec![salary_category(), food_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 12, 18),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 2, 26),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        // Jan 26 is the salary day — belongs to month 1, not month 0
+        assert!(!is_in_budget_month(date(2026, 1, 26), &months[0]));
+        assert!(is_in_budget_month(date(2026, 1, 26), &months[1]));
+    }
+
+    #[test]
+    fn gap_with_skipped_month_extends_previous() {
+        let categories = vec![salary_category(), food_category()];
+        // Expected 2 salaries/month. Jan has 2, Feb has only 1 (skipped), Mar has 2.
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2026, 1, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2026, 1, 25),
+            ),
+            // Feb only has 1 salary — skipped
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2026, 2, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2026, 3, 10),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2026, 3, 25),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 2);
+        assert_eq!(months[0].start_date, date(2026, 1, 10));
+        assert_eq!(months[1].start_date, date(2026, 3, 10));
+
+        // Feb 15 falls in the Jan budget month (which extends to Mar 9)
+        assert!(is_in_budget_month(date(2026, 2, 15), &months[0]));
+        assert!(!is_in_budget_month(date(2026, 2, 15), &months[1]));
+    }
+
+    #[test]
+    fn transaction_before_first_budget_month_is_covered() {
+        let categories = vec![salary_category(), food_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 15),
+            ),
+            // Transaction before the first budget month
+            make_txn(
+                Categorization::Manual(food_category().id),
+                dec!(-30),
+                date(2026, 1, 5),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        // After the fix, the first budget month should extend back to cover Jan 5
+        assert!(
+            is_in_budget_month(date(2026, 1, 5), &months[0]),
+            "first budget month should extend back to cover earlier transactions"
+        );
+    }
+
+    #[test]
+    fn spending_includes_gap_transactions_in_previous_month() {
+        let food = food_category();
+        let categories = vec![salary_category(), food.clone()];
+        let transactions = vec![
+            // Dec salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 12, 18),
+            ),
+            // Jan salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 26),
+            ),
+            // Gap transaction on Jan 5 — should be in Dec budget month
+            make_txn(Categorization::Manual(food.id), dec!(-50), date(2026, 1, 5)),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        // Dec month spending should include the Jan 5 gap transaction
+        let spending = compute_category_spending(&transactions, food.id, &months[0], &categories);
+        assert_eq!(spending, dec!(50));
+    }
+
+    #[test]
+    fn spending_excludes_gap_transactions_from_new_month() {
+        let food = food_category();
+        let categories = vec![salary_category(), food.clone()];
+        let transactions = vec![
+            // Dec salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 12, 18),
+            ),
+            // Jan salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 26),
+            ),
+            // Feb salary
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 2, 26),
+            ),
+            // Gap transaction on Jan 5 — belongs to Dec, not Jan
+            make_txn(Categorization::Manual(food.id), dec!(-50), date(2026, 1, 5)),
+            // Transaction after salary on Jan 28 — belongs to Jan
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-30),
+                date(2026, 1, 28),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        // Jan month spending should NOT include the Jan 5 gap transaction
+        let spending = compute_category_spending(&transactions, food.id, &months[1], &categories);
+        assert_eq!(spending, dec!(30));
+    }
+
+    #[test]
+    fn first_budget_month_covers_earlier_transactions() {
+        let food = food_category();
+        let categories = vec![salary_category(), food.clone()];
+        let transactions = vec![
+            // First-ever salary on Jan 15
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 15),
+            ),
+            // Transactions before the first salary
+            make_txn(Categorization::Manual(food.id), dec!(-20), date(2026, 1, 1)),
+            make_txn(Categorization::Manual(food.id), dec!(-30), date(2026, 1, 5)),
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-10),
+                date(2026, 1, 14),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+
+        // All pre-salary transactions should be covered by the first month
+        assert!(is_in_budget_month(date(2026, 1, 1), &months[0]));
+        assert!(is_in_budget_month(date(2026, 1, 5), &months[0]));
+        assert!(is_in_budget_month(date(2026, 1, 14), &months[0]));
+
+        // Spending should include all three pre-salary transactions
+        let spending = compute_category_spending(&transactions, food.id, &months[0], &categories);
+        assert_eq!(spending, dec!(60)); // 20 + 30 + 10
     }
 }
