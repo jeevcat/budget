@@ -79,8 +79,6 @@ pub struct CallbackQuery {
 #[derive(Deserialize)]
 struct StateTokenData {
     aspsp_name: String,
-    #[allow(dead_code)]
-    aspsp_country: String,
     valid_until: chrono::DateTime<chrono::Utc>,
     institution_name: String,
 }
