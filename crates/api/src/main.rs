@@ -34,6 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = budget_core::load_config()?;
     init_tracing(&config);
     tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
+    if config.secret_key.as_ref().is_empty() {
+        tracing::warn!("no secret_key configured — all API requests will be rejected");
+    }
 
     let db = Db::connect(config.database_url.as_ref()).await?;
     let apalis_pool = ApalisPool::connect(config.database_url.as_ref()).await?;

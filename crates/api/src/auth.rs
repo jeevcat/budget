@@ -13,20 +13,35 @@ use crate::state::AppState;
 /// Cookie name for the auth token.
 const COOKIE_NAME: &str = "budget_session";
 
+/// JSON 401 response with a machine-readable `reason` for debuggability.
+fn unauthorized(reason: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({
+            "error": "unauthorized",
+            "reason": reason,
+        })),
+    )
+        .into_response()
+}
+
 /// Middleware that validates the request against the configured `secret_key`.
 ///
 /// Checks (in order):
 /// 1. `Authorization: Bearer <token>` header
 /// 2. `budget_session` `HttpOnly` cookie
 ///
-/// # Errors
-///
-/// Returns `401 Unauthorized` if no valid credential is found.
+/// Returns a JSON body with a `reason` field on failure so that
+/// authentication problems are easy to diagnose from logs or curl.
 pub async fn require_bearer_token(
     State(state): State<AppState>,
     request: axum::extract::Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
+    if state.secret_key.as_ref().is_empty() {
+        return unauthorized("not_configured");
+    }
+
     // Check Authorization header first
     if let Some(value) = request
         .headers()
@@ -35,9 +50,9 @@ pub async fn require_bearer_token(
         && let Some(token) = value.strip_prefix("Bearer ")
     {
         if SecretKey::new(token).ok().as_ref() == Some(&state.secret_key) {
-            return Ok(next.run(request).await);
+            return next.run(request).await;
         }
-        return Err(StatusCode::UNAUTHORIZED);
+        return unauthorized("invalid_token");
     }
 
     // Fall back to cookie
@@ -50,14 +65,14 @@ pub async fn require_bearer_token(
             let cookie = cookie.trim();
             if let Some(value) = cookie.strip_prefix("budget_session=") {
                 if SecretKey::new(value).ok().as_ref() == Some(&state.secret_key) {
-                    return Ok(next.run(request).await);
+                    return next.run(request).await;
                 }
-                return Err(StatusCode::UNAUTHORIZED);
+                return unauthorized("invalid_token");
             }
         }
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    unauthorized("missing_token")
 }
 
 #[derive(Deserialize)]
@@ -77,12 +92,12 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Validate the provided token and set an `HttpOnly` session cookie.
-async fn login(
-    State(state): State<AppState>,
-    Json(body): Json<LoginRequest>,
-) -> Result<Response, StatusCode> {
+async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> Response {
+    if state.secret_key.as_ref().is_empty() {
+        return unauthorized("not_configured");
+    }
     if state.secret_key != body.token {
-        return Err(StatusCode::UNAUTHORIZED);
+        return unauthorized("invalid_token");
     }
 
     let cookie = format!(
@@ -90,11 +105,11 @@ async fn login(
         token = body.token,
     );
 
-    Ok((
+    (
         [(SET_COOKIE, cookie)],
         Json(serde_json::json!({"ok": true})),
     )
-        .into_response())
+        .into_response()
 }
 
 /// Clear the auth cookie.
