@@ -85,6 +85,11 @@ function formatDateShort(iso) {
   return shortDateFmt.format(date);
 }
 
+function formatDateRange(start, end) {
+  const s = formatDateShort(start);
+  return end ? `${s} \u2013 ${formatDateShort(end)}` : `${s} \u2013 ongoing`;
+}
+
 // ---------------------------------------------------------------------------
 // Simple hash router
 // ---------------------------------------------------------------------------
@@ -576,6 +581,7 @@ function BudgetSection({
   barMax,
   selectedCategoryId,
   onCategoryClick,
+  showDateSubtitle,
 }) {
   const totalIncome = Number(summary.total_income) || 0;
   const saved = totalIncome - (Number(summary.total_spending) || 0);
@@ -663,6 +669,13 @@ function BudgetSection({
                       html`<span class="cat-parent">${s.parentName}</span>`
                     }${s.shortName}
                   </div>
+                  ${
+                    showDateSubtitle &&
+                    s.project_start_date &&
+                    html`
+                    <div class="dash-cat-sub text-light">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
+                  `
+                  }
                   <div class="dash-cat-sub">
                     <span>${formatAmount(s.spent, { decimals: 0 })}</span>
                     <span class="text-light">
@@ -923,9 +936,11 @@ function Dashboard() {
     (s) => s.budgetMode === "monthly" || !s.budgetMode,
   );
   const annual = enriched.filter((s) => s.budgetMode === "annual");
-  const projects = (statusResp.projects || [])
+  const allProjects = (statusResp.projects || [])
     .map(enrichStatus)
     .sort(byUrgency);
+  const activeProjects = allProjects.filter((s) => !s.finished);
+  const finishedProjects = allProjects.filter((s) => s.finished);
 
   // Summaries pre-computed by the backend (deduplicated for parent/child overlap)
   const monthBudgetTxns = statusResp.monthly_transactions;
@@ -945,7 +960,7 @@ function Dashboard() {
   };
   const monthlyTimeLabel = timeLeft(monthly, "d");
 
-  const hasProjects = projects.length > 0;
+  const hasProjects = allProjects.length > 0;
 
   // Category filter for transaction list (click a category in charts to filter)
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
@@ -973,7 +988,7 @@ function Dashboard() {
 
   // Project drill-down: use backend-provided child breakdowns
   const drilledProject = drilledProjectId
-    ? projects.find((p) => p.category_id === drilledProjectId)
+    ? allProjects.find((p) => p.category_id === drilledProjectId)
     : null;
 
   const { childBreakdown, drilledTotalSpent } = useMemo(() => {
@@ -1149,12 +1164,61 @@ function Dashboard() {
                 }}
               />`
               : html`<${BudgetSection}
-                items=${projects}
+                items=${activeProjects}
                 summary=${statusResp.project_summary}
                 barMax=${Number(statusResp.project_summary.bar_max)}
                 selectedCategoryId=${selectedCategoryId}
                 onCategoryClick=${handleProjectClick}
-              />`
+                showDateSubtitle
+              />
+              ${
+                finishedProjects.length > 0 &&
+                html`
+                <details style="margin-top:1rem">
+                  <summary class="text-light" style="cursor:pointer;padding:0.5rem 0">Finished (${finishedProjects.length})</summary>
+                  <div class="vstack" style="gap:0;margin-top:0.5rem">
+                    ${finishedProjects.map(
+                      (s) => html`
+                        <div
+                          class="hstack dash-cat-row dash-cat-finished clickable-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
+                          key=${s.category_id}
+                          onClick=${() => handleProjectClick?.(s.category_id)}
+                          style="cursor:pointer"
+                        >
+                          <${ProgressRing}
+                            spent=${s.spent}
+                            budget=${s.budget_amount}
+                            pace=${s.pace}
+                          />
+                          <div class="dash-cat-info">
+                            <div class="dash-cat-name">
+                              ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
+                            </div>
+                            ${
+                              s.project_start_date &&
+                              html`
+                              <div class="dash-cat-sub text-light">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
+                            `
+                            }
+                            <div class="dash-cat-sub">
+                              <span>${formatAmount(s.spent, { decimals: 0 })}</span>
+                              <span class="text-light">
+                                ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span>
+                            </div>
+                          </div>
+                          <div class="vstack dash-cat-end">
+                            <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta)}</span>
+                            <span class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}">
+                              ${formatAmount(s.remaining, { decimals: 0, sign: true })}
+                            </span>
+                          </div>
+                        </div>
+                      `,
+                    )}
+                  </div>
+                </details>
+              `
+              }`
           }
         </div>
       `

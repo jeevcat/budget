@@ -2,7 +2,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -45,6 +45,9 @@ struct ProjectStatusEntry {
     status: BudgetStatus,
     children: Vec<ProjectChildSpending>,
     has_children: bool,
+    project_start_date: NaiveDate,
+    project_end_date: Option<NaiveDate>,
+    finished: bool,
 }
 
 #[derive(Serialize)]
@@ -473,10 +476,22 @@ fn compute_projects(
             } else {
                 Vec::new()
             };
+            let (project_start_date, project_end_date) = match &cat.budget {
+                BudgetConfig::Project {
+                    start_date,
+                    end_date,
+                    ..
+                } => (*start_date, *end_date),
+                _ => unreachable!("filtered to projects above"),
+            };
+            let finished = project_end_date.is_some_and(|end| end < reference_date);
             ProjectStatusEntry {
                 status,
                 children,
                 has_children,
+                project_start_date,
+                project_end_date,
+                finished,
             }
         })
         .collect()

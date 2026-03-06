@@ -86,6 +86,9 @@ data class ProjectStatusEntry(
     @SerialName("budget_mode") val budgetMode: BudgetMode,
     val children: List<ProjectChildSpending> = emptyList(),
     @SerialName("has_children") val hasChildren: Boolean = false,
+    @SerialName("project_start_date") val projectStartDate: String = "",
+    @SerialName("project_end_date") val projectEndDate: String? = null,
+    val finished: Boolean = false,
 )
 
 @Serializable

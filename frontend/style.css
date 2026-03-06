@@ -428,6 +428,9 @@ dialog > form > div {
 .dash-cat-remaining {
   font-size: 0.82rem;
 }
+.dash-cat-finished {
+  opacity: 0.5;
+}
 
 .progress-ring {
   flex-shrink: 0;

@@ -72,6 +72,17 @@ fun formatShortDate(dateStr: String): String =
       dateStr
     }
 
+/** Format a project date range (e.g. "Mar 15 – Jun 30, 2025"). */
+fun formatProjectDateRange(startDate: String, endDate: String?): String {
+  val start = parseLocalDate(startDate) ?: return startDate
+  val startStr = start.format(ShortDateFormatter)
+  val y = start.year
+  if (endDate == null) return "$startStr, $y – ongoing"
+  val end = parseLocalDate(endDate) ?: return "$startStr – $endDate"
+  val endStr = end.format(ShortDateFormatter)
+  return if (y == end.year) "$startStr – $endStr, $y" else "$startStr, $y – $endStr, ${end.year}"
+}
+
 /** Format an ISO date string as long date (e.g. "March 3, 2026"). */
 fun formatLongDate(dateStr: String): String =
     try {

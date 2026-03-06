@@ -1,6 +1,7 @@
 package com.budget.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -22,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -34,9 +37,12 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -53,6 +59,7 @@ import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.ChildCategoryInfo
 import com.budget.shared.api.PaceIndicator
+import com.budget.shared.api.ProjectStatusEntry
 import com.budget.shared.api.TransactionEntry
 import com.budget.shared.config.ServerConfig
 import com.budget.shared.repository.DefaultBudgetRepository
@@ -63,6 +70,7 @@ import kotlin.math.abs
 
 private const val UNBUDGETED_CATEGORY_ID = "__unbudgeted__"
 private const val INCOME_CATEGORY_ID = "__income__"
+private const val FINISHED_ALPHA = 0.5f
 
 // -- Pace colors -----------------------------------------------------------
 
@@ -301,8 +309,11 @@ private fun LazyListScope.projectTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
 ) {
+  val activeProjects = state.projects.filter { !it.finished }
+  val finishedProjects = state.projects.filter { it.finished }
+
   item { SummaryCards(summary = state.projectSummary) }
-  items(state.projects, key = { it.categoryId }) { project ->
+  items(activeProjects, key = { it.categoryId }) { project ->
     CategoryRow(
         name = project.categoryName,
         spent = project.spent,
@@ -313,11 +324,62 @@ private fun LazyListScope.projectTabContent(
         barMax = state.projectSummary.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(project.categoryId) },
+        subtitle = formatProjectDateRange(project.projectStartDate, project.projectEndDate),
     )
+  }
+  if (finishedProjects.isNotEmpty()) {
+    item { FinishedProjectsSection(finishedProjects, state.projectSummary.barMax, viewModel) }
   }
 }
 
 // -- Month navigator -------------------------------------------------------
+
+@Composable
+private fun FinishedProjectsSection(
+    projects: List<ProjectStatusEntry>,
+    barMax: Double,
+    viewModel: DashboardViewModel,
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Column {
+    Row(
+        modifier =
+            Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(
+          text = "Finished (${projects.size})",
+          style = MaterialTheme.typography.titleSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Icon(
+          imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+          contentDescription = if (expanded) "Collapse" else "Expand",
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+    AnimatedVisibility(visible = expanded) {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        projects.forEach { project ->
+          CategoryRow(
+              name = project.categoryName,
+              spent = project.spent,
+              budget = project.budgetAmount,
+              remaining = project.remaining,
+              pace = project.pace,
+              paceDelta = project.paceDelta,
+              barMax = barMax,
+              selected = false,
+              onClick = { viewModel.selectCategory(project.categoryId) },
+              subtitle = formatProjectDateRange(project.projectStartDate, project.projectEndDate),
+              modifier = Modifier.alpha(FINISHED_ALPHA),
+          )
+        }
+      }
+    }
+  }
+}
 
 @Composable
 private fun MonthNavigator(
@@ -516,6 +578,8 @@ private fun CategoryRow(
     barMax: Double,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
 ) {
   val color = paceColor(pace)
   val containerColor =
@@ -526,7 +590,7 @@ private fun CategoryRow(
       }
 
   ElevatedCard(
-      modifier = Modifier.fillMaxWidth().animateContentSize(),
+      modifier = modifier.fillMaxWidth().animateContentSize(),
       colors =
           CardDefaults.elevatedCardColors(
               containerColor = containerColor,
@@ -553,6 +617,14 @@ private fun CategoryRow(
             text = formatAmount(spent),
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Bold,
+        )
+      }
+
+      if (subtitle != null) {
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
 
