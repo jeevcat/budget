@@ -1,3 +1,4 @@
+use budget_core::models::MatchField;
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -31,17 +32,6 @@ pub struct TransactionSummary {
 pub enum CorrelationType {
     Transfer,
     Reimbursement,
-}
-
-/// Which transaction field a proposed rule should match against.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum MatchField {
-    Merchant,
-    Description,
-    CounterpartyName,
-    CounterpartyIban,
-    CounterpartyBic,
-    BankTransactionCode,
 }
 
 /// Result of LLM-based correlation analysis between two transactions.

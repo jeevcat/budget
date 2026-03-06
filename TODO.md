@@ -20,5 +20,9 @@
 ### Low Priority
 - [ ] **Constant-time token comparison**: `auth.rs` uses `==` for bearer token check. Use `subtle::ConstantTimeEq` for timing-attack resistance
 - [ ] **Error boundaries + retry in frontend**: Errors replace entire page content with no retry button. Add a retry mechanism
-- [ ] **Duplicate MatchField enum**: `MatchField` defined in both `core/models/enums.rs` (7 variants) and `providers/llm.rs` (6 variants) with manual mapping in `routes/transactions.rs`
+- [x] **Duplicate MatchField enum**: `MatchField` defined in both `core/models/enums.rs` (7 variants) and `providers/llm.rs` (6 variants) with manual mapping in `routes/transactions.rs`
 - [ ] **Magic timeouts**: Fixed 5s polling on Jobs page, hardcoded 1500ms delay after rule creation. Poll adaptively or use SSE
+
+### Parse Don't Validate
+- [ ] **NicknameUpdate**: `UpdateNickname.nickname: Option<String>` overloads `None` for "clear" → `enum NicknameUpdate { Set(String), Clear }`
+- [ ] **Account connection state**: `Account.connection_id: Option<ConnectionId>` conflates "manual" vs "connected" → `enum AccountOrigin { Manual, Connected(ConnectionId) }`

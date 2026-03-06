@@ -3,9 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use budget_core::models::MatchField;
+
 use crate::error::ProviderError;
 use crate::llm::{
-    CategorizeInput, CategorizeResult, CorrelationResult, CorrelationType, LlmProvider, MatchField,
+    CategorizeInput, CategorizeResult, CorrelationResult, CorrelationType, LlmProvider,
     ProposedRule, RuleContext, TransactionSummary,
 };
 

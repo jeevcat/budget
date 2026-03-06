@@ -9,7 +9,7 @@ use budget_core::models::{
 };
 use budget_core::rules::compile_rule;
 use budget_jobs::CategorizeJob;
-use budget_providers::{MatchField, RuleContext};
+use budget_providers::RuleContext;
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -384,21 +384,11 @@ fn validate_proposals(
     proposed
         .into_iter()
         .filter(|p| {
-            let match_field_domain = match p.match_field {
-                MatchField::Merchant => budget_core::models::MatchField::Merchant,
-                MatchField::Description => budget_core::models::MatchField::Description,
-                MatchField::CounterpartyName => budget_core::models::MatchField::CounterpartyName,
-                MatchField::CounterpartyIban => budget_core::models::MatchField::CounterpartyIban,
-                MatchField::CounterpartyBic => budget_core::models::MatchField::CounterpartyBic,
-                MatchField::BankTransactionCode => {
-                    budget_core::models::MatchField::BankTransactionCode
-                }
-            };
             let test_rule = budget_core::models::Rule {
                 id: budget_core::models::RuleId::new(),
                 rule_type: RuleType::Categorization,
                 conditions: vec![budget_core::models::RuleCondition {
-                    field: match_field_domain,
+                    field: p.match_field,
                     pattern: p.match_pattern.clone(),
                 }],
                 target_category_id: Some(category_id),
@@ -408,14 +398,7 @@ fn validate_proposals(
             compile_rule(&test_rule).is_ok()
         })
         .map(|p| GenerateRuleProposal {
-            match_field: match p.match_field {
-                MatchField::Merchant => "merchant".to_owned(),
-                MatchField::Description => "description".to_owned(),
-                MatchField::CounterpartyName => "counterparty_name".to_owned(),
-                MatchField::CounterpartyIban => "counterparty_iban".to_owned(),
-                MatchField::CounterpartyBic => "counterparty_bic".to_owned(),
-                MatchField::BankTransactionCode => "bank_transaction_code".to_owned(),
-            },
+            match_field: p.match_field.to_string(),
             match_pattern: p.match_pattern,
             explanation: p.explanation,
         })
