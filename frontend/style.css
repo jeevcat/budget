@@ -574,3 +574,55 @@ dialog > form > div {
   padding-block: 0.25rem;
   font-size: 0.85rem;
 }
+
+/* Cash Flow card */
+.cashflow-card {
+  margin-top: 1.25rem;
+}
+.cashflow-header {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  user-select: none;
+}
+.cashflow-body {
+  padding: 0 1rem 1rem;
+}
+.cashflow-section {
+  margin-bottom: 0.75rem;
+}
+.cashflow-section-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.25rem;
+}
+.cashflow-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.2rem 0;
+  font-size: 0.9rem;
+}
+.cashflow-total {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0 0.1rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.cashflow-net {
+  border-top: 2px solid var(--border);
+  padding-top: 0.5rem;
+}
+.cashflow-net-row {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 1rem;
+}
+.cashflow-saved {
+  font-weight: 400;
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+}

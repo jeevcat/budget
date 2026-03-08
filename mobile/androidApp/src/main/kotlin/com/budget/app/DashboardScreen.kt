@@ -57,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
+import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.ChildCategoryInfo
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
@@ -68,8 +69,6 @@ import com.budget.shared.viewmodel.DashboardUiState
 import com.budget.shared.viewmodel.DashboardViewModel
 import kotlin.math.abs
 
-private const val UNBUDGETED_CATEGORY_ID = "__unbudgeted__"
-private const val INCOME_CATEGORY_ID = "__income__"
 private const val FINISHED_ALPHA = 0.5f
 
 // -- Pace colors -----------------------------------------------------------
@@ -233,6 +232,7 @@ private fun LazyListScope.monthlyTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
 ) {
+  val cashflow = state.monthlyCashflow ?: return
   item {
     MonthNavigator(
         month = state.currentMonth,
@@ -244,12 +244,7 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
-  item {
-    SummaryCards(
-        summary = state.monthlySummary,
-        onIncomeClick = { viewModel.selectCategory(INCOME_CATEGORY_ID) },
-    )
-  }
+  item { BudgetHealthCards(cashflow = cashflow) }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -258,19 +253,16 @@ private fun LazyListScope.monthlyTabContent(
         remaining = status.remaining,
         pace = status.pace,
         paceDelta = status.paceDelta,
-        barMax = state.monthlySummary.barMax,
+        barMax = cashflow.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
     )
   }
-  if (state.unbudgetedSpent > 0) {
-    item {
-      UnbudgetedRow(
-          spent = state.unbudgetedSpent,
-          count = state.unbudgetedTransactions.size,
-          onClick = { viewModel.selectCategory(UNBUDGETED_CATEGORY_ID) },
-      )
-    }
+  item {
+    CashFlowCard(
+        cashflow = cashflow,
+        onCategoryClick = { viewModel.selectCategory(it) },
+    )
   }
 }
 
@@ -278,18 +270,14 @@ private fun LazyListScope.annualTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
 ) {
+  val cashflow = state.annualCashflow ?: return
   item {
     AnnualHeader(
         budgetYear = state.budgetYear,
         timeLabel = state.annualTimeLabel,
     )
   }
-  item {
-    SummaryCards(
-        summary = state.annualSummary,
-        onIncomeClick = { viewModel.selectCategory(INCOME_CATEGORY_ID) },
-    )
-  }
+  item { BudgetHealthCards(cashflow = cashflow) }
   items(state.annualStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -298,9 +286,16 @@ private fun LazyListScope.annualTabContent(
         remaining = status.remaining,
         pace = status.pace,
         paceDelta = status.paceDelta,
-        barMax = state.annualSummary.barMax,
+        barMax = cashflow.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
+    )
+  }
+  item {
+    CashFlowCard(
+        cashflow = cashflow,
+        onCategoryClick = { viewModel.selectCategory(it) },
+        startExpanded = false,
     )
   }
 }
@@ -443,61 +438,53 @@ private fun AnnualHeader(budgetYear: Int, timeLabel: String) {
   }
 }
 
-// -- Unbudgeted row --------------------------------------------------------
+// -- Budget health cards (2×2) ---------------------------------------------
 
 @Composable
-private fun UnbudgetedRow(spent: Double, count: Int, onClick: () -> Unit) {
-  ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+private fun BudgetHealthCards(cashflow: CashFlowSummary) {
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Row(
-        modifier = Modifier.clickable(onClick = onClick).padding(12.dp).fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      Column {
-        Text(
-            text = "Unbudgeted",
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-        )
-        Text(
-            text = "$count transaction${if (count != 1) "s" else ""}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-      Text(
-          text = formatAmount(spent),
-          style = MaterialTheme.typography.bodyLarge,
-          fontWeight = FontWeight.Bold,
+      StatCard(
+          label = "Budget",
+          value = formatAmount(cashflow.totalBudget),
+          modifier = Modifier.weight(1f),
+      )
+      StatCard(
+          label = "Spent",
+          value = formatAmount(cashflow.totalSpent),
+          modifier = Modifier.weight(1f),
+      )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      StatCard(
+          label = "Remaining",
+          value = formatAmount(cashflow.remaining),
+          valueColor = if (cashflow.remaining < 0) OverBudgetColor else null,
+          modifier = Modifier.weight(1f),
+      )
+      StatCard(
+          label = "Categories",
+          value =
+              if (cashflow.overBudgetCount > 0) "${cashflow.overBudgetCount} over"
+              else "All on track",
+          valueColor = if (cashflow.overBudgetCount > 0) OverBudgetColor else UnderBudgetColor,
+          modifier = Modifier.weight(1f),
       )
     }
   }
 }
 
-// -- Summary cards (2×2) ---------------------------------------------------
+// -- Summary cards (for projects) ------------------------------------------
 
 @Composable
-private fun SummaryCards(summary: BudgetSummary, onIncomeClick: (() -> Unit)? = null) {
+private fun SummaryCards(summary: BudgetSummary) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    if (summary.totalIncome > 0) {
-      Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        StatCard(
-            label = "Income",
-            value = formatAmount(summary.totalIncome),
-            modifier = Modifier.weight(1f),
-            onClick = onIncomeClick,
-        )
-        StatCard(
-            label = "Saved",
-            value = formatAmount(summary.saved, showSign = true),
-            valueColor = if (summary.saved < 0) OverBudgetColor else UnderBudgetColor,
-            modifier = Modifier.weight(1f),
-        )
-      }
-    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -752,74 +739,43 @@ private data class CategoryInfo(
 )
 
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
-  if (categoryId == INCOME_CATEGORY_ID) {
-    val summary =
-        when (state.selectedTab) {
-          BudgetMode.ANNUAL -> state.annualSummary
-          else -> state.monthlySummary
-        }
+  val cashflow = activeCashflow(state)
+
+  findCashFlowItem(cashflow, categoryId)?.let { item ->
+    return CategoryInfo(item.label, item.amount, 0.0, 0.0, PaceIndicator.PENDING, 0.0, item.amount)
+  }
+
+  val status: BudgetStatus? =
+      when (state.selectedTab) {
+        BudgetMode.MONTHLY -> state.monthlyStatuses.find { it.categoryId == categoryId }
+        BudgetMode.ANNUAL -> state.annualStatuses.find { it.categoryId == categoryId }
+        else -> null
+      }
+  if (status != null) {
     return CategoryInfo(
-        name = "Income",
-        spent = summary.totalIncome,
-        budget = 0.0,
-        remaining = 0.0,
-        pace = PaceIndicator.PENDING,
-        paceDelta = 0.0,
-        barMax = summary.totalIncome,
+        status.categoryName,
+        status.spent,
+        status.budgetAmount,
+        status.remaining,
+        status.pace,
+        status.paceDelta,
+        cashflow?.barMax ?: 1.0,
     )
   }
-  if (categoryId == UNBUDGETED_CATEGORY_ID) {
-    return CategoryInfo(
-        name = "Unbudgeted",
-        spent = state.unbudgetedSpent,
-        budget = 0.0,
-        remaining = 0.0,
-        pace = PaceIndicator.PENDING,
-        paceDelta = 0.0,
-        barMax = state.unbudgetedSpent,
-    )
-  }
-  when (state.selectedTab) {
-    BudgetMode.MONTHLY -> {
-      val s = state.monthlyStatuses.find { it.categoryId == categoryId }
-      if (s != null)
-          return CategoryInfo(
-              s.categoryName,
-              s.spent,
-              s.budgetAmount,
-              s.remaining,
-              s.pace,
-              s.paceDelta,
-              state.monthlySummary.barMax,
-          )
+
+  if (state.selectedTab == BudgetMode.PROJECT) {
+    val p = state.projects.find { it.categoryId == categoryId }
+    if (p != null) {
+      return CategoryInfo(
+          p.categoryName,
+          p.spent,
+          p.budgetAmount,
+          p.remaining,
+          p.pace,
+          p.paceDelta,
+          state.projectSummary.barMax,
+      )
     }
-    BudgetMode.ANNUAL -> {
-      val s = state.annualStatuses.find { it.categoryId == categoryId }
-      if (s != null)
-          return CategoryInfo(
-              s.categoryName,
-              s.spent,
-              s.budgetAmount,
-              s.remaining,
-              s.pace,
-              s.paceDelta,
-              state.annualSummary.barMax,
-          )
-    }
-    BudgetMode.PROJECT -> {
-      val p = state.projects.find { it.categoryId == categoryId }
-      if (p != null)
-          return CategoryInfo(
-              p.categoryName,
-              p.spent,
-              p.budgetAmount,
-              p.remaining,
-              p.pace,
-              p.paceDelta,
-              state.projectSummary.barMax,
-          )
-    }
-    BudgetMode.SALARY -> {}
   }
   return null
 }
@@ -839,15 +795,10 @@ private fun resolveTransactions(
     state: DashboardUiState,
     categoryId: String,
 ): List<TransactionEntry> {
-  if (categoryId == INCOME_CATEGORY_ID) {
-    return when (state.selectedTab) {
-      BudgetMode.ANNUAL -> state.annualIncomeTransactions
-      else -> state.incomeTransactions
-    }
+  findCashFlowItem(activeCashflow(state), categoryId)?.let { item ->
+    return item.transactions.sortedByDescending { it.postedDate }
   }
-  if (categoryId == UNBUDGETED_CATEGORY_ID) {
-    return state.unbudgetedTransactions
-  }
+
   val all =
       when (state.selectedTab) {
         BudgetMode.MONTHLY -> state.monthlyTransactions

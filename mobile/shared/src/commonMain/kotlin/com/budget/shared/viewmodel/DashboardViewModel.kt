@@ -6,6 +6,7 @@ import com.budget.shared.api.BudgetGroupSummary
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
+import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
 import com.budget.shared.api.TransactionEntry
@@ -23,8 +24,6 @@ data class BudgetSummary(
     val totalRemaining: Double = 0.0,
     val overBudgetCount: Int = 0,
     val barMax: Double = 1.0,
-    val totalIncome: Double = 0.0,
-    val saved: Double = 0.0,
 )
 
 data class DashboardUiState(
@@ -36,17 +35,13 @@ data class DashboardUiState(
     val monthlyStatuses: List<BudgetStatus> = emptyList(),
     val annualStatuses: List<BudgetStatus> = emptyList(),
     val projects: List<ProjectStatusEntry> = emptyList(),
-    val monthlySummary: BudgetSummary = BudgetSummary(),
-    val annualSummary: BudgetSummary = BudgetSummary(),
+    val monthlyCashflow: CashFlowSummary? = null,
+    val annualCashflow: CashFlowSummary? = null,
     val projectSummary: BudgetSummary = BudgetSummary(),
     val monthlyTransactions: List<TransactionEntry> = emptyList(),
     val annualTransactions: List<TransactionEntry> = emptyList(),
     val projectTransactions: List<TransactionEntry> = emptyList(),
     val selectedCategoryId: String? = null,
-    val unbudgetedSpent: Double = 0.0,
-    val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
-    val incomeTransactions: List<TransactionEntry> = emptyList(),
-    val annualIncomeTransactions: List<TransactionEntry> = emptyList(),
     val budgetYear: Int = 0,
     val monthlyTimeLabel: String = "",
     val annualTimeLabel: String = "",
@@ -180,6 +175,19 @@ class DashboardViewModel(
           if (tl == null) "open-ended" else "${tl}mo left"
         } else ""
 
+    // Collect all cashflow transactions for the monthly transaction list
+    val monthlyCashflowTxns =
+        (resp.monthlyCashflow.income.items +
+                resp.monthlyCashflow.otherIncome.items +
+                resp.monthlyCashflow.unbudgetedSpending.items)
+            .flatMap { it.transactions }
+
+    val annualCashflowTxns =
+        (resp.annualCashflow.income.items +
+                resp.annualCashflow.otherIncome.items +
+                resp.annualCashflow.unbudgetedSpending.items)
+            .flatMap { it.transactions }
+
     _uiState.update {
       it.copy(
           loading = false,
@@ -189,20 +197,17 @@ class DashboardViewModel(
           monthlyStatuses = monthly,
           annualStatuses = annual,
           projects = projects,
-          monthlySummary = resp.monthlySummary.toUiSummary(),
-          annualSummary = resp.annualSummary.toUiSummary(),
+          monthlyCashflow = resp.monthlyCashflow,
+          annualCashflow = resp.annualCashflow,
           projectSummary = resp.projectSummary.toUiSummary(),
           monthlyTransactions =
-              (resp.monthlyTransactions + resp.unbudgetedTransactions).sortedByDescending { t ->
+              (resp.monthlyTransactions + monthlyCashflowTxns).sortedByDescending { t ->
                 t.postedDate
               },
-          unbudgetedSpent = resp.unbudgetedSpent,
-          unbudgetedTransactions =
-              resp.unbudgetedTransactions.sortedByDescending { t -> t.postedDate },
-          incomeTransactions = resp.incomeTransactions.sortedByDescending { t -> t.postedDate },
-          annualIncomeTransactions =
-              resp.annualIncomeTransactions.sortedByDescending { t -> t.postedDate },
-          annualTransactions = resp.annualTransactions.sortedByDescending { t -> t.postedDate },
+          annualTransactions =
+              (resp.annualTransactions + annualCashflowTxns).sortedByDescending { t ->
+                t.postedDate
+              },
           projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
           budgetYear = resp.budgetYear,
           monthlyTimeLabel = monthlyTimeLabel,
@@ -241,6 +246,4 @@ private fun BudgetGroupSummary.toUiSummary() =
         totalRemaining = remaining,
         overBudgetCount = overBudgetCount,
         barMax = barMax,
-        totalIncome = totalIncome,
-        saved = totalIncome - totalSpending,
     )

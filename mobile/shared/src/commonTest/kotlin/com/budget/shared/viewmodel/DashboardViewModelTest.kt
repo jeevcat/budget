@@ -4,6 +4,9 @@ import com.budget.shared.api.BudgetGroupSummary
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
+import com.budget.shared.api.CashFlowItem
+import com.budget.shared.api.CashFlowSection
+import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryRequest
 import com.budget.shared.api.PaceIndicator
@@ -200,18 +203,42 @@ class DashboardViewModelTest {
   }
 
   @Test
-  fun savedIsIncomeMinusSpending() = runTest {
-    val data = makeDashboardData("month-1", totalIncome = 5000.0, totalSpending = 3200.0)
+  fun cashflowSavedIsPopulated() = runTest {
+    val incomeTxns =
+        listOf(
+            TransactionEntry(
+                id = "txn-inc-1",
+                categoryId = "cat-salary",
+                amount = 3000.0,
+                merchantName = "Employer",
+                postedDate = "2026-02-05",
+            ),
+        )
+    val data =
+        makeDashboardData(
+            "month-1",
+            incomeItems =
+                listOf(
+                    CashFlowItem(
+                        categoryId = "cat-salary",
+                        label = "Salary",
+                        amount = 5000.0,
+                        transactionCount = 1,
+                        transactions = incomeTxns,
+                    ),
+                ),
+            saved = 1800.0,
+        )
     val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
     val vm = DashboardViewModel(repo)
 
-    val summary = vm.uiState.value.monthlySummary
-    assertEquals(5000.0, summary.totalIncome)
-    assertEquals(1800.0, summary.saved)
+    val cashflow = vm.uiState.value.monthlyCashflow
+    assertEquals(5000.0, cashflow?.income?.total)
+    assertEquals(1800.0, cashflow?.saved)
   }
 
   @Test
-  fun incomeTransactionsFlowThroughToUiState() = runTest {
+  fun cashflowIncomeTransactionsIncludedInMonthly() = runTest {
     val incomeTxns =
         listOf(
             TransactionEntry(
@@ -232,58 +259,34 @@ class DashboardViewModelTest {
     val data =
         makeDashboardData(
             "month-1",
-            totalIncome = 3500.0,
-            incomeTransactions = incomeTxns,
+            incomeItems =
+                listOf(
+                    CashFlowItem(
+                        categoryId = "cat-salary",
+                        label = "Salary",
+                        amount = 3500.0,
+                        transactionCount = 2,
+                        transactions = incomeTxns,
+                    ),
+                ),
         )
     val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
     val vm = DashboardViewModel(repo)
 
     val state = vm.uiState.value
-    assertEquals(2, state.incomeTransactions.size)
-    val sum = state.incomeTransactions.sumOf { it.amount }
-    assertEquals(state.monthlySummary.totalIncome, sum)
-    // Sorted by date descending
-    assertEquals("txn-inc-2", state.incomeTransactions.first().id)
+    // Income transactions should be merged into monthlyTransactions
+    assertTrue(
+        state.monthlyTransactions.any { it.id == "txn-inc-1" },
+        "Expected income transaction in monthlyTransactions",
+    )
+    assertTrue(
+        state.monthlyTransactions.any { it.id == "txn-inc-2" },
+        "Expected income transaction in monthlyTransactions",
+    )
   }
 
   @Test
-  fun annualIncomeTransactionsFlowThroughToUiState() = runTest {
-    val annualIncomeTxns =
-        listOf(
-            TransactionEntry(
-                id = "txn-ainc-1",
-                categoryId = "cat-salary",
-                amount = 3000.0,
-                merchantName = "Employer",
-                postedDate = "2026-01-15",
-            ),
-            TransactionEntry(
-                id = "txn-ainc-2",
-                categoryId = "cat-salary",
-                amount = 3000.0,
-                merchantName = "Employer",
-                postedDate = "2026-02-15",
-            ),
-        )
-    val data =
-        makeDashboardData(
-            "month-1",
-            annualTotalIncome = 6000.0,
-            annualIncomeTransactions = annualIncomeTxns,
-        )
-    val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
-    val vm = DashboardViewModel(repo)
-
-    val state = vm.uiState.value
-    assertEquals(2, state.annualIncomeTransactions.size)
-    val sum = state.annualIncomeTransactions.sumOf { it.amount }
-    assertEquals(state.annualSummary.totalIncome, sum)
-    // Sorted by date descending
-    assertEquals("txn-ainc-2", state.annualIncomeTransactions.first().id)
-  }
-
-  @Test
-  fun unbudgetedSpentFlowsThroughToUiState() = runTest {
+  fun cashflowUnbudgetedTransactionsIncludedInMonthly() = runTest {
     val unbudgetedTxns =
         listOf(
             TransactionEntry(
@@ -304,15 +307,21 @@ class DashboardViewModelTest {
     val data =
         makeDashboardData(
             "month-1",
-            unbudgetedSpent = 45.0,
-            unbudgetedTransactions = unbudgetedTxns,
+            unbudgetedSpendingItems =
+                listOf(
+                    CashFlowItem(
+                        categoryId = null,
+                        label = "Uncategorized",
+                        amount = 45.0,
+                        transactionCount = 2,
+                        transactions = unbudgetedTxns,
+                    ),
+                ),
         )
     val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
     val vm = DashboardViewModel(repo)
 
     val state = vm.uiState.value
-    assertEquals(45.0, state.unbudgetedSpent)
-    assertEquals(2, state.unbudgetedTransactions.size)
     // Unbudgeted transactions should be merged into monthlyTransactions
     assertTrue(
         state.monthlyTransactions.any { it.id == "txn-ub-1" },
@@ -363,17 +372,16 @@ private class FakeDashboardRepository(
       throw NotImplementedError()
 }
 
+private fun emptyCashFlowSection() = CashFlowSection(total = 0.0, items = emptyList())
+
 private fun makeDashboardData(
     monthId: String,
     prevMonthId: String? = null,
     nextMonthId: String? = null,
-    unbudgetedSpent: Double = 0.0,
-    unbudgetedTransactions: List<TransactionEntry> = emptyList(),
-    totalIncome: Double = 0.0,
-    totalSpending: Double = 0.0,
-    incomeTransactions: List<TransactionEntry> = emptyList(),
-    annualIncomeTransactions: List<TransactionEntry> = emptyList(),
-    annualTotalIncome: Double = 0.0,
+    incomeItems: List<CashFlowItem> = emptyList(),
+    otherIncomeItems: List<CashFlowItem> = emptyList(),
+    unbudgetedSpendingItems: List<CashFlowItem> = emptyList(),
+    saved: Double = 0.0,
 ): DashboardData {
   val months = buildList {
     if (prevMonthId != null) add(BudgetMonth(id = prevMonthId, startDate = "2026-01-28"))
@@ -387,6 +395,55 @@ private fun makeDashboardData(
           remaining = 0.0,
           overBudgetCount = 0,
           barMax = 1.0,
+      )
+  val incomeSection =
+      CashFlowSection(
+          total = incomeItems.sumOf { it.amount },
+          items = incomeItems,
+      )
+  val otherIncomeSection =
+      CashFlowSection(
+          total = otherIncomeItems.sumOf { it.amount },
+          items = otherIncomeItems,
+      )
+  val unbudgetedSpendingSection =
+      CashFlowSection(
+          total = unbudgetedSpendingItems.sumOf { it.amount },
+          items = unbudgetedSpendingItems,
+      )
+  val totalIn = incomeSection.total + otherIncomeSection.total
+  val totalOut = 250.0 + unbudgetedSpendingSection.total
+  val cashflow =
+      CashFlowSummary(
+          totalBudget = 500.0,
+          totalSpent = 250.0,
+          remaining = 250.0,
+          overBudgetCount = 0,
+          barMax = 500.0,
+          income = incomeSection,
+          otherIncome = otherIncomeSection,
+          budgetedSpending = CashFlowSection(total = 250.0, items = emptyList()),
+          unbudgetedSpending = unbudgetedSpendingSection,
+          totalIn = totalIn,
+          totalOut = totalOut,
+          netCashflow = totalIn - totalOut,
+          saved = saved,
+      )
+  val emptyCashflow =
+      CashFlowSummary(
+          totalBudget = 0.0,
+          totalSpent = 0.0,
+          remaining = 0.0,
+          overBudgetCount = 0,
+          barMax = 1.0,
+          income = emptyCashFlowSection(),
+          otherIncome = emptyCashFlowSection(),
+          budgetedSpending = emptyCashFlowSection(),
+          unbudgetedSpending = emptyCashFlowSection(),
+          totalIn = 0.0,
+          totalOut = 0.0,
+          netCashflow = 0.0,
+          saved = 0.0,
       )
   val status =
       StatusResponse(
@@ -405,25 +462,8 @@ private fun makeDashboardData(
                       budgetMode = BudgetMode.MONTHLY,
                   ),
               ),
-          monthlySummary =
-              BudgetGroupSummary(
-                  totalBudget = 500.0,
-                  totalSpent = 250.0,
-                  remaining = 250.0,
-                  overBudgetCount = 0,
-                  barMax = 500.0,
-                  totalIncome = totalIncome,
-                  totalSpending = totalSpending,
-              ),
-          annualSummary =
-              BudgetGroupSummary(
-                  totalBudget = 0.0,
-                  totalSpent = 0.0,
-                  remaining = 0.0,
-                  overBudgetCount = 0,
-                  barMax = 1.0,
-                  totalIncome = annualTotalIncome,
-              ),
+          monthlyCashflow = cashflow,
+          annualCashflow = emptyCashflow,
           projectSummary = emptySummary,
           monthlyTransactions =
               listOf(
@@ -435,10 +475,6 @@ private fun makeDashboardData(
                       postedDate = "2026-02-25",
                   ),
               ),
-          unbudgetedSpent = unbudgetedSpent,
-          unbudgetedTransactions = unbudgetedTransactions,
-          incomeTransactions = incomeTransactions,
-          annualIncomeTransactions = annualIncomeTransactions,
       )
   return DashboardData(status = status, months = months)
 }

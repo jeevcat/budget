@@ -47,8 +47,38 @@ data class BudgetGroupSummary(
     val remaining: Double,
     @SerialName("over_budget_count") val overBudgetCount: Int,
     @SerialName("bar_max") val barMax: Double,
-    @SerialName("total_income") val totalIncome: Double = 0.0,
-    @SerialName("total_spending") val totalSpending: Double = 0.0,
+)
+
+@Serializable
+data class CashFlowItem(
+    @SerialName("category_id") val categoryId: String? = null,
+    val label: String,
+    val amount: Double,
+    @SerialName("transaction_count") val transactionCount: Int,
+    val transactions: List<TransactionEntry> = emptyList(),
+)
+
+@Serializable
+data class CashFlowSection(
+    val total: Double,
+    val items: List<CashFlowItem> = emptyList(),
+)
+
+@Serializable
+data class CashFlowSummary(
+    @SerialName("total_budget") val totalBudget: Double,
+    @SerialName("total_spent") val totalSpent: Double,
+    val remaining: Double,
+    @SerialName("over_budget_count") val overBudgetCount: Int,
+    @SerialName("bar_max") val barMax: Double,
+    val income: CashFlowSection,
+    @SerialName("other_income") val otherIncome: CashFlowSection,
+    @SerialName("budgeted_spending") val budgetedSpending: CashFlowSection,
+    @SerialName("unbudgeted_spending") val unbudgetedSpending: CashFlowSection,
+    @SerialName("total_in") val totalIn: Double,
+    @SerialName("total_out") val totalOut: Double,
+    @SerialName("net_cashflow") val netCashflow: Double,
+    val saved: Double,
 )
 
 @Serializable
@@ -106,19 +136,13 @@ data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
     val projects: List<ProjectStatusEntry> = emptyList(),
-    @SerialName("monthly_summary") val monthlySummary: BudgetGroupSummary,
-    @SerialName("annual_summary") val annualSummary: BudgetGroupSummary,
+    @SerialName("monthly_cashflow") val monthlyCashflow: CashFlowSummary,
+    @SerialName("annual_cashflow") val annualCashflow: CashFlowSummary,
     @SerialName("project_summary") val projectSummary: BudgetGroupSummary,
     @SerialName("monthly_transactions")
     val monthlyTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("annual_transactions") val annualTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("project_transactions")
     val projectTransactions: List<TransactionEntry> = emptyList(),
-    @SerialName("unbudgeted_transactions")
-    val unbudgetedTransactions: List<TransactionEntry> = emptyList(),
-    @SerialName("income_transactions") val incomeTransactions: List<TransactionEntry> = emptyList(),
-    @SerialName("annual_income_transactions")
-    val annualIncomeTransactions: List<TransactionEntry> = emptyList(),
-    @SerialName("unbudgeted_spent") val unbudgetedSpent: Double = 0.0,
     @SerialName("budget_year") val budgetYear: Int = 0,
 )
