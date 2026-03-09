@@ -41,17 +41,10 @@ internal fun activeCashflow(state: DashboardUiState) =
       else -> null
     }
 
-internal fun findCashFlowItem(cashflow: CashFlowSummary?, categoryId: String) =
-    cashflow?.let {
-      (it.income.items + it.otherIncome.items + it.unbudgetedSpending.items).find { item ->
-        item.categoryId == categoryId
-      }
-    }
-
 @Composable
 internal fun CashFlowCard(
     cashflow: CashFlowSummary,
-    onCategoryClick: (String) -> Unit,
+    onItemClick: (CashFlowItem) -> Unit,
     startExpanded: Boolean = true,
 ) {
   val hasIncome = cashflow.income.total > 0
@@ -81,8 +74,8 @@ internal fun CashFlowCard(
       }
       AnimatedVisibility(visible = expanded) {
         Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-          CashFlowInSection(cashflow, onCategoryClick)
-          CashFlowOutSection(cashflow, onCategoryClick)
+          CashFlowInSection(cashflow, onItemClick)
+          CashFlowOutSection(cashflow, onItemClick)
           CashFlowNetSection(cashflow, hasIncome)
         }
       }
@@ -91,15 +84,15 @@ internal fun CashFlowCard(
 }
 
 @Composable
-private fun CashFlowInSection(cashflow: CashFlowSummary, onCategoryClick: (String) -> Unit) {
+private fun CashFlowInSection(cashflow: CashFlowSummary, onItemClick: (CashFlowItem) -> Unit) {
   val hasIncome = cashflow.income.total > 0
   val hasOtherIncome = cashflow.otherIncome.items.isNotEmpty()
   if (!(hasIncome || hasOtherIncome)) return
 
   SectionLabel("IN")
-  CashFlowItemRows(cashflow.income.items, onCategoryClick)
+  CashFlowItemRows(cashflow.income.items, onItemClick)
   if (hasOtherIncome) {
-    CashFlowItemRows(cashflow.otherIncome.items, onCategoryClick)
+    CashFlowItemRows(cashflow.otherIncome.items, onItemClick)
   }
   CashFlowTotalRow(
       label = "Total In",
@@ -110,13 +103,13 @@ private fun CashFlowInSection(cashflow: CashFlowSummary, onCategoryClick: (Strin
 }
 
 @Composable
-private fun CashFlowOutSection(cashflow: CashFlowSummary, onCategoryClick: (String) -> Unit) {
+private fun CashFlowOutSection(cashflow: CashFlowSummary, onItemClick: (CashFlowItem) -> Unit) {
   SectionLabel("OUT")
   if (cashflow.budgetedSpending.total > 0) {
     CashFlowRow(label = "Budgeted Spending", amount = formatAmount(cashflow.budgetedSpending.total))
   }
   if (cashflow.unbudgetedSpending.items.isNotEmpty()) {
-    CashFlowItemRows(cashflow.unbudgetedSpending.items, onCategoryClick)
+    CashFlowItemRows(cashflow.unbudgetedSpending.items, onItemClick)
   }
   CashFlowTotalRow(
       label = "Total Out",
@@ -163,12 +156,12 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun CashFlowItemRows(items: List<CashFlowItem>, onCategoryClick: (String) -> Unit) {
+private fun CashFlowItemRows(items: List<CashFlowItem>, onItemClick: (CashFlowItem) -> Unit) {
   items.forEach { item ->
     CashFlowRow(
         label = item.label,
         amount = formatAmount(item.amount),
-        onClick = item.categoryId?.let { id -> { onCategoryClick(id) } },
+        onClick = item.categoryId?.let { { onItemClick(item) } },
     )
   }
 }

@@ -6,6 +6,7 @@ import com.budget.shared.api.BudgetGroupSummary
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
+import com.budget.shared.api.CashFlowItem
 import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
@@ -42,6 +43,7 @@ data class DashboardUiState(
     val annualTransactions: List<TransactionEntry> = emptyList(),
     val projectTransactions: List<TransactionEntry> = emptyList(),
     val selectedCategoryId: String? = null,
+    val selectedCashFlowItem: CashFlowItem? = null,
     val budgetYear: Int = 0,
     val monthlyTimeLabel: String = "",
     val annualTimeLabel: String = "",
@@ -79,7 +81,18 @@ class DashboardViewModel(
   fun selectCategory(categoryId: String?) {
     _uiState.update { state ->
       val newId = if (state.selectedCategoryId == categoryId) null else categoryId
-      state.copy(selectedCategoryId = newId)
+      state.copy(selectedCategoryId = newId, selectedCashFlowItem = null)
+    }
+  }
+
+  fun selectCashFlowItem(item: CashFlowItem) {
+    _uiState.update { state ->
+      val newId = item.categoryId
+      if (state.selectedCategoryId == newId && state.selectedCashFlowItem == item) {
+        state.copy(selectedCategoryId = null, selectedCashFlowItem = null)
+      } else {
+        state.copy(selectedCategoryId = newId, selectedCashFlowItem = item)
+      }
     }
   }
 

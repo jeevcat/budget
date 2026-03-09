@@ -261,7 +261,7 @@ private fun LazyListScope.monthlyTabContent(
   item {
     CashFlowCard(
         cashflow = cashflow,
-        onCategoryClick = { viewModel.selectCategory(it) },
+        onItemClick = { viewModel.selectCashFlowItem(it) },
     )
   }
 }
@@ -294,7 +294,7 @@ private fun LazyListScope.annualTabContent(
   item {
     CashFlowCard(
         cashflow = cashflow,
-        onCategoryClick = { viewModel.selectCategory(it) },
+        onItemClick = { viewModel.selectCashFlowItem(it) },
         startExpanded = false,
     )
   }
@@ -741,7 +741,7 @@ private data class CategoryInfo(
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
   val cashflow = activeCashflow(state)
 
-  findCashFlowItem(cashflow, categoryId)?.let { item ->
+  state.selectedCashFlowItem?.let { item ->
     return CategoryInfo(item.label, item.amount, 0.0, 0.0, PaceIndicator.PENDING, 0.0, item.amount)
   }
 
@@ -795,7 +795,7 @@ private fun resolveTransactions(
     state: DashboardUiState,
     categoryId: String,
 ): List<TransactionEntry> {
-  findCashFlowItem(activeCashflow(state), categoryId)?.let { item ->
+  state.selectedCashFlowItem?.let { item ->
     return item.transactions.sortedByDescending { it.postedDate }
   }
 

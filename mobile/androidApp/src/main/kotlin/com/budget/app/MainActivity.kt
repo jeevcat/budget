@@ -290,6 +290,7 @@ private fun AppNavHost(
                 ?: dashboardState.projects
                     .find { it.categoryId == selectedCategoryId }
                     ?.categoryName
+                ?: dashboardState.selectedCashFlowItem?.label
         DetailScaffold(
             title = categoryName ?: "Category",
             onBack = { dashboardVm.selectCategory(null) },
