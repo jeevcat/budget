@@ -97,6 +97,23 @@ class CategoriesViewModelTest {
     }
   }
 
+  @Test
+  fun refreshPreservesExpandCollapseState() = runTest {
+    val repo = FakeCategoriesRepository(sampleCategories())
+    val vm = CategoriesViewModel(repo)
+
+    // Collapse "food"
+    vm.toggleParent("food")
+    assertFalse("food" in vm.uiState.value.expandedParents)
+
+    // Refresh should keep "food" collapsed
+    vm.refresh()
+    assertFalse(
+        "food" in vm.uiState.value.expandedParents,
+        "Refresh should preserve user's collapse state",
+    )
+  }
+
   // -----------------------------------------------------------------------
   // buildTree tests
   // -----------------------------------------------------------------------

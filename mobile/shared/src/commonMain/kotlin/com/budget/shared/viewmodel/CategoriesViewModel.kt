@@ -49,11 +49,18 @@ class CategoriesViewModel(
         val categories = repository.getCategories()
         val tree = buildTree(categories)
         val parentIds = tree.filter { it.hasChildren }.map { it.id }.toSet()
-        _uiState.update {
-          it.copy(
+        _uiState.update { current ->
+          // First load: expand all parents. Subsequent refreshes: keep user's
+          // expand/collapse choices, pruning stale IDs and expanding new parents.
+          val previousParentIds = current.treeItems.filter { it.hasChildren }.map { it.id }.toSet()
+          val newParents = parentIds - previousParentIds
+          val expanded =
+              if (current.treeItems.isEmpty()) parentIds
+              else current.expandedParents.intersect(parentIds) + newParents
+          current.copy(
               loading = false,
               treeItems = tree,
-              expandedParents = parentIds,
+              expandedParents = expanded,
               categories = categories,
           )
         }
