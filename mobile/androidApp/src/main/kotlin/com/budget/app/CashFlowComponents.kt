@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,6 +42,142 @@ internal fun activeCashflow(state: DashboardUiState) =
       BudgetMode.ANNUAL -> state.annualCashflow
       else -> null
     }
+
+@Composable
+private fun SummaryCell(
+    label: String,
+    value: String,
+    valueColor: Color,
+    modifier: Modifier = Modifier,
+) {
+  Surface(
+      modifier = modifier,
+      shape = RoundedCornerShape(8.dp),
+      color = MaterialTheme.colorScheme.surfaceVariant,
+  ) {
+    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+      Text(
+          text = label,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Text(
+          text = value,
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold,
+          color = valueColor,
+      )
+    }
+  }
+}
+
+@Composable
+private fun CashFlowSummaryStrip(cashflow: CashFlowSummary, hasIncome: Boolean) {
+  Column(
+      modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      SummaryCell(
+          label = "Net",
+          value = formatAmount(cashflow.netCashflow, showSign = true),
+          valueColor = if (cashflow.netCashflow < 0) NegativeColor else PositiveColor,
+          modifier = Modifier.weight(1f),
+      )
+      if (hasIncome) {
+        SummaryCell(
+            label = "Saved",
+            value = formatAmount(cashflow.saved, showSign = true),
+            valueColor = if (cashflow.saved < 0) NegativeColor else PositiveColor,
+            modifier = Modifier.weight(1f),
+        )
+      }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      SummaryCell(
+          label = "Total In",
+          value = formatAmount(cashflow.totalIn, showSign = true),
+          valueColor = PositiveColor,
+          modifier = Modifier.weight(1f),
+      )
+      SummaryCell(
+          label = "Total Out",
+          value = formatAmount(cashflow.totalOut),
+          valueColor = NegativeColor,
+          modifier = Modifier.weight(1f),
+      )
+    }
+  }
+}
+
+@Composable
+private fun CashFlowItemCard(item: CashFlowItem, onItemClick: (CashFlowItem) -> Unit) {
+  Surface(
+      shape = RoundedCornerShape(8.dp),
+      tonalElevation = 1.dp,
+      modifier = Modifier.fillMaxWidth().clickable { onItemClick(item) },
+  ) {
+    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+      Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+            text = item.label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = formatAmount(item.amount),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+        )
+      }
+      Text(
+          text = "${item.transactionCount} transactions",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+  }
+}
+
+@Composable
+private fun CashFlowPlainRow(label: String, amount: String) {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        text = amount,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+  Text(
+      text = text,
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+  Spacer(modifier = Modifier.height(4.dp))
+}
 
 @Composable
 internal fun CashFlowCard(
@@ -72,130 +210,29 @@ internal fun CashFlowCard(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
+
+      CashFlowSummaryStrip(cashflow = cashflow, hasIncome = hasIncome)
+
       AnimatedVisibility(visible = expanded) {
-        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-          CashFlowInSection(cashflow, onItemClick)
-          CashFlowOutSection(cashflow, onItemClick)
-          CashFlowNetSection(cashflow, hasIncome)
+        Column(
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          if (hasIncome || hasOtherIncome) {
+            SectionLabel("IN")
+            cashflow.income.items.forEach { item -> CashFlowItemCard(item, onItemClick) }
+            cashflow.otherIncome.items.forEach { item -> CashFlowItemCard(item, onItemClick) }
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+
+          SectionLabel("OUT")
+          if (cashflow.budgetedSpending.total > 0) {
+            CashFlowPlainRow("Budgeted Spending", formatAmount(cashflow.budgetedSpending.total))
+          }
+          cashflow.unbudgetedSpending.items.forEach { item -> CashFlowItemCard(item, onItemClick) }
         }
       }
     }
-  }
-}
-
-@Composable
-private fun CashFlowInSection(cashflow: CashFlowSummary, onItemClick: (CashFlowItem) -> Unit) {
-  val hasIncome = cashflow.income.total > 0
-  val hasOtherIncome = cashflow.otherIncome.items.isNotEmpty()
-  if (!(hasIncome || hasOtherIncome)) return
-
-  SectionLabel("IN")
-  CashFlowItemRows(cashflow.income.items, onItemClick)
-  if (hasOtherIncome) {
-    CashFlowItemRows(cashflow.otherIncome.items, onItemClick)
-  }
-  CashFlowTotalRow(
-      label = "Total In",
-      amount = formatAmount(cashflow.totalIn, showSign = true),
-      color = PositiveColor,
-  )
-  Spacer(modifier = Modifier.height(12.dp))
-}
-
-@Composable
-private fun CashFlowOutSection(cashflow: CashFlowSummary, onItemClick: (CashFlowItem) -> Unit) {
-  SectionLabel("OUT")
-  if (cashflow.budgetedSpending.total > 0) {
-    CashFlowRow(label = "Budgeted Spending", amount = formatAmount(cashflow.budgetedSpending.total))
-  }
-  if (cashflow.unbudgetedSpending.items.isNotEmpty()) {
-    CashFlowItemRows(cashflow.unbudgetedSpending.items, onItemClick)
-  }
-  CashFlowTotalRow(
-      label = "Total Out",
-      amount = formatAmount(cashflow.totalOut),
-      color = NegativeColor,
-  )
-  Spacer(modifier = Modifier.height(12.dp))
-}
-
-@Composable
-private fun CashFlowNetSection(cashflow: CashFlowSummary, hasIncome: Boolean) {
-  CashFlowTotalRow(
-      label = "Net",
-      amount = formatAmount(cashflow.netCashflow, showSign = true),
-      color = if (cashflow.netCashflow < 0) NegativeColor else PositiveColor,
-      bold = true,
-  )
-  if (hasIncome) {
-    Spacer(modifier = Modifier.height(2.dp))
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-      Text(
-          text = "Saved from salary",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-      Text(
-          text = formatAmount(cashflow.saved, showSign = true),
-          style = MaterialTheme.typography.bodySmall,
-          fontWeight = FontWeight.Medium,
-          color = if (cashflow.saved < 0) NegativeColor else PositiveColor,
-      )
-    }
-  }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-  Text(
-      text = text,
-      style = MaterialTheme.typography.labelMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-  )
-  Spacer(modifier = Modifier.height(4.dp))
-}
-
-@Composable
-private fun CashFlowItemRows(items: List<CashFlowItem>, onItemClick: (CashFlowItem) -> Unit) {
-  items.forEach { item ->
-    CashFlowRow(
-        label = item.label,
-        amount = formatAmount(item.amount),
-        onClick = item.categoryId?.let { { onItemClick(item) } },
-    )
-  }
-}
-
-@Composable
-private fun CashFlowRow(label: String, amount: String, onClick: (() -> Unit)? = null) {
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-              .padding(vertical = 2.dp),
-      horizontalArrangement = Arrangement.SpaceBetween,
-  ) {
-    Text(text = label, style = MaterialTheme.typography.bodyMedium)
-    Text(text = amount, style = MaterialTheme.typography.bodyMedium)
-  }
-}
-
-@Composable
-private fun CashFlowTotalRow(label: String, amount: String, color: Color, bold: Boolean = false) {
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-      horizontalArrangement = Arrangement.SpaceBetween,
-  ) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.bodyMedium,
-        fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold,
-    )
-    Text(
-        text = amount,
-        style = MaterialTheme.typography.bodyMedium,
-        fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold,
-        color = color,
-    )
   }
 }

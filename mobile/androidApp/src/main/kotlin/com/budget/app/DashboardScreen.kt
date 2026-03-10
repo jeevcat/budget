@@ -247,6 +247,13 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
+  item {
+    CashFlowCard(
+        cashflow = cashflow,
+        onItemClick = { viewModel.selectCashFlowItem(it) },
+        startExpanded = true,
+    )
+  }
   item { BudgetHealthCards(cashflow = cashflow) }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
@@ -259,12 +266,6 @@ private fun LazyListScope.monthlyTabContent(
         barMax = cashflow.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
-    )
-  }
-  item {
-    CashFlowCard(
-        cashflow = cashflow,
-        onItemClick = { viewModel.selectCashFlowItem(it) },
     )
   }
 }
@@ -280,6 +281,13 @@ private fun LazyListScope.annualTabContent(
         timeLabel = state.annualTimeLabel,
     )
   }
+  item {
+    CashFlowCard(
+        cashflow = cashflow,
+        onItemClick = { viewModel.selectCashFlowItem(it) },
+        startExpanded = false,
+    )
+  }
   item { BudgetHealthCards(cashflow = cashflow) }
   items(state.annualStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
@@ -292,13 +300,6 @@ private fun LazyListScope.annualTabContent(
         barMax = cashflow.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
-    )
-  }
-  item {
-    CashFlowCard(
-        cashflow = cashflow,
-        onItemClick = { viewModel.selectCashFlowItem(it) },
-        startExpanded = false,
     )
   }
 }
