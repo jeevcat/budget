@@ -121,9 +121,9 @@ dependencies = [
 
 [[package]]
 name = "apalis-workflow"
-version = "0.1.0-rc.4"
+version = "0.1.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c00186fde44cd8752c745dc54808516a232557bafea25a29b03abebac32a99"
+checksum = "d9655ef77072bc2a4d8c09136dba4b44e74932864b9e44ce6a1341da050da1f2"
 dependencies = [
  "apalis-core",
  "futures",
