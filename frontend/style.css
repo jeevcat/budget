@@ -59,6 +59,42 @@
 .mono {
   font-family: var(--font-mono);
 }
+/* Typography scale — three tiers only, mapped to Oat vars.
+   Hierarchy within a tier uses weight and color, never size. */
+.text-display {
+  font-size: var(--text-4);
+}
+.text-body {
+  font-size: var(--text-7);
+}
+.text-caption {
+  font-size: var(--text-8);
+}
+
+.ledger-row-name {
+  font-size: var(--text-7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj-pct-circle {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: var(--text-7);
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+.proj-item-name {
+  font-weight: 500;
+  font-size: var(--text-7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .amount-positive {
   color: var(--success);
 }
@@ -95,7 +131,7 @@
 
 .queue-card-desc {
   width: 100%;
-  font-size: 0.85rem;
+  font-size: var(--text-7);
   color: var(--muted-foreground);
   margin-top: -0.25rem;
 }
@@ -106,7 +142,7 @@
 }
 .sync-row {
   padding: 0.35rem 0;
-  font-size: 0.85rem;
+  font-size: var(--text-7);
 }
 .sync-row + .sync-row {
   border-top: 1px solid var(--border);
@@ -130,11 +166,11 @@
 }
 .txn-filters select {
   padding-block: 0.25rem;
-  font-size: 0.85rem;
+  font-size: var(--text-7);
 }
 
 .txn-table {
-  font-size: 0.88rem;
+  font-size: var(--text-7);
 }
 .txn-table thead th {
   position: sticky;
@@ -296,7 +332,7 @@ dialog > form > div {
   margin-bottom: 1rem;
 }
 .ledger-section-label {
-  font-size: 0.8rem;
+  font-size: var(--text-8);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   margin-bottom: 0.25rem;
@@ -306,7 +342,7 @@ dialog > form > div {
   grid-template-columns: minmax(7rem, 1.5fr) minmax(60px, 120px) 5rem 5rem 4.5rem;
   gap: 0.4rem;
   padding: 0 0.35rem 0.15rem;
-  font-size: 0.75rem;
+  font-size: var(--text-8);
   color: var(--muted-foreground);
   text-align: right;
 }
@@ -337,6 +373,7 @@ dialog > form > div {
   padding: 0.2rem 0.35rem;
   border-radius: 4px;
   cursor: pointer;
+  font-size: var(--text-7);
 }
 .ledger-income-row:hover {
   background: var(--muted);
@@ -348,7 +385,7 @@ dialog > form > div {
   padding: 0.2rem 0.35rem;
   align-items: center;
   color: var(--muted-foreground);
-  font-size: 0.85rem;
+  font-size: var(--text-7);
 }
 .ledger-bar-track {
   height: 12px;
@@ -402,7 +439,7 @@ dialog > form > div {
   font-family: var(--font-mono);
   text-align: right;
   min-width: 3.5rem;
-  font-size: 0.82rem;
+  font-size: var(--text-7);
 }
 .ledger-divider {
   border-top: 1px dashed var(--border);
@@ -414,7 +451,7 @@ dialog > form > div {
   justify-content: space-between;
   padding: 0.35rem 0.35rem 0.1rem;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--text-7);
 }
 .ledger-net {
   border-top: 2px solid var(--border);
@@ -422,10 +459,10 @@ dialog > form > div {
   display: flex;
   justify-content: space-between;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: var(--text-4);
 }
 .ledger-net-secondary {
-  font-size: 0.85rem;
+  font-size: var(--text-7);
   font-weight: 400;
 }
 
@@ -457,12 +494,12 @@ dialog > form > div {
   gap: 0.15rem;
 }
 .proj-stat-label {
-  font-size: 0.8rem;
+  font-size: var(--text-8);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .proj-stat-value {
-  font-size: 1.35rem;
+  font-size: var(--text-4);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -481,7 +518,7 @@ dialog > form > div {
 
 /* Dashboard recent transactions (compact TransactionTable) */
 .dash-txn-table {
-  font-size: 0.85rem;
+  font-size: var(--text-7);
 }
 .dash-txn-table thead th {
   position: sticky;
@@ -546,7 +583,7 @@ dialog > form > div {
 .cat-select-clear {
   flex-shrink: 0;
   padding: 0 0.15rem;
-  font-size: 1rem;
+  font-size: var(--text-7);
   line-height: 1;
   color: var(--muted-foreground);
   cursor: pointer;
@@ -574,7 +611,7 @@ dialog > form > div {
 .cat-select-search {
   margin: 0.4rem;
   padding: 0.35rem 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--text-7);
   background: var(--muted);
   border: 1px solid var(--input);
   border-radius: 4px;
@@ -593,7 +630,7 @@ dialog > form > div {
   padding: 0.3rem 0.5rem;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.88rem;
+  font-size: var(--text-7);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -610,10 +647,10 @@ dialog > form > div {
 .cat-select-empty {
   padding: 0.5rem;
   color: var(--muted-foreground);
-  font-size: 0.85rem;
+  font-size: var(--text-7);
   text-align: center;
 }
 .txn-filters .cat-select-trigger {
   padding-block: 0.25rem;
-  font-size: 0.85rem;
+  font-size: var(--text-7);
 }

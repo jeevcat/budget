@@ -523,7 +523,10 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 key=${item.category_id || item.label}
                 onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
               >
-                <span>${item.label}</span>
+                <span class="ledger-row-name">
+                  <span class="ledger-pace-dot" style="background:var(--success)"></span>
+                  ${item.label}
+                </span>
                 <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
               </div>
             `,
@@ -558,7 +561,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
               key=${s.category_id}
               onClick=${() => onCategoryClick?.(s.category_id)}
             >
-              <span style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <span class="ledger-row-name">
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
               </span>
@@ -674,7 +677,7 @@ function BudgetSection({
             key=${s.category_id}
             onClick=${() => onCategoryClick?.(s.category_id)}
           >
-            <span style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <span class="ledger-row-name">
               <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
               ${
                 s.parentName
@@ -684,7 +687,7 @@ function BudgetSection({
               ${
                 showDateSubtitle &&
                 s.project_start_date &&
-                html` <span class="text-light" style="font-size:0.8rem">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
+                html` <span class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
               }
             </span>
             <div class="ledger-bar-track">
@@ -738,7 +741,7 @@ function ProjectDrillDown({
       style="gap:0.5rem;align-items:center;margin-bottom:0.75rem;cursor:pointer"
       onClick=${onBack}
     >
-      <span style="font-size:1.1rem">\u2190</span>
+      <span class="text-display">\u2190</span>
       <span class="text-light">All Projects</span>
       <span class="text-light">\u203A</span>
       <span class="cat-project" style="font-weight:600">${project.name}</span>
@@ -786,7 +789,7 @@ function ProjectDrillDown({
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
               >
-                <span style="font-size:0.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+                <span class="ledger-row-name">${item.name}</span>
                 <div class="ledger-bar-track">
                   <div
                     class="ledger-bar-fill ledger-bar-fill-${project.pace}"
@@ -811,14 +814,12 @@ function ProjectDrillDown({
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
               >
-                <div
-                  style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:var(--text-light);flex-shrink:0"
-                >
+                <div class="proj-pct-circle">
                   ${totalSpent > 0 ? Math.round((item.spent / totalSpent) * 100) : 0}%
                 </div>
                 <div style="flex:1;min-width:0">
-                  <div style="font-weight:500;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</div>
-                  <div style="font-size:0.8rem">
+                  <div class="proj-item-name">${item.name}</div>
+                  <div class="text-caption">
                     <span>${formatAmount(item.spent, { decimals: 0 })}</span>
                     <span class="text-light">
                       ${" "}of ${formatAmount(totalSpent, { decimals: 0 })} total</span>
@@ -1091,21 +1092,21 @@ function Dashboard() {
         <button
           onClick=${goPrev}
           disabled=${!hasPrev}
-          style="padding:0.25rem 0.5rem;font-size:1rem"
+          style="padding:0.25rem 0.5rem"
           aria-label="Previous month"
         >\u2039</button>
         <div style="text-align:center">
           <strong>${formatMonthRange(activeMonth)}</strong>
           ${
             isCurrentMonth
-              ? html`<div class="text-light mono" style="font-size:0.85rem">${monthlyTimeLabel}</div>`
-              : html`<div class="text-light" style="font-size:0.85rem">Closed</div>`
+              ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
+              : html`<div class="text-light text-body">Closed</div>`
           }
         </div>
         <button
           onClick=${goNext}
           disabled=${!hasNext}
-          style="padding:0.25rem 0.5rem;font-size:1rem"
+          style="padding:0.25rem 0.5rem"
           aria-label="Next month"
         >\u203A</button>
       </div>
@@ -1132,7 +1133,7 @@ function Dashboard() {
         <div class="hstack" style="margin-bottom:1.25rem;align-items:center">
           <div style="text-align:center">
             <strong>${budgetYear}</strong>
-            ${annualTimeLabel && html`<div class="text-light mono" style="font-size:0.85rem">${annualTimeLabel}</div>`}
+            ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
           </div>
         </div>
         ${
@@ -1187,16 +1188,16 @@ function Dashboard() {
                         >
                           <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
                           <div style="flex:1;min-width:0">
-                            <div style="font-weight:500;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                            <div class="proj-item-name">
                               ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
                             </div>
                             ${
                               s.project_start_date &&
                               html`
-                              <div class="text-light" style="font-size:0.8rem">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
+                              <div class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
                             `
                             }
-                            <div style="font-size:0.8rem">
+                            <div class="text-caption">
                               <span>${formatAmount(s.spent, { decimals: 0 })}</span>
                               <span class="text-light">
                                 ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span>
@@ -1204,7 +1205,7 @@ function Dashboard() {
                           </div>
                           <div class="vstack" style="align-items:flex-end;gap:0.15rem;white-space:nowrap">
                             <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta)}</span>
-                            <span style="font-size:0.82rem;${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
+                            <span class="text-body" style="${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
                               ${formatAmount(s.remaining, { decimals: 0, sign: true })}
                             </span>
                           </div>
@@ -1250,7 +1251,7 @@ function Dashboard() {
           </button>
         `
         }
-        <span class="text-light" style="margin-left:auto;font-size:0.85rem">
+        <span class="text-light text-body" style="margin-left:auto">
           ${displayTxns.length} transaction${displayTxns.length !== 1 ? "s" : ""}
         </span>
       </div>
@@ -1494,7 +1495,7 @@ function TxnDetail({
             </dd>
             ${
               txn.llm_justification
-                ? html`<dt></dt><dd class="text-light" style="font-style:italic;font-size:0.85em">✦ ${txn.llm_justification}</dd>`
+                ? html`<dt></dt><dd class="text-light text-body" style="font-style:italic">✦ ${txn.llm_justification}</dd>`
                 : null
             }
             <dt>Account</dt><dd>${accountDisplayName(acctMap[txn.account_id]) || txn.account_id}</dd>
@@ -1618,10 +1619,10 @@ function TxnDetail({
                       onClick=${() => handleSelectProposal(idx)}
                     >
                       <div class="hstack" style="gap:0.5rem;align-items:center">
-                        <span class="chip outline" style="font-size:0.75rem">${p.match_field.replace(/_/g, " ")}</span>
-                        <code style="font-size:0.85rem">${p.match_pattern}</code>
+                        <span class="chip outline text-caption">${p.match_field.replace(/_/g, " ")}</span>
+                        <code class="text-body">${p.match_pattern}</code>
                       </div>
-                      <p class="text-light" style="margin:0.25rem 0 0;font-size:0.85rem">${p.explanation}</p>
+                      <p class="text-light text-body" style="margin:0.25rem 0 0">${p.explanation}</p>
                       ${
                         selectedProposal === idx &&
                         html`
@@ -1653,11 +1654,11 @@ function TxnDetail({
                               >
                                 ${creatingRule ? "Creating..." : "Create Rule"}
                               </button>
-                              ${proposalPreviewing && html`<span class="text-light" style="font-size:0.85rem">Checking...</span>`}
+                              ${proposalPreviewing && html`<span class="text-light text-body">Checking...</span>`}
                               ${
                                 proposalPreview &&
                                 html`
-                                <span class="text-light" style="font-size:0.85rem">
+                                <span class="text-light text-body">
                                   Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}${proposalPreview.sample.length > 0 ? ` — ${proposalPreview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
                                 </span>
                               `
@@ -2254,7 +2255,7 @@ function Categories() {
       if (cat.project_end_date)
         parts.push(formatDateShort(cat.project_end_date));
       return parts.length > 0
-        ? html`<span class="text-light" style="font-size:0.85rem">${parts.join(" \u2013 ")}</span>`
+        ? html`<span class="text-light text-body">${parts.join(" \u2013 ")}</span>`
         : null;
     }
     const amt =
@@ -2275,13 +2276,13 @@ function Categories() {
           : mode === "salary"
             ? "Salary"
             : "Project";
-    return html`<span class="hstack" style="gap:0.3rem;align-items:center"><span class="method-dot ${cls}" style="cursor:default"></span><span class="text-light" style="font-size:0.8rem">${label}</span></span>`;
+    return html`<span class="hstack" style="gap:0.3rem;align-items:center"><span class="method-dot ${cls}" style="cursor:default"></span><span class="text-light text-caption">${label}</span></span>`;
   }
 
   return html`
     <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
       <h2 style="margin:0">Categories</h2>
-      <span class="text-light" style="font-size:0.85rem">${categories.length}</span>
+      <span class="text-light text-body">${categories.length}</span>
     </div>
 
     ${
@@ -2289,7 +2290,7 @@ function Categories() {
       html`
         <div style="margin-bottom:1rem">
           <h4 style="margin-bottom:0.15rem">LLM Suggestions</h4>
-          <p class="text-light" style="margin-bottom:0.4rem;font-size:0.85rem">
+          <p class="text-light text-body" style="margin-bottom:0.4rem">
             Select to accept, then re-run categorize.
           </p>
           <div class="hstack gap-2" role="group" aria-label="Suggested categories" style="margin-bottom:0.5rem;flex-wrap:wrap">
@@ -2383,7 +2384,7 @@ function Categories() {
                           <span>${c.name}</span>
                           <span class="hstack gap-2" style="margin-left:auto;align-items:center">
                             ${modeDot(c.budget_mode)}
-                            <span class="text-light" style="font-size:0.85rem">${c.transaction_count || ""}</span>
+                            <span class="text-light text-body">${c.transaction_count || ""}</span>
                             <span style="min-width:5rem;text-align:right">${budgetBadge(c) ?? html`<span class="text-light">\u2014</span>`}</span>
                           </span>
                         </div>
@@ -2798,12 +2799,12 @@ function Rules() {
               preview &&
               !preview.error &&
               html`
-              <div class="text-light" style="margin-top:0.5rem;font-size:0.85rem">
+              <div class="text-light text-body" style="margin-top:0.5rem">
                 Matches <strong>${preview.match_count}</strong> transaction${preview.match_count !== 1 ? "s" : ""}${preview.sample.length > 0 ? ` \u2014 ${preview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
               </div>
             `
             }
-            ${preview?.error && html`<div style="color:var(--danger);margin-top:0.5rem;font-size:0.85rem">${preview.error}</div>`}
+            ${preview?.error && html`<div class="text-body" style="color:var(--danger);margin-top:0.5rem">${preview.error}</div>`}
           </td>
           <td style="white-space:nowrap">
             <button data-variant="primary" class="small" onClick=${handleSubmit} disabled=${saving}>
@@ -2822,13 +2823,13 @@ function Rules() {
       <tr key=${rule.id}>
         <td>
           <div class="hstack">
-            <span class="mono" style="font-size:0.8rem;min-width:1.5rem;text-align:right">${rule.priority}</span>
+            <span class="mono text-caption" style="min-width:1.5rem;text-align:right">${rule.priority}</span>
             <span class="chip outline ${rule.rule_type === "categorization" ? "success" : ""}"
               >${rule.rule_type}</span
             >
             ${rule.conditions.map(
               (c, i) => html`
-                ${i > 0 && html`<span class="text-light" style="font-size:0.75rem">AND</span>`}
+                ${i > 0 && html`<span class="text-light text-caption">AND</span>`}
                 <span class="text-light">${fieldLabel(c.field)}</span>
                 <code>${c.pattern}</code>
               `,
@@ -2989,7 +2990,7 @@ function AccountNickname({ account, onRenamed }) {
     >
       ${display}
     </span>
-    ${account.nickname && html`<span class="text-lighter" style="margin-left:0.5rem;font-size:0.85rem">(${account.name})</span>`}
+    ${account.nickname && html`<span class="text-lighter text-body" style="margin-left:0.5rem">(${account.name})</span>`}
   `;
 }
 
