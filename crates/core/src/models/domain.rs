@@ -449,7 +449,7 @@ mod correlation_serde {
         correlation_type: Option<CorrelationType>,
     }
 
-    #[allow(clippy::ref_option)]
+    #[allow(clippy::ref_option)] // serde's serialize_with contract requires &Option<T>
     pub fn serialize<S: Serializer>(
         value: &Option<Correlation>,
         serializer: S,

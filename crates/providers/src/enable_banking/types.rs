@@ -216,7 +216,7 @@ pub(crate) struct BankTransactionCode {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(clippy::struct_field_names)]
+#[allow(clippy::struct_field_names)] // mirrors Enable Banking API's nested exchange_rate.exchange_rate
 pub(crate) struct ExchangeRate {
     #[serde(default)]
     pub instructed_amount: Option<Amount>,
