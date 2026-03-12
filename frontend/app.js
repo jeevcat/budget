@@ -524,7 +524,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
               >
                 <span class="ledger-row-name">
-                  <span class="ledger-pace-dot" style="background:var(--success)" title="Income"></span>
+                  <span class="ledger-pace-dot" style="background:var(--success)"></span>
                   ${item.label}
                 </span>
                 <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
@@ -559,10 +559,11 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
             <div
               class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
               key=${s.category_id}
+              title="${paceLabel(s.pace, s.pace_delta)}"
               onClick=${() => onCategoryClick?.(s.category_id)}
             >
               <span class="ledger-row-name">
-                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}" title="${paceLabel(s.pace, s.pace_delta)}"></span>
+                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
               </span>
               <div class="ledger-bar-track">
@@ -573,7 +574,6 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 <div
                   class="ledger-bar-mark"
                   style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
-                  title="Budget: ${formatAmount(s.budget_amount, { decimals: 0 })}"
                 ></div>
               </div>
               <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
@@ -675,10 +675,11 @@ function BudgetSection({
           <div
             class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
             key=${s.category_id}
+            title="${paceLabel(s.pace, s.pace_delta)}"
             onClick=${() => onCategoryClick?.(s.category_id)}
           >
             <span class="ledger-row-name">
-              <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}" title="${paceLabel(s.pace, s.pace_delta)}"></span>
+              <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
               ${
                 s.parentName
                   ? html`<span class="cat-parent">${s.parentName}</span>${s.shortName}`
@@ -698,7 +699,6 @@ function BudgetSection({
               <div
                 class="ledger-bar-mark"
                 style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
-                title="Budget: ${formatAmount(s.budget_amount, { decimals: 0 })}"
               ></div>
             </div>
             <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
@@ -1184,9 +1184,10 @@ function Dashboard() {
                           class="hstack clickable-row${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
                           style="gap:0.65rem;padding:0.5rem 0.35rem;border-radius:4px;cursor:pointer"
                           key=${s.category_id}
+                          title="${paceLabel(s.pace, s.pace_delta)}"
                           onClick=${() => handleProjectClick?.(s.category_id)}
                         >
-                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0" title="${paceLabel(s.pace, s.pace_delta)}"></span>
+                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
                           <div style="flex:1;min-width:0">
                             <div class="proj-item-name">
                               ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
