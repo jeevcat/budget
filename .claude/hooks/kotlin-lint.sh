@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Async: run detekt after Kotlin edits
 
 INPUT=$(cat)

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Format Kotlin files after edits
 
 INPUT=$(cat)

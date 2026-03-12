@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Async: run clippy and tests after Rust file edits
 
 INPUT=$(cat)

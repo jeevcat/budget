@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Format Rust files after edits
 
 INPUT=$(cat)

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Async: run Biome lint after JS/CSS/HTML edits
 
 INPUT=$(cat)
