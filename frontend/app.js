@@ -1087,30 +1087,6 @@ function Dashboard() {
   })();
 
   return html`
-    <div class="hstack" style="margin-bottom:1.25rem">
-      <div class="hstack" style="gap:0.5rem;align-items:center">
-        <button
-          onClick=${goPrev}
-          disabled=${!hasPrev}
-          style="padding:0.25rem 0.5rem"
-          aria-label="Previous month"
-        >\u2039</button>
-        <div style="text-align:center">
-          <strong>${formatMonthRange(activeMonth)}</strong>
-          ${
-            isCurrentMonth
-              ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
-              : html`<div class="text-light text-body">Closed</div>`
-          }
-        </div>
-        <button
-          onClick=${goNext}
-          disabled=${!hasNext}
-          style="padding:0.25rem 0.5rem"
-          aria-label="Next month"
-        >\u203A</button>
-      </div>
-    </div>
     <ot-tabs ref=${tabsCallbackRef}>
       <div role="tablist">
         <button role="tab">Monthly</button>
@@ -1118,6 +1094,30 @@ function Dashboard() {
         ${hasProjects && html`<button role="tab">Projects</button>`}
       </div>
       <div role="tabpanel">
+        <div class="hstack" style="margin-bottom:1.25rem">
+          <div class="hstack" style="gap:0.5rem;align-items:center">
+            <button
+              onClick=${goPrev}
+              disabled=${!hasPrev}
+              style="padding:0.25rem 0.5rem"
+              aria-label="Previous month"
+            >\u2039</button>
+            <div style="text-align:center">
+              <strong>${formatMonthRange(activeMonth)}</strong>
+              ${
+                isCurrentMonth
+                  ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
+                  : html`<div class="text-light text-body">Closed</div>`
+              }
+            </div>
+            <button
+              onClick=${goNext}
+              disabled=${!hasNext}
+              style="padding:0.25rem 0.5rem"
+              aria-label="Next month"
+            >\u203A</button>
+          </div>
+        </div>
         ${
           monthlyLedger
             ? html`<${Ledger}
