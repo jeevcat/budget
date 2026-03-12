@@ -123,7 +123,7 @@ pub async fn setup_test_storage(pool: &ApalisPool) -> Result<(), sqlx::Error> {
 
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
-pub use sync::handle_sync_job;
+pub use sync::{ImportResult, handle_sync_job, import_provider_transactions};
 
 mod storage;
 pub use pipeline::PipelineContext;

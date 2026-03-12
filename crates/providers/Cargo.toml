@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 budget-core = { workspace = true }
 chrono = { workspace = true }
+csv = { workspace = true }
 jsonwebtoken = { workspace = true }
+regex = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }

@@ -11,8 +11,16 @@ use budget_core::models::{
 
 use super::{BankProviderFactory, SyncJob};
 
+/// Result of importing a batch of provider transactions.
+pub struct ImportResult {
+    /// Transactions successfully inserted or updated.
+    pub imported: usize,
+    /// Transactions that failed to upsert.
+    pub failed: Vec<String>,
+}
+
 /// Try to parse a string into a newtype, logging a warning on failure.
-fn try_parse<T, E: std::fmt::Display>(value: &str, field: &str) -> Option<T>
+pub fn try_parse<T, E: std::fmt::Display>(value: &str, field: &str) -> Option<T>
 where
     T: std::str::FromStr<Err = E>,
 {
@@ -26,7 +34,14 @@ where
 }
 
 /// Map a provider transaction to a domain transaction for a given account.
-fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) -> Transaction {
+///
+/// # Panics
+///
+/// Panics if `reference_number_schema` contains a value that cannot be parsed
+/// into [`ReferenceNumberSchema`]. This is infallible for all known schema
+/// values.
+#[must_use]
+pub fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) -> Transaction {
     Transaction {
         account_id,
         amount: ptxn.amount,
@@ -158,11 +173,42 @@ pub(crate) async fn sync_account(
     tracing::debug!(since = ?since, latest_in_db = ?latest, provider_account_id = %account.provider_account_id, "fetching transactions");
     let provider_txns = bank.fetch_transactions(&provider_account_id, since).await?;
 
+    let result = import_provider_transactions(account.id, &provider_txns, db).await?;
+
+    if !result.failed.is_empty() {
+        let count = result.imported + result.failed.len();
+        return Err(format!(
+            "sync partially failed: {}/{count} succeeded, {} failed: {}",
+            result.imported,
+            result.failed.len(),
+            result.failed.join(", ")
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+/// Import a batch of provider transactions into the database for a given account.
+///
+/// Maps each provider transaction to the domain model and upserts it.
+/// Deduplication is handled by the database `ON CONFLICT` clause on
+/// `(account_id, provider_transaction_id)`.
+///
+/// # Errors
+///
+/// Returns an error only if a systemic issue occurs. Individual upsert
+/// failures are collected in [`ImportResult::failed`].
+pub async fn import_provider_transactions(
+    account_id: AccountId,
+    provider_txns: &[budget_providers::Transaction],
+    db: &Db,
+) -> Result<ImportResult, BoxDynError> {
     let count = provider_txns.len();
 
     let mut failed: Vec<String> = Vec::new();
-    for ptxn in &provider_txns {
-        let txn = to_domain(account.id, ptxn);
+    for ptxn in provider_txns {
+        let txn = to_domain(account_id, ptxn);
 
         if let Err(e) = db
             .upsert_transaction(&txn, Some(&ptxn.provider_transaction_id))
@@ -177,24 +223,15 @@ pub(crate) async fn sync_account(
         }
     }
 
-    let succeeded = count - failed.len();
+    let imported = count - failed.len();
     tracing::info!(
-        account_id = %account.id,
-        transactions_synced = succeeded,
+        account_id = %account_id,
+        transactions_imported = imported,
         transactions_failed = failed.len(),
-        "sync completed"
+        "import completed"
     );
 
-    if !failed.is_empty() {
-        return Err(format!(
-            "sync partially failed: {succeeded}/{count} succeeded, {} failed: {}",
-            failed.len(),
-            failed.join(", ")
-        )
-        .into());
-    }
-
-    Ok(())
+    Ok(ImportResult { imported, failed })
 }
 
 /// Apalis handler that delegates to [`sync_account`].

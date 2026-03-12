@@ -193,7 +193,10 @@ fn init_tracing(config: &budget_core::Config) {
 /// Build the axum router with all API routes, auth middleware, and static file serving.
 fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
     let api_routes = Router::new()
-        .nest("/accounts", routes::accounts::router())
+        .nest(
+            "/accounts",
+            routes::accounts::router().merge(routes::import::router()),
+        )
         .nest("/transactions", routes::transactions::router())
         .nest("/categories", routes::categories::router())
         .nest("/rules", routes::rules::router())

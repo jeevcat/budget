@@ -426,6 +426,28 @@ impl Db {
         Ok(())
     }
 
+    /// Count how many of the given provider transaction IDs already exist for
+    /// an account. Used by CSV import to report duplicate counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn count_existing_provider_ids(
+        &self,
+        account_id: AccountId,
+        ids: &[&str],
+    ) -> Result<i64, sqlx::Error> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM transactions
+             WHERE account_id = $1 AND provider_transaction_id = ANY($2)",
+        )
+        .bind(account_id)
+        .bind(ids)
+        .fetch_one(&self.0)
+        .await?;
+        Ok(row.0)
+    }
+
     /// List all transactions.
     ///
     /// # Errors

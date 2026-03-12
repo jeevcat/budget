@@ -4,6 +4,7 @@
 //! (Enable Banking, Gemini) and test mocks. No knowledge of job queues or HTTP — the
 //! `budget-jobs` crate wraps these in type-erased clients for worker injection.
 
+pub mod amex_csv;
 pub mod bank;
 pub mod enable_banking;
 pub mod error;
@@ -11,6 +12,7 @@ pub mod gemini;
 pub mod llm;
 pub mod mock;
 
+pub use amex_csv::{AmexCsvError, parse_amex_csv};
 pub use bank::{Account, AccountBalance, AccountId, BankProvider, Transaction};
 pub use enable_banking::{
     AspspEntry, Client as EnableBankingClient, EnableBankingAuth, EnableBankingConfig,

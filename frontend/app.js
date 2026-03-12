@@ -23,7 +23,11 @@ const api = {
         "Content-Type": "application/json",
         ...opts.headers,
       },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.body
+        ? opts.rawBody
+          ? opts.body
+          : JSON.stringify(opts.body)
+        : undefined,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -38,6 +42,13 @@ const api = {
   put: (path, body) => api.fetch(path, { method: "PUT", body }),
   patch: (path, body) => api.fetch(path, { method: "PATCH", body }),
   del: (path) => api.fetch(path, { method: "DELETE" }),
+  raw: (path, body, contentType) =>
+    api.fetch(path, {
+      method: "POST",
+      body,
+      rawBody: true,
+      headers: { "Content-Type": contentType },
+    }),
 };
 
 function accountDisplayName(account) {
@@ -3017,6 +3028,8 @@ function Connections() {
   const [searchError, setSearchError] = useState(null);
   const [authorizing, setAuthorizing] = useState(null);
   const [authError, setAuthError] = useState(null);
+  const [importingAccount, setImportingAccount] = useState(null);
+  const [importError, setImportError] = useState(null);
 
   function load() {
     Promise.all([api.get("/connections"), api.get("/accounts")])
@@ -3079,6 +3092,29 @@ function Connections() {
       load();
     } catch (e) {
       setError(e);
+    }
+  }
+
+  async function importCsv(accountId, file) {
+    setImportingAccount(accountId);
+    setImportError(null);
+    try {
+      const text = await file.text();
+      const result = await api.raw(
+        `/accounts/${accountId}/import`,
+        text,
+        "text/csv",
+      );
+      ot.toast(
+        `Imported ${result.imported} transactions (${result.duplicates} duplicates, ${result.failed} failed)`,
+        "",
+        { variant: result.failed > 0 ? "warning" : "success" },
+      );
+    } catch (e) {
+      setImportError(e.message);
+      ot.toast(e.message, "Import failed", { variant: "danger" });
+    } finally {
+      setImportingAccount(null);
     }
   }
 
@@ -3172,6 +3208,7 @@ function Connections() {
                 <th>Type</th>
                 <th>Currency</th>
                 <th>Institution</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -3192,6 +3229,22 @@ function Connections() {
                     <td>${a.account_type}</td>
                     <td>${a.currency}</td>
                     <td class="text-light">${a.institution}</td>
+                    <td>
+                      <label class="button outline small" style="cursor:pointer;margin:0">
+                        ${importingAccount === a.id ? "Importing..." : "Import CSV"}
+                        <input
+                          type="file"
+                          accept=".csv"
+                          style="display:none"
+                          disabled=${importingAccount === a.id}
+                          onChange=${(e) => {
+                            const file = e.target.files[0];
+                            if (file) importCsv(a.id, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </td>
                   </tr>
                 `,
               )}
