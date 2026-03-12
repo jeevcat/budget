@@ -580,7 +580,7 @@ function CashFlowCard({ cashflow, onCategoryClick }) {
   const {
     income,
     other_income,
-    budgeted_spending,
+    budgeted_spending_total,
     unbudgeted_spending,
     total_in,
     total_out,
@@ -630,11 +630,11 @@ function CashFlowCard({ cashflow, onCategoryClick }) {
           <div class="cashflow-section">
             <div class="cashflow-section-label text-light">Out</div>
             ${
-              budgeted_spending.total > 0 &&
+              budgeted_spending_total > 0 &&
               html`
               <div class="cashflow-row">
                 <span>Budgeted Spending</span>
-                <span class="mono">${formatAmount(budgeted_spending.total, { decimals: 0 })}</span>
+                <span class="mono">${formatAmount(budgeted_spending_total, { decimals: 0 })}</span>
               </div>
             `
             }
@@ -667,7 +667,7 @@ function CashFlowCard({ cashflow, onCategoryClick }) {
 
 function BudgetSection({
   items,
-  cashflow,
+  summary,
   barMax,
   selectedCategoryId,
   onCategoryClick,
@@ -677,26 +677,26 @@ function BudgetSection({
     <div class="dash-totals">
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Total Budget</span>
-        <span class="dash-stat-value">${formatAmount(cashflow.total_budget, { decimals: 0 })}</span>
+        <span class="dash-stat-value">${formatAmount(summary.total_budget, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${formatAmount(cashflow.total_spent, { decimals: 0 })}</span>
+        <span class="dash-stat-value">${formatAmount(summary.total_spent, { decimals: 0 })}</span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Remaining</span>
         <span
-          class="dash-stat-value ${Number(cashflow.remaining) < 0 ? "dash-negative" : ""}"
+          class="dash-stat-value ${Number(summary.remaining) < 0 ? "dash-negative" : ""}"
         >
-          ${formatAmount(cashflow.remaining, { decimals: 0 })}
+          ${formatAmount(summary.remaining, { decimals: 0 })}
         </span>
       </article>
       <article class="card dash-stat-card">
         <span class="dash-stat-label text-light">Categories</span>
         <span class="dash-stat-value">
           ${
-            cashflow.over_budget_count > 0
-              ? html`<span class="badge danger">${cashflow.over_budget_count}</span>
+            summary.over_budget_count > 0
+              ? html`<span class="badge danger">${summary.over_budget_count}</span>
                   over`
               : html`All on track`
           }
@@ -1023,6 +1023,8 @@ function Dashboard() {
   const projectBudgetTxns = statusResp.project_transactions;
   const budgetYear = statusResp.budget_year;
 
+  const monthlySummary = statusResp.monthly_summary;
+  const annualSummary = statusResp.annual_summary;
   // Collect all unbudgeted transactions from cashflow sections for the transaction table
   const monthlyCashflow = statusResp.monthly_cashflow;
   const annualCashflow = statusResp.annual_cashflow;
@@ -1200,8 +1202,8 @@ function Dashboard() {
           monthly.length > 0
             ? html`<${BudgetSection}
               items=${monthly}
-              cashflow=${monthlyCashflow}
-              barMax=${Number(monthlyCashflow.bar_max)}
+              summary=${monthlySummary}
+              barMax=${Number(monthlySummary.bar_max)}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
@@ -1223,8 +1225,8 @@ function Dashboard() {
           annual.length > 0
             ? html`<${BudgetSection}
               items=${annual}
-              cashflow=${annualCashflow}
-              barMax=${Number(annualCashflow.bar_max)}
+              summary=${annualSummary}
+              barMax=${Number(annualSummary.bar_max)}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
@@ -1254,7 +1256,7 @@ function Dashboard() {
               />`
               : html`<${BudgetSection}
                 items=${activeProjects}
-                cashflow=${statusResp.project_summary}
+                summary=${statusResp.project_summary}
                 barMax=${Number(statusResp.project_summary.bar_max)}
                 selectedCategoryId=${selectedCategoryId}
                 onCategoryClick=${handleProjectClick}

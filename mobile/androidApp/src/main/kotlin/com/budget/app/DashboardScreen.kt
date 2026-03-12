@@ -58,7 +58,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
-import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.ChildCategoryInfo
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
@@ -254,7 +253,7 @@ private fun LazyListScope.monthlyTabContent(
         startExpanded = true,
     )
   }
-  item { BudgetHealthCards(cashflow = cashflow) }
+  item { SummaryCards(summary = state.monthlySummary) }
   items(state.monthlyStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -263,7 +262,7 @@ private fun LazyListScope.monthlyTabContent(
         remaining = status.remaining,
         pace = status.pace,
         paceDelta = status.paceDelta,
-        barMax = cashflow.barMax,
+        barMax = state.monthlySummary.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
     )
@@ -288,7 +287,7 @@ private fun LazyListScope.annualTabContent(
         startExpanded = false,
     )
   }
-  item { BudgetHealthCards(cashflow = cashflow) }
+  item { SummaryCards(summary = state.annualSummary) }
   items(state.annualStatuses, key = { it.categoryId }) { status ->
     CategoryRow(
         name = status.categoryName,
@@ -297,7 +296,7 @@ private fun LazyListScope.annualTabContent(
         remaining = status.remaining,
         pace = status.pace,
         paceDelta = status.paceDelta,
-        barMax = cashflow.barMax,
+        barMax = state.annualSummary.barMax,
         selected = false,
         onClick = { viewModel.selectCategory(status.categoryId) },
     )
@@ -443,48 +442,6 @@ private fun AnnualHeader(budgetYear: Int, timeLabel: String) {
 }
 
 // -- Budget health cards (2×2) ---------------------------------------------
-
-@Composable
-private fun BudgetHealthCards(cashflow: CashFlowSummary) {
-  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      StatCard(
-          label = "Budget",
-          value = formatAmount(cashflow.totalBudget),
-          modifier = Modifier.weight(1f),
-      )
-      StatCard(
-          label = "Spent",
-          value = formatAmount(cashflow.totalSpent),
-          modifier = Modifier.weight(1f),
-      )
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      StatCard(
-          label = "Remaining",
-          value = formatAmount(cashflow.remaining),
-          valueColor = if (cashflow.remaining < 0) OverBudgetColor else null,
-          modifier = Modifier.weight(1f),
-      )
-      StatCard(
-          label = "Categories",
-          value =
-              if (cashflow.overBudgetCount > 0) "${cashflow.overBudgetCount} over"
-              else "All on track",
-          valueColor = if (cashflow.overBudgetCount > 0) OverBudgetColor else UnderBudgetColor,
-          modifier = Modifier.weight(1f),
-      )
-    }
-  }
-}
-
-// -- Summary cards (for projects) ------------------------------------------
 
 @Composable
 private fun SummaryCards(summary: BudgetSummary) {
@@ -743,7 +700,12 @@ private data class CategoryInfo(
 )
 
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
-  val cashflow = activeCashflow(state)
+  val barMax =
+      when (state.selectedTab) {
+        BudgetMode.MONTHLY -> state.monthlySummary.barMax
+        BudgetMode.ANNUAL -> state.annualSummary.barMax
+        else -> 1.0
+      }
 
   state.selectedCashFlowItem?.let { item ->
     return CategoryInfo(item.label, item.amount, 0.0, 0.0, PaceIndicator.PENDING, 0.0, item.amount)
@@ -763,7 +725,7 @@ private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): Ca
         status.remaining,
         status.pace,
         status.paceDelta,
-        cashflow?.barMax ?: 1.0,
+        barMax,
     )
   }
 

@@ -28,20 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.CashFlowItem
 import com.budget.shared.api.CashFlowSummary
-import com.budget.shared.viewmodel.DashboardUiState
 
 private val PositiveColor = Color(0xFF76946A)
 private val NegativeColor = Color(0xFFC34043)
-
-internal fun activeCashflow(state: DashboardUiState) =
-    when (state.selectedTab) {
-      BudgetMode.MONTHLY -> state.monthlyCashflow
-      BudgetMode.ANNUAL -> state.annualCashflow
-      else -> null
-    }
 
 @Composable
 private fun SummaryCell(
@@ -227,8 +218,8 @@ internal fun CashFlowCard(
           Spacer(modifier = Modifier.height(4.dp))
 
           SectionLabel("OUT")
-          if (cashflow.budgetedSpending.total > 0) {
-            CashFlowPlainRow("Budgeted Spending", formatAmount(cashflow.budgetedSpending.total))
+          if (cashflow.budgetedSpendingTotal > 0) {
+            CashFlowPlainRow("Budgeted Spending", formatAmount(cashflow.budgetedSpendingTotal))
           }
           cashflow.unbudgetedSpending.items.forEach { item -> CashFlowItemCard(item, onItemClick) }
         }

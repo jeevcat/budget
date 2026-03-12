@@ -79,27 +79,32 @@ struct CashFlowSection {
 /// Full cash-flow breakdown for a budget period (month or year).
 #[derive(Serialize)]
 struct CashFlowSummary {
-    /// Budget health metrics.
-    #[serde(flatten)]
-    budget: BudgetGroupSummary,
-
     /// Salary / child-of-salary income.
     income: CashFlowSection,
     /// Positive unbudgeted transactions (RSUs, asset sales, etc.).
     other_income: CashFlowSection,
     /// Sum of budgeted category spending (monthly + project-in-month).
-    budgeted_spending: CashFlowSection,
+    budgeted_spending_total: Decimal,
     /// Negative unbudgeted / uncategorized transactions.
     unbudgeted_spending: CashFlowSection,
 
     /// `income.total + other_income.total`
     total_in: Decimal,
-    /// `budgeted_spending.total + unbudgeted_spending.total`
+    /// `budgeted_spending_total + unbudgeted_spending.total`
     total_out: Decimal,
     /// `total_in - total_out`
     net_cashflow: Decimal,
-    /// `income.total - budgeted_spending.total - unbudgeted_spending.total`
+    /// `income.total - budgeted_spending_total - unbudgeted_spending.total`
     saved: Decimal,
+}
+
+/// All computed summaries for the dashboard response.
+struct Summaries {
+    monthly_summary: BudgetGroupSummary,
+    monthly_cashflow: CashFlowSummary,
+    annual_summary: BudgetGroupSummary,
+    annual_cashflow: CashFlowSummary,
+    project_summary: BudgetGroupSummary,
 }
 
 #[derive(Serialize)]
@@ -107,9 +112,11 @@ struct StatusResponse {
     month: BudgetMonth,
     statuses: Vec<StatusEntry>,
     projects: Vec<ProjectStatusEntry>,
+    monthly_summary: BudgetGroupSummary,
+    annual_summary: BudgetGroupSummary,
+    project_summary: BudgetGroupSummary,
     monthly_cashflow: CashFlowSummary,
     annual_cashflow: CashFlowSummary,
-    project_summary: BudgetGroupSummary,
     /// Transactions contributing to monthly budgets in the active month.
     monthly_transactions: Vec<Transaction>,
     /// Transactions contributing to annual budgets across the budget year.
@@ -170,7 +177,7 @@ async fn derive_months(
 }
 
 /// Pre-classified transactions and auxiliary dashboard data.
-struct ClassifiedTransactions {
+struct DashboardContext {
     monthly: Vec<Transaction>,
     annual: Vec<Transaction>,
     project: Vec<Transaction>,
@@ -251,7 +258,7 @@ fn classify_transactions(
     categories: &[Category],
     month: &BudgetMonth,
     year_months: &[&BudgetMonth],
-) -> ClassifiedTransactions {
+) -> DashboardContext {
     let budget_txns = filter_for_budget(transactions, categories);
 
     let cat_ids_for_mode = |mode: BudgetMode| -> std::collections::HashSet<CategoryId> {
@@ -330,7 +337,7 @@ fn classify_transactions(
     let annual_income =
         collect_income_transactions(transactions, &salary_cats, year_start, year_end);
 
-    ClassifiedTransactions {
+    DashboardContext {
         monthly,
         annual,
         project,
@@ -466,14 +473,14 @@ fn build_cashflow_section(
     CashFlowSection { total, items }
 }
 
-/// Build all summaries: monthly + annual cash-flow, and project budget summary.
+/// Build all summaries: budget health + cash flow for each mode.
 fn build_summaries(
     statuses: &[StatusEntry],
-    classified: &ClassifiedTransactions,
+    classified: &DashboardContext,
     categories: &[Category],
     month: &BudgetMonth,
     projects: &[ProjectStatusEntry],
-) -> (CashFlowSummary, CashFlowSummary, BudgetGroupSummary) {
+) -> Summaries {
     let monthly_entries: Vec<&StatusEntry> = statuses
         .iter()
         .filter(|e| e.status.budget_mode == BudgetMode::Monthly)
@@ -483,47 +490,48 @@ fn build_summaries(
         .filter(|e| e.status.budget_mode == BudgetMode::Annual)
         .collect();
 
-    // Project transactions in the current budget month (counted as monthly spending)
-    let project_month_txns: Vec<Transaction> = classified
+    // Budget health — pure budget metrics, no project-in-month mixing
+    let monthly_summary = compute_group_summary(&monthly_entries, &classified.monthly);
+    let annual_summary = compute_group_summary(&annual_entries, &classified.annual);
+
+    // Cash flow — project-in-month spending counts toward monthly outflows
+    let project_month_spent: Decimal = classified
         .project
         .iter()
         .filter(|t| is_in_budget_month(t.posted_date, month))
-        .cloned()
-        .collect();
-
-    // Monthly cash flow
-    let monthly_budget = compute_group_summary(&monthly_entries, &classified.monthly);
-    let monthly_budgeted_spent = negate_sum(&classified.monthly) + negate_sum(&project_month_txns);
+        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
+    let monthly_budgeted_spent = negate_sum(&classified.monthly) - project_month_spent;
     let monthly_cashflow = build_cashflow(
-        monthly_budget,
+        monthly_budgeted_spent,
         &classified.income,
         &classified.unbudgeted,
-        monthly_budgeted_spent,
         categories,
     );
 
-    // Annual cash flow
-    let annual_budget = compute_group_summary(&annual_entries, &classified.annual);
     let annual_budgeted_spent = negate_sum(&classified.annual);
     let annual_cashflow = build_cashflow(
-        annual_budget,
+        annual_budgeted_spent,
         &classified.annual_income,
         &classified.unbudgeted_annual,
-        annual_budgeted_spent,
         categories,
     );
 
     let project_summary = compute_project_group_summary(projects);
 
-    (monthly_cashflow, annual_cashflow, project_summary)
+    Summaries {
+        monthly_summary,
+        monthly_cashflow,
+        annual_summary,
+        annual_cashflow,
+        project_summary,
+    }
 }
 
 /// Assemble a [`CashFlowSummary`] from its constituent parts.
 fn build_cashflow(
-    budget: BudgetGroupSummary,
+    budgeted_spending_total: Decimal,
     income_txns: &[Transaction],
     unbudgeted_txns: &[Transaction],
-    budgeted_spent: Decimal,
     categories: &[Category],
 ) -> CashFlowSummary {
     let income = build_cashflow_section(income_txns, categories);
@@ -543,21 +551,15 @@ fn build_cashflow(
     let other_income = build_cashflow_section(&positive_unbudgeted, categories);
     let unbudgeted_spending = build_cashflow_section(&negative_unbudgeted, categories);
 
-    let budgeted_spending = CashFlowSection {
-        total: budgeted_spent,
-        items: Vec::new(),
-    };
-
     let total_in = income.total + other_income.total;
-    let total_out = budgeted_spending.total + unbudgeted_spending.total;
+    let total_out = budgeted_spending_total + unbudgeted_spending.total;
     let net_cashflow = total_in - total_out;
-    let saved = income.total - budgeted_spending.total - unbudgeted_spending.total;
+    let saved = income.total - budgeted_spending_total - unbudgeted_spending.total;
 
     CashFlowSummary {
-        budget,
         income,
         other_income,
-        budgeted_spending,
+        budgeted_spending_total,
         unbudgeted_spending,
         total_in,
         total_out,
@@ -717,16 +719,17 @@ async fn status(
         reference_date,
     );
 
-    let (monthly_cashflow, annual_cashflow, project_summary) =
-        build_summaries(&statuses, &classified, &categories, month, &projects);
+    let summaries = build_summaries(&statuses, &classified, &categories, month, &projects);
 
     Ok(Json(StatusResponse {
         month: month.clone(),
         statuses,
         projects,
-        monthly_cashflow,
-        annual_cashflow,
-        project_summary,
+        monthly_summary: summaries.monthly_summary,
+        annual_summary: summaries.annual_summary,
+        project_summary: summaries.project_summary,
+        monthly_cashflow: summaries.monthly_cashflow,
+        annual_cashflow: summaries.annual_cashflow,
         monthly_transactions: classified.monthly,
         annual_transactions: classified.annual,
         project_transactions: classified.project,
@@ -1369,25 +1372,11 @@ mod tests {
             txn(tax_id, -2000), // negative → unbudgeted_spending
         ];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(3000),
-            total_spent: dec(2500),
-            remaining: dec(500),
-            over_budget_count: 0,
-            bar_max: dec(3000),
-        };
-
-        let cf = build_cashflow(
-            budget,
-            &income_txns,
-            &unbudgeted_txns,
-            dec(2500),
-            &categories,
-        );
+        let cf = build_cashflow(dec(2500), &income_txns, &unbudgeted_txns, &categories);
 
         assert_eq!(cf.income.total, dec(5000));
         assert_eq!(cf.other_income.total, dec(10000));
-        assert_eq!(cf.budgeted_spending.total, dec(2500));
+        assert_eq!(cf.budgeted_spending_total, dec(2500));
         assert_eq!(cf.unbudgeted_spending.total, dec(2000));
     }
 
@@ -1407,23 +1396,7 @@ mod tests {
             txn(rsu_id, 2000),  // positive → other_income
             txn(misc_id, -800), // negative → unbudgeted_spending
         ];
-        let budgeted_spent = dec(3000);
-
-        let budget = BudgetGroupSummary {
-            total_budget: dec(4000),
-            total_spent: budgeted_spent,
-            remaining: dec(1000),
-            over_budget_count: 0,
-            bar_max: dec(4000),
-        };
-
-        let cf = build_cashflow(
-            budget,
-            &income_txns,
-            &unbudgeted_txns,
-            budgeted_spent,
-            &categories,
-        );
+        let cf = build_cashflow(dec(3000), &income_txns, &unbudgeted_txns, &categories);
 
         // total_in = income + other_income = 5000 + 2000
         assert_eq!(cf.total_in, dec(7000));
@@ -1448,21 +1421,7 @@ mod tests {
         // Large windfall should NOT inflate saved
         let unbudgeted_txns = vec![txn(windfall_id, 50000)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(4000),
-            total_spent: dec(4000),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(4000),
-        };
-
-        let cf = build_cashflow(
-            budget,
-            &income_txns,
-            &unbudgeted_txns,
-            dec(4000),
-            &categories,
-        );
+        let cf = build_cashflow(dec(4000), &income_txns, &unbudgeted_txns, &categories);
 
         // Saved = salary - budgeted - unbudgeted_spending = 5000 - 4000 - 0 = 1000
         // The 50k windfall does NOT affect saved
@@ -1478,15 +1437,7 @@ mod tests {
 
         let income_txns = vec![txn(salary_id, 5000)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(0),
-            total_spent: dec(0),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(0),
-        };
-
-        let cf = build_cashflow(budget, &income_txns, &[], dec(0), &categories);
+        let cf = build_cashflow(dec(0), &income_txns, &[], &categories);
 
         assert_eq!(cf.total_in, dec(5000));
         assert_eq!(cf.total_out, dec(0));
@@ -1501,15 +1452,7 @@ mod tests {
 
         let unbudgeted_txns = vec![txn(misc_id, -1500)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(2000),
-            total_spent: dec(2000),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(2000),
-        };
-
-        let cf = build_cashflow(budget, &[], &unbudgeted_txns, dec(2000), &categories);
+        let cf = build_cashflow(dec(2000), &[], &unbudgeted_txns, &categories);
 
         assert_eq!(cf.total_in, dec(0));
         assert_eq!(cf.total_out, dec(3500));
@@ -1525,15 +1468,7 @@ mod tests {
         // Zero-amount transaction → neither positive nor negative
         let unbudgeted_txns = vec![txn(misc_id, 0)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(0),
-            total_spent: dec(0),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(0),
-        };
-
-        let cf = build_cashflow(budget, &[], &unbudgeted_txns, dec(0), &categories);
+        let cf = build_cashflow(dec(0), &[], &unbudgeted_txns, &categories);
 
         assert_eq!(cf.other_income.total, dec(0));
         assert!(cf.other_income.items.is_empty());
@@ -1542,41 +1477,10 @@ mod tests {
     }
 
     #[test]
-    fn cashflow_budgeted_spending_has_no_items() {
-        let categories = vec![make_category(10, "Salary", BudgetConfig::Salary)];
+    fn cashflow_budgeted_spending_is_passed_through() {
+        let cf = build_cashflow(dec(2500), &[], &[], &[]);
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(3000),
-            total_spent: dec(2500),
-            remaining: dec(500),
-            over_budget_count: 0,
-            bar_max: dec(3000),
-        };
-
-        let cf = build_cashflow(budget, &[], &[], dec(2500), &categories);
-
-        // budgeted_spending is a total-only section
-        assert_eq!(cf.budgeted_spending.total, dec(2500));
-        assert!(cf.budgeted_spending.items.is_empty());
-    }
-
-    #[test]
-    fn cashflow_budget_health_passed_through() {
-        let budget = BudgetGroupSummary {
-            total_budget: dec(5000),
-            total_spent: dec(3000),
-            remaining: dec(2000),
-            over_budget_count: 1,
-            bar_max: dec(5000),
-        };
-
-        let cf = build_cashflow(budget, &[], &[], dec(3000), &[]);
-
-        assert_eq!(cf.budget.total_budget, dec(5000));
-        assert_eq!(cf.budget.total_spent, dec(3000));
-        assert_eq!(cf.budget.remaining, dec(2000));
-        assert_eq!(cf.budget.over_budget_count, 1);
-        assert_eq!(cf.budget.bar_max, dec(5000));
+        assert_eq!(cf.budgeted_spending_total, dec(2500));
     }
 
     // ── collect_unbudgeted tests ────────────────────────────────────
@@ -1736,7 +1640,7 @@ mod tests {
         let statuses = vec![food_entry, insurance_entry];
 
         // Classified transactions
-        let classified = ClassifiedTransactions {
+        let classified = DashboardContext {
             monthly: vec![txn(food_id, -600)],
             annual: vec![txn(insurance_id, -1200)],
             project: vec![],
@@ -1757,13 +1661,15 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, annual_cf, project_sum) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let s = build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = s.monthly_cashflow;
+        let annual_cf = s.annual_cashflow;
+        let project_sum = s.project_summary;
 
         // Monthly cash flow
         assert_eq!(monthly_cf.income.total, dec(5000));
         assert_eq!(monthly_cf.other_income.total, dec(10000));
-        assert_eq!(monthly_cf.budgeted_spending.total, dec(600)); // negate_sum of monthly txns
+        assert_eq!(monthly_cf.budgeted_spending_total, dec(600)); // negate_sum of monthly txns
         assert_eq!(monthly_cf.unbudgeted_spending.total, dec(500));
         assert_eq!(monthly_cf.total_in, dec(15000));
         assert_eq!(monthly_cf.total_out, dec(1100));
@@ -1773,7 +1679,7 @@ mod tests {
         // Annual cash flow
         assert_eq!(annual_cf.income.total, dec(10000));
         assert_eq!(annual_cf.other_income.total, dec(30000));
-        assert_eq!(annual_cf.budgeted_spending.total, dec(1200));
+        assert_eq!(annual_cf.budgeted_spending_total, dec(1200));
         assert_eq!(annual_cf.unbudgeted_spending.total, dec(1500));
         assert_eq!(annual_cf.total_in, dec(40000));
         assert_eq!(annual_cf.total_out, dec(2700));
@@ -1827,7 +1733,7 @@ mod tests {
         // Project transaction in the current month counts towards monthly budgeted spending
         let project_txn = txn_on(reno_id, -800, NaiveDate::from_ymd_opt(2026, 2, 10).unwrap());
 
-        let classified = ClassifiedTransactions {
+        let classified = DashboardContext {
             monthly: vec![txn(food_id, -400)],
             annual: vec![],
             project: vec![project_txn],
@@ -1840,11 +1746,11 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, _, _) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = build_summaries(&statuses, &classified, &categories, &month, &projects)
+            .monthly_cashflow;
 
         // Monthly budgeted_spending = food (400) + project-in-month (800) = 1200
-        assert_eq!(monthly_cf.budgeted_spending.total, dec(1200));
+        assert_eq!(monthly_cf.budgeted_spending_total, dec(1200));
         assert_eq!(monthly_cf.saved, dec(3800)); // 5000 - 1200 - 0
     }
 
@@ -1860,7 +1766,7 @@ mod tests {
         };
 
         let statuses: Vec<StatusEntry> = vec![];
-        let classified = ClassifiedTransactions {
+        let classified = DashboardContext {
             monthly: vec![],
             annual: vec![],
             project: vec![],
@@ -1872,8 +1778,10 @@ mod tests {
         };
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, annual_cf, project_sum) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let s = build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = s.monthly_cashflow;
+        let annual_cf = s.annual_cashflow;
+        let project_sum = s.project_summary;
 
         assert_eq!(monthly_cf.total_in, dec(0));
         assert_eq!(monthly_cf.total_out, dec(0));
@@ -1958,8 +1866,8 @@ mod tests {
         let statuses = vec![food_entry];
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, _, _) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = build_summaries(&statuses, &classified, &categories, &month, &projects)
+            .monthly_cashflow;
 
         assert_eq!(monthly_cf.income.total, dec(5000));
         assert_eq!(monthly_cf.other_income.total, dec(15000));
@@ -1977,15 +1885,7 @@ mod tests {
 
         let unbudgeted_txns = vec![txn(rsu_id, 59000), txn(car_id, 15000)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(0),
-            total_spent: dec(0),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(0),
-        };
-
-        let cf = build_cashflow(budget, &[], &unbudgeted_txns, dec(0), &categories);
+        let cf = build_cashflow(dec(0), &[], &unbudgeted_txns, &categories);
 
         assert_eq!(cf.other_income.items.len(), 2);
         // Sorted by amount descending
@@ -2007,15 +1907,7 @@ mod tests {
             uncategorized_txn(-800),
         ];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(0),
-            total_spent: dec(0),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(0),
-        };
-
-        let cf = build_cashflow(budget, &[], &unbudgeted_txns, dec(0), &categories);
+        let cf = build_cashflow(dec(0), &[], &unbudgeted_txns, &categories);
 
         assert_eq!(cf.unbudgeted_spending.items.len(), 2);
         // Tax: |-2000 + -500| = 2500 (sorted first)
@@ -2246,15 +2138,7 @@ mod tests {
         // Both are income transactions (positive salary-category)
         let income_txns = vec![txn(salary_id, 5000), txn(bonus_id, 1000)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(0),
-            total_spent: dec(0),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(0),
-        };
-
-        let cf = build_cashflow(budget, &income_txns, &[], dec(0), &categories);
+        let cf = build_cashflow(dec(0), &income_txns, &[], &categories);
 
         assert_eq!(cf.income.total, dec(6000));
         assert_eq!(cf.income.items.len(), 2);
@@ -2283,21 +2167,7 @@ mod tests {
             uncategorized_txn(-1000),
         ];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(5000),
-            total_spent: dec(4500),
-            remaining: dec(500),
-            over_budget_count: 0,
-            bar_max: dec(5000),
-        };
-
-        let cf = build_cashflow(
-            budget,
-            &income_txns,
-            &unbudgeted_txns,
-            dec(4500),
-            &categories,
-        );
+        let cf = build_cashflow(dec(4500), &income_txns, &unbudgeted_txns, &categories);
 
         // Income
         assert_eq!(cf.income.total, dec(8000));
@@ -2308,9 +2178,8 @@ mod tests {
         assert_eq!(cf.other_income.items.len(), 1);
         assert_eq!(cf.other_income.items[0].label, "RSU");
 
-        // Budgeted spending (total-only, no items)
-        assert_eq!(cf.budgeted_spending.total, dec(4500));
-        assert!(cf.budgeted_spending.items.is_empty());
+        // Budgeted spending (total-only scalar)
+        assert_eq!(cf.budgeted_spending_total, dec(4500));
 
         // Unbudgeted spending (negative unbudgeted)
         assert_eq!(cf.unbudgeted_spending.total, dec(4000));
@@ -2330,15 +2199,7 @@ mod tests {
 
         let income_txns = vec![txn(salary_id, 3000)];
 
-        let budget = BudgetGroupSummary {
-            total_budget: dec(4000),
-            total_spent: dec(4000),
-            remaining: dec(0),
-            over_budget_count: 0,
-            bar_max: dec(4000),
-        };
-
-        let cf = build_cashflow(budget, &income_txns, &[], dec(4000), &categories);
+        let cf = build_cashflow(dec(4000), &income_txns, &[], &categories);
 
         // saved = income - budgeted_spending - unbudgeted_spending = 3000 - 4000 - 0 = -1000
         assert_eq!(cf.saved, dec(-1000));
@@ -2391,7 +2252,7 @@ mod tests {
         let project_txn_outside =
             txn_on(reno_id, -800, NaiveDate::from_ymd_opt(2026, 1, 15).unwrap());
 
-        let classified = ClassifiedTransactions {
+        let classified = DashboardContext {
             monthly: vec![txn(food_id, -400)],
             annual: vec![],
             project: vec![project_txn_outside],
@@ -2404,11 +2265,11 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, _, _) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = build_summaries(&statuses, &classified, &categories, &month, &projects)
+            .monthly_cashflow;
 
         // Only food spending (400), project txn is outside month
-        assert_eq!(monthly_cf.budgeted_spending.total, dec(400));
+        assert_eq!(monthly_cf.budgeted_spending_total, dec(400));
         assert_eq!(monthly_cf.saved, dec(4600)); // 5000 - 400
     }
 
@@ -2494,7 +2355,7 @@ mod tests {
 
         let statuses = vec![food_entry, transport_entry, insurance_entry, sub_entry];
 
-        let classified = ClassifiedTransactions {
+        let classified = DashboardContext {
             monthly: vec![txn(food_id, -800), txn(transport_id, -150)],
             annual: vec![txn(insurance_id, -1200), txn(subscription_id, -100)],
             project: vec![],
@@ -2507,16 +2368,15 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, annual_cf, _) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let s = build_summaries(&statuses, &classified, &categories, &month, &projects);
 
         // Monthly: budget health covers food + transport
-        assert_eq!(monthly_cf.budget.total_budget, dec(1200));
-        assert_eq!(monthly_cf.budgeted_spending.total, dec(950)); // 800 + 150
+        assert_eq!(s.monthly_summary.total_budget, dec(1200));
+        assert_eq!(s.monthly_cashflow.budgeted_spending_total, dec(950)); // 800 + 150
 
         // Annual: budget health covers insurance + subscriptions
-        assert_eq!(annual_cf.budget.total_budget, dec(3600));
-        assert_eq!(annual_cf.budgeted_spending.total, dec(1300)); // 1200 + 100
+        assert_eq!(s.annual_summary.total_budget, dec(3600));
+        assert_eq!(s.annual_cashflow.budgeted_spending_total, dec(1300)); // 1200 + 100
     }
 
     // ── classify_transactions edge cases ──────────────────────────────
@@ -2769,8 +2629,8 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (monthly_cf, _, _) =
-            build_summaries(&statuses, &classified, &categories, &month, &projects);
+        let monthly_cf = build_summaries(&statuses, &classified, &categories, &month, &projects)
+            .monthly_cashflow;
 
         // Income: salary only
         assert_eq!(monthly_cf.income.total, dec(5000));
@@ -2781,7 +2641,7 @@ mod tests {
         assert_eq!(monthly_cf.other_income.items.len(), 2);
 
         // Budgeted spending: food = 700
-        assert_eq!(monthly_cf.budgeted_spending.total, dec(700));
+        assert_eq!(monthly_cf.budgeted_spending_total, dec(700));
 
         // Unbudgeted spending: tax (3000) + uncategorized negative (150) = 3150
         assert_eq!(monthly_cf.unbudgeted_spending.total, dec(3150));
@@ -2899,12 +2759,12 @@ mod tests {
 
         let projects: Vec<ProjectStatusEntry> = vec![];
 
-        let (_, annual_cf, _) =
-            build_summaries(&statuses, &classified, &categories, &bm3, &projects);
+        let annual_cf =
+            build_summaries(&statuses, &classified, &categories, &bm3, &projects).annual_cashflow;
 
         assert_eq!(annual_cf.income.total, dec(15000));
         assert_eq!(annual_cf.other_income.total, dec(30000));
-        assert_eq!(annual_cf.budgeted_spending.total, dec(1500));
+        assert_eq!(annual_cf.budgeted_spending_total, dec(1500));
         assert_eq!(annual_cf.total_in, dec(45000));
         assert_eq!(annual_cf.total_out, dec(1500));
         assert_eq!(annual_cf.net_cashflow, dec(43500));

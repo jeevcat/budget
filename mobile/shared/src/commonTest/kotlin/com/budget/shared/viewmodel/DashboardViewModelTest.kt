@@ -413,16 +413,19 @@ private fun makeDashboardData(
       )
   val totalIn = incomeSection.total + otherIncomeSection.total
   val totalOut = 250.0 + unbudgetedSpendingSection.total
-  val cashflow =
-      CashFlowSummary(
+  val monthlySummary =
+      BudgetGroupSummary(
           totalBudget = 500.0,
           totalSpent = 250.0,
           remaining = 250.0,
           overBudgetCount = 0,
           barMax = 500.0,
+      )
+  val cashflow =
+      CashFlowSummary(
           income = incomeSection,
           otherIncome = otherIncomeSection,
-          budgetedSpending = CashFlowSection(total = 250.0, items = emptyList()),
+          budgetedSpendingTotal = 250.0,
           unbudgetedSpending = unbudgetedSpendingSection,
           totalIn = totalIn,
           totalOut = totalOut,
@@ -431,14 +434,9 @@ private fun makeDashboardData(
       )
   val emptyCashflow =
       CashFlowSummary(
-          totalBudget = 0.0,
-          totalSpent = 0.0,
-          remaining = 0.0,
-          overBudgetCount = 0,
-          barMax = 1.0,
           income = emptyCashFlowSection(),
           otherIncome = emptyCashFlowSection(),
-          budgetedSpending = emptyCashFlowSection(),
+          budgetedSpendingTotal = 0.0,
           unbudgetedSpending = emptyCashFlowSection(),
           totalIn = 0.0,
           totalOut = 0.0,
@@ -462,6 +460,8 @@ private fun makeDashboardData(
                       budgetMode = BudgetMode.MONTHLY,
                   ),
               ),
+          monthlySummary = monthlySummary,
+          annualSummary = emptySummary,
           monthlyCashflow = cashflow,
           annualCashflow = emptyCashflow,
           projectSummary = emptySummary,

@@ -66,14 +66,9 @@ data class CashFlowSection(
 
 @Serializable
 data class CashFlowSummary(
-    @SerialName("total_budget") val totalBudget: Double,
-    @SerialName("total_spent") val totalSpent: Double,
-    val remaining: Double,
-    @SerialName("over_budget_count") val overBudgetCount: Int,
-    @SerialName("bar_max") val barMax: Double,
     val income: CashFlowSection,
     @SerialName("other_income") val otherIncome: CashFlowSection,
-    @SerialName("budgeted_spending") val budgetedSpending: CashFlowSection,
+    @SerialName("budgeted_spending_total") val budgetedSpendingTotal: Double,
     @SerialName("unbudgeted_spending") val unbudgetedSpending: CashFlowSection,
     @SerialName("total_in") val totalIn: Double,
     @SerialName("total_out") val totalOut: Double,
@@ -136,6 +131,8 @@ data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
     val projects: List<ProjectStatusEntry> = emptyList(),
+    @SerialName("monthly_summary") val monthlySummary: BudgetGroupSummary,
+    @SerialName("annual_summary") val annualSummary: BudgetGroupSummary,
     @SerialName("monthly_cashflow") val monthlyCashflow: CashFlowSummary,
     @SerialName("annual_cashflow") val annualCashflow: CashFlowSummary,
     @SerialName("project_summary") val projectSummary: BudgetGroupSummary,
