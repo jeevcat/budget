@@ -88,6 +88,26 @@ pub fn salary_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
     ids
 }
 
+/// Collect category IDs that belong to a transfer-mode category (or whose
+/// ancestor is transfer-mode). Used to exclude internal transfers from
+/// regular budget math.
+#[must_use]
+pub fn transfer_category_ids(categories: &[Category]) -> HashSet<CategoryId> {
+    let transfer_roots: Vec<CategoryId> = categories
+        .iter()
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Transfer))
+        .map(|c| c.id)
+        .collect();
+
+    let mut ids = HashSet::new();
+    for root in transfer_roots {
+        for id in collect_category_subtree(root, categories) {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
 // ---------------------------------------------------------------------------
 // Shared transaction exclusion helpers
 // ---------------------------------------------------------------------------
@@ -145,6 +165,7 @@ pub fn filter_for_budget<'a>(
 ) -> Vec<&'a Transaction> {
     let project_cats = project_category_ids(categories);
     let salary_cats = salary_category_ids(categories);
+    let transfer_cats = transfer_category_ids(categories);
     let reimbursed_ids = reimbursed_transaction_ids(transactions);
 
     transactions
@@ -161,6 +182,13 @@ pub fn filter_for_budget<'a>(
             if t.categorization
                 .category_id()
                 .is_some_and(|cid| salary_cats.contains(&cid))
+            {
+                return false;
+            }
+            // Exclude transactions in transfer-mode categories
+            if t.categorization
+                .category_id()
+                .is_some_and(|cid| transfer_cats.contains(&cid))
             {
                 return false;
             }
@@ -648,8 +676,8 @@ pub fn compute_budget_status(
             compute_project_status(category, transactions, categories, today)
         }
         // Monthly is the default for budgeted categories.
-        // Salary categories are excluded at the API layer but fall back here defensively.
-        Some(BudgetMode::Monthly | BudgetMode::Salary) | None => {
+        // Salary/Transfer categories are excluded at the API layer but fall back here defensively.
+        Some(BudgetMode::Monthly | BudgetMode::Salary | BudgetMode::Transfer) | None => {
             compute_monthly_status(category, transactions, current_month, categories, today)
         }
     }
@@ -838,6 +866,7 @@ mod tests {
                 end_date: None,
             },
             BudgetMode::Salary => BudgetConfig::Salary,
+            BudgetMode::Transfer => BudgetConfig::Transfer,
         };
         Category {
             budget,
@@ -1328,6 +1357,31 @@ mod tests {
                 Categorization::Manual(salary.id),
                 dec!(3000),
                 date(2025, 1, 15),
+            ),
+        ];
+
+        let filtered = filter_for_budget(&transactions, &categories);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].amount, dec!(-50));
+    }
+
+    #[test]
+    fn transfer_category_transactions_excluded_from_budget() {
+        let food = food_category();
+        let mut transfer = make_category(200, "Investments", None);
+        transfer.budget = BudgetConfig::Transfer;
+        let categories = vec![food.clone(), transfer.clone()];
+
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-50),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(transfer.id),
+                dec!(-2000),
+                date(2025, 1, 18),
             ),
         ];
 

@@ -117,12 +117,20 @@ fun CategoryEditScreen(
       item { BudgetModeSelector(viewModel = viewModel) }
 
       // Budget type chips (shown when a budgetable mode is selected)
-      if (state.budgetMode != null && state.budgetMode != BudgetMode.SALARY) {
+      if (
+          state.budgetMode != null &&
+              state.budgetMode != BudgetMode.SALARY &&
+              state.budgetMode != BudgetMode.TRANSFER
+      ) {
         item { BudgetTypeSelector(viewModel = viewModel) }
       }
 
       // Budget amount (shown when a budgetable mode is selected)
-      if (state.budgetMode != null && state.budgetMode != BudgetMode.SALARY) {
+      if (
+          state.budgetMode != null &&
+              state.budgetMode != BudgetMode.SALARY &&
+              state.budgetMode != BudgetMode.TRANSFER
+      ) {
         item {
           OutlinedTextField(
               value = state.budgetAmount,
@@ -272,6 +280,7 @@ private fun BudgetModeSelector(viewModel: CategoryEditViewModel) {
           BudgetMode.ANNUAL to "Annual",
           BudgetMode.PROJECT to "Project",
           BudgetMode.SALARY to "Salary",
+          BudgetMode.TRANSFER to "Transfer",
       )
 
   Column {

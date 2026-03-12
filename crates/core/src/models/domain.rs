@@ -46,6 +46,8 @@ pub enum BudgetConfig {
     },
     /// Income category (salary deposits). Excluded from budget math.
     Salary,
+    /// Internal transfer. Excluded from all budget math.
+    Transfer,
 }
 
 impl BudgetConfig {
@@ -58,6 +60,7 @@ impl BudgetConfig {
             Self::Annual { .. } => Some(BudgetMode::Annual),
             Self::Project { .. } => Some(BudgetMode::Project),
             Self::Salary => Some(BudgetMode::Salary),
+            Self::Transfer => Some(BudgetMode::Transfer),
         }
     }
 
@@ -65,7 +68,7 @@ impl BudgetConfig {
     #[must_use]
     pub fn amount(&self) -> Option<Decimal> {
         match self {
-            Self::None | Self::Salary => Option::None,
+            Self::None | Self::Salary | Self::Transfer => Option::None,
             Self::Monthly { amount, .. }
             | Self::Annual { amount, .. }
             | Self::Project { amount, .. } => Some(*amount),
@@ -79,7 +82,7 @@ impl BudgetConfig {
             Self::Monthly { budget_type, .. } | Self::Annual { budget_type, .. } => {
                 Some(*budget_type)
             }
-            Self::None | Self::Salary | Self::Project { .. } => Option::None,
+            Self::None | Self::Salary | Self::Transfer | Self::Project { .. } => Option::None,
         }
     }
 
@@ -114,6 +117,7 @@ impl BudgetConfig {
                 Option::None => Self::None,
             },
             Some(BudgetMode::Salary) => Self::Salary,
+            Some(BudgetMode::Transfer) => Self::Transfer,
             Option::None => Self::None,
         }
     }

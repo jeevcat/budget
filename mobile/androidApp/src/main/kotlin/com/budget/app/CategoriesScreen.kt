@@ -49,6 +49,7 @@ private val CrystalBlue = Color(0xFF7E9CD8)
 private val OniViolet = Color(0xFF957FB8)
 private val AutumnYellow = Color(0xFFDCA561)
 private val AutumnGreen = Color(0xFF76946A)
+private val FujiGray = Color(0xFF727169)
 
 private fun modeColor(mode: BudgetMode?): Color =
     when (mode) {
@@ -56,6 +57,7 @@ private fun modeColor(mode: BudgetMode?): Color =
       BudgetMode.ANNUAL -> OniViolet
       BudgetMode.PROJECT -> AutumnYellow
       BudgetMode.SALARY -> AutumnGreen
+      BudgetMode.TRANSFER -> FujiGray
       null -> Color.Unspecified
     }
 
@@ -65,6 +67,7 @@ private fun modeLabel(mode: BudgetMode?): String? =
       BudgetMode.ANNUAL -> "Annual"
       BudgetMode.PROJECT -> "Project"
       BudgetMode.SALARY -> "Salary"
+      BudgetMode.TRANSFER -> "Transfer"
       null -> null
     }
 

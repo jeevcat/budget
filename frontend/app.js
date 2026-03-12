@@ -196,6 +196,7 @@ function budgetModeColor(mode) {
   if (mode === "annual") return "cat-annual";
   if (mode === "project") return "cat-project";
   if (mode === "salary") return "cat-salary";
+  if (mode === "transfer") return "cat-transfer";
   return "";
 }
 
@@ -595,7 +596,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 style=${item.category_id ? "cursor:pointer" : ""}
                 onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
               >
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.label}</span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.category_id && item.label !== "Uncategorized" ? html`<span title="No budget mode set — consider setting one" style="color:var(--warning);cursor:help">⚠ </span>` : ""}${item.label}</span>
                 <span></span>
                 <span></span>
                 <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
@@ -2162,11 +2163,15 @@ function Categories() {
         parent_id: editForm.parent_id || null,
         budget_mode: editForm.budget_mode || null,
         budget_type:
-          editForm.budget_mode && editForm.budget_mode !== "salary"
+          editForm.budget_mode &&
+          editForm.budget_mode !== "salary" &&
+          editForm.budget_mode !== "transfer"
             ? editForm.budget_type || "variable"
             : null,
         budget_amount:
-          editForm.budget_mode && editForm.budget_mode !== "salary"
+          editForm.budget_mode &&
+          editForm.budget_mode !== "salary" &&
+          editForm.budget_mode !== "transfer"
             ? editForm.budget_amount || null
             : null,
         project_start_date: editForm.project_start_date || null,
@@ -2249,6 +2254,8 @@ function Categories() {
 
   function budgetBadge(cat) {
     if (!cat.budget_mode) return null;
+    if (cat.budget_mode === "salary" || cat.budget_mode === "transfer")
+      return null;
     if (cat.budget_mode === "project") {
       const parts = [];
       if (cat.project_start_date)
@@ -2276,7 +2283,9 @@ function Categories() {
           ? "Annual"
           : mode === "salary"
             ? "Salary"
-            : "Project";
+            : mode === "transfer"
+              ? "Transfer"
+              : "Project";
     return html`<span class="hstack" style="gap:0.3rem;align-items:center"><span class="method-dot ${cls}" style="cursor:default"></span><span class="text-light text-caption">${label}</span></span>`;
   }
 
@@ -2443,11 +2452,13 @@ function Categories() {
                 <option value="annual">Annual</option>
                 <option value="project">Project</option>
                 <option value="salary">Salary</option>
+                <option value="transfer">Transfer</option>
               </select>
             </div>
             ${
               editForm.budget_mode &&
               editForm.budget_mode !== "salary" &&
+              editForm.budget_mode !== "transfer" &&
               html`
               <div data-field>
                 <label>Type</label>

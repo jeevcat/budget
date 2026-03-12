@@ -134,7 +134,8 @@ class CategoryEditViewModel(
   companion object {
     fun buildRequest(state: CategoryEditUiState, name: CategoryName): CategoryRequest {
       val budgetMode = state.budgetMode
-      val hasBudgetFields = budgetMode != null && budgetMode != BudgetMode.SALARY
+      val hasBudgetFields =
+          budgetMode != null && budgetMode != BudgetMode.SALARY && budgetMode != BudgetMode.TRANSFER
       return CategoryRequest(
           name = name,
           parentId = state.parentId,
@@ -160,6 +161,7 @@ class CategoryEditViewModel(
           BudgetMode.ANNUAL -> "annual"
           BudgetMode.PROJECT -> "project"
           BudgetMode.SALARY -> "salary"
+          BudgetMode.TRANSFER -> "transfer"
         }
 
     fun typeToString(type: BudgetType): String =

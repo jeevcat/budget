@@ -269,6 +269,9 @@
 .cat-salary {
   color: var(--kw-autumn-green);
 }
+.cat-transfer {
+  color: var(--kw-fuji-gray);
+}
 
 /* Category method dots */
 .method-dot {

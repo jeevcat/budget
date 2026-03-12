@@ -241,6 +241,13 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_create_category_with_transfer() {
+        let json = r#"{"name": "Investments", "budget_mode": "transfer"}"#;
+        let cat: CreateCategory = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.budget, BudgetConfig::Transfer);
+    }
+
+    #[test]
     fn deserialize_create_category_rejects_invalid_name() {
         let json = r#"{"name": ""}"#;
         assert!(serde_json::from_str::<CreateCategory>(json).is_err());

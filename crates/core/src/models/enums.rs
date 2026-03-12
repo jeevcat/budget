@@ -122,6 +122,7 @@ pub enum BudgetMode {
     Annual,
     Project,
     Salary,
+    Transfer,
 }
 
 impl fmt::Display for BudgetMode {
@@ -131,6 +132,7 @@ impl fmt::Display for BudgetMode {
             Self::Annual => write!(f, "annual"),
             Self::Project => write!(f, "project"),
             Self::Salary => write!(f, "salary"),
+            Self::Transfer => write!(f, "transfer"),
         }
     }
 }
@@ -144,6 +146,7 @@ impl std::str::FromStr for BudgetMode {
             "annual" => Ok(Self::Annual),
             "project" => Ok(Self::Project),
             "salary" => Ok(Self::Salary),
+            "transfer" => Ok(Self::Transfer),
             _ => Err(Error::InvalidBudgetMode(s.to_owned())),
         }
     }
