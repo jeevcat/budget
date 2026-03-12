@@ -524,7 +524,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
               >
                 <span class="ledger-row-name">
-                  <span class="ledger-pace-dot" style="background:var(--success)"></span>
+                  <span class="ledger-pace-dot" style="background:var(--success)" title="Income"></span>
                   ${item.label}
                 </span>
                 <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
@@ -562,7 +562,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
               onClick=${() => onCategoryClick?.(s.category_id)}
             >
               <span class="ledger-row-name">
-                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
+                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}" title="${paceLabel(s.pace, s.pace_delta)}"></span>
                 ${s.shortName}
               </span>
               <div class="ledger-bar-track">
@@ -678,7 +678,7 @@ function BudgetSection({
             onClick=${() => onCategoryClick?.(s.category_id)}
           >
             <span class="ledger-row-name">
-              <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
+              <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}" title="${paceLabel(s.pace, s.pace_delta)}"></span>
               ${
                 s.parentName
                   ? html`<span class="cat-parent">${s.parentName}</span>${s.shortName}`
@@ -1186,7 +1186,7 @@ function Dashboard() {
                           key=${s.category_id}
                           onClick=${() => handleProjectClick?.(s.category_id)}
                         >
-                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
+                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0" title="${paceLabel(s.pace, s.pace_delta)}"></span>
                           <div style="flex:1;min-width:0">
                             <div class="proj-item-name">
                               ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
