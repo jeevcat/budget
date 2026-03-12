@@ -5,10 +5,9 @@ import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.CashFlowItem
-import com.budget.shared.api.CashFlowSection
-import com.budget.shared.api.CashFlowSummary
 import com.budget.shared.api.Category
 import com.budget.shared.api.CategoryRequest
+import com.budget.shared.api.LedgerSummary
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.StatusResponse
 import com.budget.shared.api.Transaction
@@ -203,7 +202,7 @@ class DashboardViewModelTest {
   }
 
   @Test
-  fun cashflowSavedIsPopulated() = runTest {
+  fun ledgerSavedIsPopulated() = runTest {
     val incomeTxns =
         listOf(
             TransactionEntry(
@@ -217,7 +216,7 @@ class DashboardViewModelTest {
     val data =
         makeDashboardData(
             "month-1",
-            incomeItems =
+            ledgerIncome =
                 listOf(
                     CashFlowItem(
                         categoryId = "cat-salary",
@@ -227,18 +226,18 @@ class DashboardViewModelTest {
                         transactions = incomeTxns,
                     ),
                 ),
-            saved = 1800.0,
+            ledgerSaved = 1800.0,
         )
     val repo = FakeDashboardRepository(dashboardResults = mapOf(null to data))
     val vm = DashboardViewModel(repo)
 
-    val cashflow = vm.uiState.value.monthlyCashflow
-    assertEquals(5000.0, cashflow?.income?.total)
-    assertEquals(1800.0, cashflow?.saved)
+    val ledger = vm.uiState.value.monthlyLedger
+    assertEquals(5000.0, ledger?.totalIn)
+    assertEquals(1800.0, ledger?.saved)
   }
 
   @Test
-  fun cashflowIncomeTransactionsIncludedInMonthly() = runTest {
+  fun ledgerIncomeTransactionsIncludedInMonthly() = runTest {
     val incomeTxns =
         listOf(
             TransactionEntry(
@@ -259,7 +258,7 @@ class DashboardViewModelTest {
     val data =
         makeDashboardData(
             "month-1",
-            incomeItems =
+            ledgerIncome =
                 listOf(
                     CashFlowItem(
                         categoryId = "cat-salary",
@@ -286,7 +285,7 @@ class DashboardViewModelTest {
   }
 
   @Test
-  fun cashflowUnbudgetedTransactionsIncludedInMonthly() = runTest {
+  fun ledgerUnbudgetedTransactionsIncludedInMonthly() = runTest {
     val unbudgetedTxns =
         listOf(
             TransactionEntry(
@@ -307,7 +306,7 @@ class DashboardViewModelTest {
     val data =
         makeDashboardData(
             "month-1",
-            unbudgetedSpendingItems =
+            ledgerUnbudgeted =
                 listOf(
                     CashFlowItem(
                         categoryId = null,
@@ -372,16 +371,13 @@ private class FakeDashboardRepository(
       throw NotImplementedError()
 }
 
-private fun emptyCashFlowSection() = CashFlowSection(total = 0.0, items = emptyList())
-
 private fun makeDashboardData(
     monthId: String,
     prevMonthId: String? = null,
     nextMonthId: String? = null,
-    incomeItems: List<CashFlowItem> = emptyList(),
-    otherIncomeItems: List<CashFlowItem> = emptyList(),
-    unbudgetedSpendingItems: List<CashFlowItem> = emptyList(),
-    saved: Double = 0.0,
+    ledgerIncome: List<CashFlowItem> = emptyList(),
+    ledgerUnbudgeted: List<CashFlowItem> = emptyList(),
+    ledgerSaved: Double = 0.0,
 ): DashboardData {
   val months = buildList {
     if (prevMonthId != null) add(BudgetMonth(id = prevMonthId, startDate = "2026-01-28"))
@@ -396,52 +392,25 @@ private fun makeDashboardData(
           overBudgetCount = 0,
           barMax = 1.0,
       )
-  val incomeSection =
-      CashFlowSection(
-          total = incomeItems.sumOf { it.amount },
-          items = incomeItems,
-      )
-  val otherIncomeSection =
-      CashFlowSection(
-          total = otherIncomeItems.sumOf { it.amount },
-          items = otherIncomeItems,
-      )
-  val unbudgetedSpendingSection =
-      CashFlowSection(
-          total = unbudgetedSpendingItems.sumOf { it.amount },
-          items = unbudgetedSpendingItems,
-      )
-  val totalIn = incomeSection.total + otherIncomeSection.total
-  val totalOut = 250.0 + unbudgetedSpendingSection.total
-  val monthlySummary =
-      BudgetGroupSummary(
-          totalBudget = 500.0,
-          totalSpent = 250.0,
-          remaining = 250.0,
-          overBudgetCount = 0,
+  val totalIn = ledgerIncome.sumOf { it.amount }
+  val totalOut = 250.0 + ledgerUnbudgeted.sumOf { it.amount }
+  val monthlyLedger =
+      LedgerSummary(
+          income = ledgerIncome,
+          totalIn = totalIn,
+          unbudgeted = ledgerUnbudgeted,
+          totalOut = totalOut,
+          net = totalIn - totalOut,
+          saved = ledgerSaved,
           barMax = 500.0,
       )
-  val cashflow =
-      CashFlowSummary(
-          income = incomeSection,
-          otherIncome = otherIncomeSection,
-          budgetedSpendingTotal = 250.0,
-          unbudgetedSpending = unbudgetedSpendingSection,
-          totalIn = totalIn,
-          totalOut = totalOut,
-          netCashflow = totalIn - totalOut,
-          saved = saved,
-      )
-  val emptyCashflow =
-      CashFlowSummary(
-          income = emptyCashFlowSection(),
-          otherIncome = emptyCashFlowSection(),
-          budgetedSpendingTotal = 0.0,
-          unbudgetedSpending = emptyCashFlowSection(),
+  val emptyLedger =
+      LedgerSummary(
           totalIn = 0.0,
           totalOut = 0.0,
-          netCashflow = 0.0,
+          net = 0.0,
           saved = 0.0,
+          barMax = 1.0,
       )
   val status =
       StatusResponse(
@@ -460,10 +429,8 @@ private fun makeDashboardData(
                       budgetMode = BudgetMode.MONTHLY,
                   ),
               ),
-          monthlySummary = monthlySummary,
-          annualSummary = emptySummary,
-          monthlyCashflow = cashflow,
-          annualCashflow = emptyCashflow,
+          monthlyLedger = monthlyLedger,
+          annualLedger = emptyLedger,
           projectSummary = emptySummary,
           monthlyTransactions =
               listOf(

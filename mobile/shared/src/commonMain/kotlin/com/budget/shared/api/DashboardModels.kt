@@ -59,21 +59,14 @@ data class CashFlowItem(
 )
 
 @Serializable
-data class CashFlowSection(
-    val total: Double,
-    val items: List<CashFlowItem> = emptyList(),
-)
-
-@Serializable
-data class CashFlowSummary(
-    val income: CashFlowSection,
-    @SerialName("other_income") val otherIncome: CashFlowSection,
-    @SerialName("budgeted_spending_total") val budgetedSpendingTotal: Double,
-    @SerialName("unbudgeted_spending") val unbudgetedSpending: CashFlowSection,
+data class LedgerSummary(
+    val income: List<CashFlowItem> = emptyList(),
     @SerialName("total_in") val totalIn: Double,
+    val unbudgeted: List<CashFlowItem> = emptyList(),
     @SerialName("total_out") val totalOut: Double,
-    @SerialName("net_cashflow") val netCashflow: Double,
+    val net: Double,
     val saved: Double,
+    @SerialName("bar_max") val barMax: Double,
 )
 
 @Serializable
@@ -131,10 +124,8 @@ data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
     val projects: List<ProjectStatusEntry> = emptyList(),
-    @SerialName("monthly_summary") val monthlySummary: BudgetGroupSummary,
-    @SerialName("annual_summary") val annualSummary: BudgetGroupSummary,
-    @SerialName("monthly_cashflow") val monthlyCashflow: CashFlowSummary,
-    @SerialName("annual_cashflow") val annualCashflow: CashFlowSummary,
+    @SerialName("monthly_ledger") val monthlyLedger: LedgerSummary,
+    @SerialName("annual_ledger") val annualLedger: LedgerSummary,
     @SerialName("project_summary") val projectSummary: BudgetGroupSummary,
     @SerialName("monthly_transactions")
     val monthlyTransactions: List<TransactionEntry> = emptyList(),

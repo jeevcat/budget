@@ -496,172 +496,133 @@ function paceLabel(pace, delta) {
   return base;
 }
 
-function ProgressRing({ spent, budget, pace, size = 48 }) {
-  const r = (size - 6) / 2;
-  const circ = 2 * Math.PI * r;
-  const pct = budget > 0 ? Math.min(Number(spent) / Number(budget), 1) : 0;
-  const offset = circ * (1 - pct);
-  const color =
-    pace === "over_budget"
-      ? "var(--danger)"
-      : pace === "pending"
-        ? "var(--text-light)"
-        : pace === "above_pace"
-          ? "var(--warning)"
-          : pace === "on_track"
-            ? "var(--primary)"
-            : "var(--success)";
-
-  return html`
-    <svg
-      width=${size}
-      height=${size}
-      viewBox="0 0 ${size} ${size}"
-      class="progress-ring"
-    >
-      <circle
-        cx=${size / 2}
-        cy=${size / 2}
-        r=${r}
-        fill="none"
-        stroke="var(--border)"
-        stroke-width="5"
-      />
-      <circle
-        cx=${size / 2}
-        cy=${size / 2}
-        r=${r}
-        fill="none"
-        stroke=${color}
-        stroke-width="5"
-        stroke-dasharray=${circ}
-        stroke-dashoffset=${offset}
-        stroke-linecap="round"
-        transform="rotate(-90 ${size / 2} ${size / 2})"
-        style="transition: stroke-dashoffset 0.6s ease"
-      />
-    </svg>
-  `;
+function paceColor(pace) {
+  if (pace === "over_budget") return "var(--danger)";
+  if (pace === "above_pace") return "var(--warning)";
+  if (pace === "on_track") return "var(--primary)";
+  if (pace === "under_budget") return "var(--success)";
+  return "var(--text-light)";
 }
 
-function SpendBar({ items, maxVal, selectedCategoryId, onCategoryClick }) {
+function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
+  if (!ledger) return null;
+  const barMax = Number(ledger.bar_max) || 1;
+
   return html`
-    <div class="vstack gap-2">
-      ${items.map(
-        (item) => html`
-          <div
-            class="spend-bar-row clickable-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
-            key=${item.id}
-            onClick=${() => onCategoryClick?.(item.id)}
-            style="cursor:pointer"
-          >
-            <span class="spend-bar-label">${item.name}</span>
-            <div class="spend-bar-track">
+    <div class="ledger">
+      <!-- IN -->
+      ${
+        ledger.income.length > 0 &&
+        html`
+        <div class="ledger-section">
+          <div class="ledger-section-label text-light">In</div>
+          ${ledger.income.map(
+            (item) => html`
               <div
-                class="spend-bar-fill spend-bar-${item.pace}"
-                style="width:${maxVal > 0 ? (Math.abs(Number(item.spent)) / maxVal) * 100 : 0}%"
-              ></div>
-              <div
-                class="spend-bar-budget-mark"
-                style="left:${maxVal > 0 ? (Number(item.budget) / maxVal) * 100 : 0}%"
-                title="Budget: ${formatAmount(item.budget, { decimals: 0 })}"
-              ></div>
-            </div>
-            <span class="spend-bar-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
+                class="ledger-income-row"
+                key=${item.category_id || item.label}
+                onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
+              >
+                <span>${item.label}</span>
+                <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
+              </div>
+            `,
+          )}
+          <div class="ledger-subtotal">
+            <span>Total In</span>
+            <span class="ledger-amount" style="color:var(--success)">${formatAmount(ledger.total_in, { decimals: 0, sign: true })}</span>
           </div>
-        `,
-      )}
+        </div>
+      `
+      }
+
+      <!-- OUT -->
+      <div class="ledger-section">
+        <div class="ledger-section-label text-light">Out</div>
+        ${
+          items.length > 0 &&
+          html`
+          <div class="ledger-col-headers">
+            <span>Name</span>
+            <span></span>
+            <span>Budget</span>
+            <span>Spent</span>
+            <span style="text-align:right">\u0394</span>
+          </div>
+        `
+        }
+        ${items.map(
+          (s) => html`
+            <div
+              class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+              key=${s.category_id}
+              onClick=${() => onCategoryClick?.(s.category_id)}
+            >
+              <span style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
+                ${s.shortName}
+              </span>
+              <div class="ledger-bar-track">
+                <div
+                  class="ledger-bar-fill ledger-bar-fill-${s.pace}"
+                  style="width:${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}%"
+                ></div>
+                <div
+                  class="ledger-bar-mark"
+                  style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
+                  title="Budget: ${formatAmount(s.budget_amount, { decimals: 0 })}"
+                ></div>
+              </div>
+              <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+              <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
+              <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
+            </div>
+          `,
+        )}
+
+        ${
+          ledger.unbudgeted.length > 0 &&
+          html`
+          <div class="ledger-divider"></div>
+          ${ledger.unbudgeted.map(
+            (item) => html`
+              <div
+                class="ledger-unbudgeted-row"
+                key=${item.category_id || item.label}
+                style=${item.category_id ? "cursor:pointer" : ""}
+                onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
+              >
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.label}</span>
+                <span></span>
+                <span></span>
+                <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
+                <span></span>
+              </div>
+            `,
+          )}
+        `
+        }
+        <div class="ledger-subtotal">
+          <span>Total Out</span>
+          <span class="ledger-amount" style="color:var(--danger)">${formatAmount(ledger.total_out, { decimals: 0 })}</span>
+        </div>
+      </div>
+
+      <!-- NET -->
+      <div class="ledger-net">
+        <span>Net</span>
+        <span class="ledger-amount" style="color:${Number(ledger.net) < 0 ? "var(--danger)" : "var(--success)"}">${formatAmount(ledger.net, { decimals: 0, sign: true })}</span>
+      </div>
+      ${
+        ledger.saved != null &&
+        html`
+        <div class="ledger-net ledger-net-secondary" style="border-top:none;padding-top:0.15rem">
+          <span class="text-light">Saved from salary</span>
+          <span class="ledger-amount" style="color:${Number(ledger.saved) < 0 ? "var(--danger)" : "var(--success)"}">${formatAmount(ledger.saved, { decimals: 0, sign: true })}</span>
+        </div>
+      `
+      }
     </div>
-  `;
-}
-
-function CashFlowCard({ cashflow, onCategoryClick }) {
-  if (!cashflow) return null;
-  const {
-    income,
-    other_income,
-    budgeted_spending_total,
-    unbudgeted_spending,
-    total_in,
-    total_out,
-    net_cashflow,
-    saved,
-  } = cashflow;
-  const hasOtherIncome = other_income && other_income.items.length > 0;
-  const hasUnbudgetedSpending =
-    unbudgeted_spending && unbudgeted_spending.items.length > 0;
-  const hasCashFlow =
-    income.total > 0 || hasOtherIncome || hasUnbudgetedSpending;
-  if (!hasCashFlow) return null;
-
-  const renderItems = (items) =>
-    items.map(
-      (item) => html`
-        <div
-          class="cashflow-row clickable-row"
-          onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
-          style=${item.category_id ? "cursor:pointer" : ""}
-        >
-          <span>${item.label}</span>
-          <span class="mono">${formatAmount(item.amount, { decimals: 0 })}</span>
-        </div>
-      `,
-    );
-
-  return html`
-    <article class="card cashflow-card">
-      <details open>
-        <summary class="cashflow-header"><h3 style="margin:0;display:inline">Cash Flow</h3></summary>
-        <div class="cashflow-body">
-          ${
-            income.total > 0 &&
-            html`
-            <div class="cashflow-section">
-              <div class="cashflow-section-label text-light">In</div>
-              ${renderItems(income.items)}
-              ${hasOtherIncome && renderItems(other_income.items)}
-              <div class="cashflow-total">
-                <span>Total In</span>
-                <span class="mono dash-positive">${formatAmount(total_in, { decimals: 0, sign: true })}</span>
-              </div>
-            </div>
-          `
-          }
-          <div class="cashflow-section">
-            <div class="cashflow-section-label text-light">Out</div>
-            ${
-              budgeted_spending_total > 0 &&
-              html`
-              <div class="cashflow-row">
-                <span>Budgeted Spending</span>
-                <span class="mono">${formatAmount(budgeted_spending_total, { decimals: 0 })}</span>
-              </div>
-            `
-            }
-            ${hasUnbudgetedSpending && renderItems(unbudgeted_spending.items)}
-            <div class="cashflow-total">
-              <span>Total Out</span>
-              <span class="mono dash-negative">${formatAmount(total_out, { decimals: 0 })}</span>
-            </div>
-          </div>
-          <div class="cashflow-net">
-            <div class="cashflow-net-row">
-              <span>Net</span>
-              <span class="mono ${net_cashflow < 0 ? "dash-negative" : "dash-positive"}">${formatAmount(net_cashflow, { decimals: 0, sign: true })}</span>
-            </div>
-            ${
-              income.total > 0 &&
-              html`
-              <div class="cashflow-net-row cashflow-saved">
-                <span class="text-light">Saved from salary</span>
-                <span class="mono ${saved < 0 ? "dash-negative" : "dash-positive"}">${formatAmount(saved, { decimals: 0, sign: true })}</span>
-              </div>
-            `
-            }
-          </div>
-        </div>
-      </details>
-    </article>
   `;
 }
 
@@ -674,26 +635,27 @@ function BudgetSection({
   showDateSubtitle,
 }) {
   return html`
-    <div class="dash-totals">
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Total Budget</span>
-        <span class="dash-stat-value">${formatAmount(summary.total_budget, { decimals: 0 })}</span>
+    <div class="proj-stat-cards">
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Total Budget</span>
+        <span class="proj-stat-value">${formatAmount(summary.total_budget, { decimals: 0 })}</span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${formatAmount(summary.total_spent, { decimals: 0 })}</span>
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Spent</span>
+        <span class="proj-stat-value">${formatAmount(summary.total_spent, { decimals: 0 })}</span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Remaining</span>
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Remaining</span>
         <span
-          class="dash-stat-value ${Number(summary.remaining) < 0 ? "dash-negative" : ""}"
+          class="proj-stat-value"
+          style=${Number(summary.remaining) < 0 ? "color:var(--danger)" : ""}
         >
           ${formatAmount(summary.remaining, { decimals: 0 })}
         </span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Categories</span>
-        <span class="dash-stat-value">
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Categories</span>
+        <span class="proj-stat-value">
           ${
             summary.over_budget_count > 0
               ? html`<span class="badge danger">${summary.over_budget_count}</span>
@@ -704,75 +666,44 @@ function BudgetSection({
       </article>
     </div>
 
-    <div class="dash-grid">
-      <article class="card" style="padding:var(--space-4)">
-        <h3 style="margin:0 0 0.75rem">Spending vs Budget</h3>
-        <${SpendBar}
-          items=${items.map((s) => ({
-            id: s.category_id,
-            name: s.shortName,
-            spent: s.spent,
-            budget: s.budget_amount,
-            pace: s.pace,
-          }))}
-          maxVal=${barMax}
-          selectedCategoryId=${selectedCategoryId}
-          onCategoryClick=${onCategoryClick}
-        />
-      </article>
-
-      <article class="card" style="padding:var(--space-4)">
-        <h3 style="margin:0 0 0.75rem">Category Breakdown</h3>
-        <div class="vstack" style="gap:0">
-          ${items.map(
-            (s) => html`
+    <div class="vstack" style="gap:0">
+      ${items.map(
+        (s) => html`
+          <div
+            class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+            key=${s.category_id}
+            onClick=${() => onCategoryClick?.(s.category_id)}
+          >
+            <span style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
+              ${
+                s.parentName
+                  ? html`<span class="cat-parent">${s.parentName}</span>${s.shortName}`
+                  : s.shortName
+              }
+              ${
+                showDateSubtitle &&
+                s.project_start_date &&
+                html` <span class="text-light" style="font-size:0.8rem">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
+              }
+            </span>
+            <div class="ledger-bar-track">
               <div
-                class="hstack dash-cat-row clickable-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
-                key=${s.category_id}
-                onClick=${() => onCategoryClick?.(s.category_id)}
-                style="cursor:pointer"
-              >
-                <${ProgressRing}
-                  spent=${s.spent}
-                  budget=${s.budget_amount}
-                  pace=${s.pace}
-                />
-                <div class="dash-cat-info">
-                  <div class="dash-cat-name">
-                    ${
-                      s.parentName &&
-                      html`<span class="cat-parent">${s.parentName}</span>`
-                    }${s.shortName}
-                  </div>
-                  ${
-                    showDateSubtitle &&
-                    s.project_start_date &&
-                    html`
-                    <div class="dash-cat-sub text-light">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
-                  `
-                  }
-                  <div class="dash-cat-sub">
-                    <span>${formatAmount(s.spent, { decimals: 0 })}</span>
-                    <span class="text-light">
-                      ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span
-                    >
-                  </div>
-                </div>
-                <div class="vstack dash-cat-end">
-                  <span class="badge small ${paceBadge(s.pace)}"
-                    >${paceLabel(s.pace, s.pace_delta)}</span
-                  >
-                  <span
-                    class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}"
-                  >
-                    ${formatAmount(s.remaining, { decimals: 0, sign: true })}
-                  </span>
-                </div>
-              </div>
-            `,
-          )}
-        </div>
-      </article>
+                class="ledger-bar-fill ledger-bar-fill-${s.pace}"
+                style="width:${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}%"
+              ></div>
+              <div
+                class="ledger-bar-mark"
+                style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
+                title="Budget: ${formatAmount(s.budget_amount, { decimals: 0 })}"
+              ></div>
+            </div>
+            <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+            <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
+            <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
+          </div>
+        `,
+      )}
     </div>
   `;
 }
@@ -813,26 +744,27 @@ function ProjectDrillDown({
       <span class="cat-project" style="font-weight:600">${project.name}</span>
     </div>
 
-    <div class="dash-totals">
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Project Budget</span>
-        <span class="dash-stat-value">${formatAmount(project.budget_amount, { decimals: 0 })}</span>
+    <div class="proj-stat-cards">
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Project Budget</span>
+        <span class="proj-stat-value">${formatAmount(project.budget_amount, { decimals: 0 })}</span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Spent</span>
-        <span class="dash-stat-value">${formatAmount(totalSpent, { decimals: 0 })}</span>
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Spent</span>
+        <span class="proj-stat-value">${formatAmount(totalSpent, { decimals: 0 })}</span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Remaining</span>
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Remaining</span>
         <span
-          class="dash-stat-value ${remaining < 0 ? "dash-negative" : ""}"
+          class="proj-stat-value"
+          style=${remaining < 0 ? "color:var(--danger)" : ""}
         >
           ${formatAmount(remaining, { decimals: 0 })}
         </span>
       </article>
-      <article class="card dash-stat-card">
-        <span class="dash-stat-label text-light">Status</span>
-        <span class="dash-stat-value">
+      <article class="card proj-stat-card">
+        <span class="proj-stat-label text-light">Status</span>
+        <span class="proj-stat-value">
           <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace, project.pace_delta)}</span>
         </span>
       </article>
@@ -842,26 +774,26 @@ function ProjectDrillDown({
       childBreakdown.length === 0
         ? html`<p class="text-light" style="margin-top:1rem">No spending yet.</p>`
         : html`
-    <div class="dash-grid">
+    <div class="proj-grid">
       <article class="card" style="padding:var(--space-4)">
         <h3 style="margin:0 0 0.75rem">Spending Distribution</h3>
         <div class="vstack gap-2">
           ${childBreakdown.map(
             (item) => html`
               <div
-                class="spend-bar-row clickable-row ${selectedCategoryId === item.id ? "spend-bar-selected" : ""}"
+                class="ledger-row${selectedCategoryId === item.id ? " ledger-row-selected" : ""}"
+                style="grid-template-columns:7rem 1fr auto"
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
-                style="cursor:pointer"
               >
-                <span class="spend-bar-label">${item.name}</span>
-                <div class="spend-bar-track">
+                <span style="font-size:0.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+                <div class="ledger-bar-track">
                   <div
-                    class="spend-bar-fill spend-bar-${project.pace}"
+                    class="ledger-bar-fill ledger-bar-fill-${project.pace}"
                     style="width:${totalSpent > 0 ? (item.spent / totalSpent) * 100 : 0}%"
                   ></div>
                 </div>
-                <span class="spend-bar-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
+                <span class="ledger-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
               </div>
             `,
           )}
@@ -874,23 +806,22 @@ function ProjectDrillDown({
           ${childBreakdown.map(
             (item) => html`
               <div
-                class="hstack dash-cat-row ${selectedCategoryId === item.id ? "dash-cat-selected" : ""}"
+                class="hstack clickable-row${selectedCategoryId === item.id ? " ledger-row-selected" : ""}"
+                style="gap:0.65rem;padding:0.5rem 0.35rem;border-radius:4px;cursor:pointer"
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
-                style="cursor:pointer"
               >
                 <div
                   style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:var(--text-light);flex-shrink:0"
                 >
                   ${totalSpent > 0 ? Math.round((item.spent / totalSpent) * 100) : 0}%
                 </div>
-                <div class="dash-cat-info">
-                  <div class="dash-cat-name">${item.name}</div>
-                  <div class="dash-cat-sub">
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:500;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</div>
+                  <div style="font-size:0.8rem">
                     <span>${formatAmount(item.spent, { decimals: 0 })}</span>
                     <span class="text-light">
-                      ${" "}of ${formatAmount(totalSpent, { decimals: 0 })} total</span
-                    >
+                      ${" "}of ${formatAmount(totalSpent, { decimals: 0 })} total</span>
                   </div>
                 </div>
               </div>
@@ -1023,28 +954,16 @@ function Dashboard() {
   const projectBudgetTxns = statusResp.project_transactions;
   const budgetYear = statusResp.budget_year;
 
-  const monthlySummary = statusResp.monthly_summary;
-  const annualSummary = statusResp.annual_summary;
-  // Collect all unbudgeted transactions from cashflow sections for the transaction table
-  const monthlyCashflow = statusResp.monthly_cashflow;
-  const annualCashflow = statusResp.annual_cashflow;
+  const monthlyLedger = statusResp.monthly_ledger;
+  const annualLedger = statusResp.annual_ledger;
+  // Collect all non-budget transactions from ledger income + unbudgeted sections
   const monthlyCashflowTxns = [
-    ...(monthlyCashflow.income?.items || []).flatMap((i) => i.transactions),
-    ...(monthlyCashflow.other_income?.items || []).flatMap(
-      (i) => i.transactions,
-    ),
-    ...(monthlyCashflow.unbudgeted_spending?.items || []).flatMap(
-      (i) => i.transactions,
-    ),
+    ...(monthlyLedger?.income || []).flatMap((i) => i.transactions || []),
+    ...(monthlyLedger?.unbudgeted || []).flatMap((i) => i.transactions || []),
   ];
   const annualCashflowTxns = [
-    ...(annualCashflow.income?.items || []).flatMap((i) => i.transactions),
-    ...(annualCashflow.other_income?.items || []).flatMap(
-      (i) => i.transactions,
-    ),
-    ...(annualCashflow.unbudgeted_spending?.items || []).flatMap(
-      (i) => i.transactions,
-    ),
+    ...(annualLedger?.income || []).flatMap((i) => i.transactions || []),
+    ...(annualLedger?.unbudgeted || []).flatMap((i) => i.transactions || []),
   ];
 
   // Time left label per mode
@@ -1199,20 +1118,15 @@ function Dashboard() {
       </div>
       <div role="tabpanel">
         ${
-          monthly.length > 0
-            ? html`<${BudgetSection}
+          monthlyLedger
+            ? html`<${Ledger}
               items=${monthly}
-              summary=${monthlySummary}
-              barMax=${Number(monthlySummary.bar_max)}
+              ledger=${monthlyLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
             : html`<p class="text-light">No monthly budgets.</p>`
         }
-        <${CashFlowCard}
-          cashflow=${monthlyCashflow}
-          onCategoryClick=${handleCategoryClick}
-        />
       </div>
       <div role="tabpanel">
         <div class="hstack" style="margin-bottom:1.25rem;align-items:center">
@@ -1222,20 +1136,15 @@ function Dashboard() {
           </div>
         </div>
         ${
-          annual.length > 0
-            ? html`<${BudgetSection}
+          annualLedger
+            ? html`<${Ledger}
               items=${annual}
-              summary=${annualSummary}
-              barMax=${Number(annualSummary.bar_max)}
+              ledger=${annualLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
             />`
             : html`<p class="text-light">No annual budgets.</p>`
         }
-        <${CashFlowCard}
-          cashflow=${annualCashflow}
-          onCategoryClick=${handleCategoryClick}
-        />
       </div>
       ${
         hasProjects &&
@@ -1267,39 +1176,35 @@ function Dashboard() {
                 html`
                 <details style="margin-top:1rem">
                   <summary class="text-light" style="cursor:pointer;padding:0.5rem 0">Finished (${finishedProjects.length})</summary>
-                  <div class="vstack" style="gap:0;margin-top:0.5rem">
+                  <div class="vstack" style="gap:0;margin-top:0.5rem;opacity:0.5">
                     ${finishedProjects.map(
                       (s) => html`
                         <div
-                          class="hstack dash-cat-row dash-cat-finished clickable-row ${selectedCategoryId === s.category_id ? "dash-cat-selected" : ""}"
+                          class="hstack clickable-row${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+                          style="gap:0.65rem;padding:0.5rem 0.35rem;border-radius:4px;cursor:pointer"
                           key=${s.category_id}
                           onClick=${() => handleProjectClick?.(s.category_id)}
-                          style="cursor:pointer"
                         >
-                          <${ProgressRing}
-                            spent=${s.spent}
-                            budget=${s.budget_amount}
-                            pace=${s.pace}
-                          />
-                          <div class="dash-cat-info">
-                            <div class="dash-cat-name">
+                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
+                          <div style="flex:1;min-width:0">
+                            <div style="font-weight:500;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                               ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
                             </div>
                             ${
                               s.project_start_date &&
                               html`
-                              <div class="dash-cat-sub text-light">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
+                              <div class="text-light" style="font-size:0.8rem">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
                             `
                             }
-                            <div class="dash-cat-sub">
+                            <div style="font-size:0.8rem">
                               <span>${formatAmount(s.spent, { decimals: 0 })}</span>
                               <span class="text-light">
                                 ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span>
                             </div>
                           </div>
-                          <div class="vstack dash-cat-end">
+                          <div class="vstack" style="align-items:flex-end;gap:0.15rem;white-space:nowrap">
                             <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta)}</span>
-                            <span class="dash-cat-remaining ${Number(s.remaining) < 0 ? "dash-negative" : ""}">
+                            <span style="font-size:0.82rem;${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
                               ${formatAmount(s.remaining, { decimals: 0, sign: true })}
                             </span>
                           </div>

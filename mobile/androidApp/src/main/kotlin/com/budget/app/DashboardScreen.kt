@@ -234,7 +234,7 @@ private fun LazyListScope.monthlyTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
 ) {
-  val cashflow = state.monthlyCashflow ?: return
+  val ledger = state.monthlyLedger ?: return
   item {
     MonthNavigator(
         month = state.currentMonth,
@@ -246,61 +246,33 @@ private fun LazyListScope.monthlyTabContent(
         onNext = viewModel::goToNextMonth,
     )
   }
-  item {
-    CashFlowCard(
-        cashflow = cashflow,
-        onItemClick = { viewModel.selectCashFlowItem(it) },
-        startExpanded = true,
-    )
-  }
-  item { SummaryCards(summary = state.monthlySummary) }
-  items(state.monthlyStatuses, key = { it.categoryId }) { status ->
-    CategoryRow(
-        name = status.categoryName,
-        spent = status.spent,
-        budget = status.budgetAmount,
-        remaining = status.remaining,
-        pace = status.pace,
-        paceDelta = status.paceDelta,
-        barMax = state.monthlySummary.barMax,
-        selected = false,
-        onClick = { viewModel.selectCategory(status.categoryId) },
-    )
-  }
+  ledgerContent(
+      ledger = ledger,
+      statuses = state.monthlyStatuses,
+      selectedCategoryId = state.selectedCategoryId,
+      onCategoryClick = { viewModel.selectCategory(it) },
+      onCashFlowItemClick = { viewModel.selectCashFlowItem(it) },
+  )
 }
 
 private fun LazyListScope.annualTabContent(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
 ) {
-  val cashflow = state.annualCashflow ?: return
+  val ledger = state.annualLedger ?: return
   item {
     AnnualHeader(
         budgetYear = state.budgetYear,
         timeLabel = state.annualTimeLabel,
     )
   }
-  item {
-    CashFlowCard(
-        cashflow = cashflow,
-        onItemClick = { viewModel.selectCashFlowItem(it) },
-        startExpanded = false,
-    )
-  }
-  item { SummaryCards(summary = state.annualSummary) }
-  items(state.annualStatuses, key = { it.categoryId }) { status ->
-    CategoryRow(
-        name = status.categoryName,
-        spent = status.spent,
-        budget = status.budgetAmount,
-        remaining = status.remaining,
-        pace = status.pace,
-        paceDelta = status.paceDelta,
-        barMax = state.annualSummary.barMax,
-        selected = false,
-        onClick = { viewModel.selectCategory(status.categoryId) },
-    )
-  }
+  ledgerContent(
+      ledger = ledger,
+      statuses = state.annualStatuses,
+      selectedCategoryId = state.selectedCategoryId,
+      onCategoryClick = { viewModel.selectCategory(it) },
+      onCashFlowItemClick = { viewModel.selectCashFlowItem(it) },
+  )
 }
 
 private fun LazyListScope.projectTabContent(
@@ -702,8 +674,8 @@ private data class CategoryInfo(
 private fun resolveCategoryInfo(state: DashboardUiState, categoryId: String): CategoryInfo? {
   val barMax =
       when (state.selectedTab) {
-        BudgetMode.MONTHLY -> state.monthlySummary.barMax
-        BudgetMode.ANNUAL -> state.annualSummary.barMax
+        BudgetMode.MONTHLY -> state.monthlyLedger?.barMax ?: 1.0
+        BudgetMode.ANNUAL -> state.annualLedger?.barMax ?: 1.0
         else -> 1.0
       }
 

@@ -288,99 +288,101 @@ dialog > form > div {
   word-break: break-word;
 }
 
-/* Dashboard */
-.dash-totals {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
+/* Ledger — unified budget/cashflow view */
+.ledger {
+  margin-bottom: 1rem;
 }
-
-.dash-stat-card {
-  padding: 0.75rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+.ledger-section {
+  margin-bottom: 1rem;
 }
-.dash-stat-label {
+.ledger-section-label {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  margin-bottom: 0.25rem;
 }
-.dash-stat-value {
-  font-size: 1.35rem;
-  font-weight: 600;
-  line-height: 1.2;
-}
-.dash-negative {
-  color: var(--danger);
-}
-.dash-positive {
-  color: var(--success);
-}
-
-.dash-grid {
+.ledger-col-headers {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  grid-template-columns: minmax(7rem, 1.5fr) minmax(60px, 120px) 5rem 5rem 4.5rem;
+  gap: 0.4rem;
+  padding: 0 0.35rem 0.15rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  text-align: right;
 }
-@media (max-width: 768px) {
-  .dash-grid {
-    grid-template-columns: 1fr;
-  }
+.ledger-col-headers span:first-child {
+  text-align: left;
 }
-
-/* Spend bars */
-.spend-bar-row {
+.ledger-row {
   display: grid;
-  grid-template-columns: 7rem 1fr auto;
-  gap: 0.5rem;
+  grid-template-columns: minmax(7rem, 1.5fr) minmax(60px, 120px) 5rem 5rem 4.5rem;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
   align-items: center;
-  padding: 0.15rem 0.35rem;
-  border-radius: 4px;
+  cursor: pointer;
 }
-.spend-bar-selected {
+.ledger-row:hover {
   background: var(--muted);
 }
-.spend-bar-label {
-  font-size: 0.82rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.ledger-row-over {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
-.spend-bar-track {
+.ledger-row-selected {
+  background: var(--muted);
+}
+.ledger-income-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ledger-income-row:hover {
+  background: var(--muted);
+}
+.ledger-unbudgeted-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1.5fr) minmax(60px, 120px) 5rem 5rem 4.5rem;
+  gap: 0.4rem;
+  padding: 0.2rem 0.35rem;
+  align-items: center;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+}
+.ledger-bar-track {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--muted);
   position: relative;
-  height: 18px;
-  background: var(--muted);
-  border-radius: 4px;
   overflow: hidden;
 }
-.spend-bar-fill {
+.ledger-bar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 3px;
   transition: width 0.5s ease;
 }
-.spend-bar-pending {
+.ledger-bar-fill-pending {
   background: var(--text-light);
   opacity: 0.6;
 }
-.spend-bar-under_budget {
+.ledger-bar-fill-under_budget {
   background: var(--success);
   opacity: 0.7;
 }
-.spend-bar-on_track {
+.ledger-bar-fill-on_track {
   background: var(--primary);
   opacity: 0.7;
 }
-.spend-bar-above_pace {
+.ledger-bar-fill-above_pace {
   background: var(--warning);
   opacity: 0.8;
 }
-.spend-bar-over_budget {
+.ledger-bar-fill-over_budget {
   background: var(--danger);
   opacity: 0.8;
 }
-.spend-bar-budget-mark {
+.ledger-bar-mark {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -388,52 +390,93 @@ dialog > form > div {
   background: var(--foreground);
   opacity: 0.35;
 }
-.spend-bar-amount {
-  font-size: 0.82rem;
+.ledger-pace-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 0.35em;
+  vertical-align: middle;
+}
+.ledger-amount {
+  font-family: var(--font-mono);
   text-align: right;
-  min-width: 4rem;
-}
-
-/* Category breakdown */
-.dash-cat-row {
-  gap: 0.65rem;
-  padding: 0.5rem 0.35rem;
-  border-radius: 4px;
-}
-.dash-cat-selected {
-  background: var(--muted);
-}
-.dash-cat-row + .dash-cat-row {
-  border-top: 1px solid var(--border);
-}
-.dash-cat-info {
-  flex: 1;
-  min-width: 0;
-}
-.dash-cat-name {
-  font-weight: 500;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dash-cat-sub {
-  font-size: 0.8rem;
-}
-.dash-cat-end {
-  align-items: flex-end;
-  gap: 0.15rem;
-  white-space: nowrap;
-}
-.dash-cat-remaining {
+  min-width: 3.5rem;
   font-size: 0.82rem;
 }
-.dash-cat-finished {
-  opacity: 0.5;
+.ledger-divider {
+  border-top: 1px dashed var(--border);
+  margin: 0.35rem 0;
+}
+.ledger-subtotal {
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0.35rem 0.1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.ledger-net {
+  border-top: 2px solid var(--border);
+  padding-top: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 1rem;
+}
+.ledger-net-secondary {
+  font-size: 0.85rem;
+  font-weight: 400;
 }
 
-.progress-ring {
-  flex-shrink: 0;
+@media (max-width: 768px) {
+  .ledger-row,
+  .ledger-col-headers,
+  .ledger-unbudgeted-row {
+    grid-template-columns: minmax(5rem, 1.5fr) minmax(40px, 80px) 4.5rem 4.5rem;
+  }
+  /* Hide budget column on mobile — show spent + delta only */
+  .ledger-row > :nth-child(3),
+  .ledger-col-headers > :nth-child(3),
+  .ledger-unbudgeted-row > :nth-child(3) {
+    display: none;
+  }
+}
+
+/* Project drill-down stat cards (Oat .card used directly) */
+.proj-stat-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.proj-stat-card {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.proj-stat-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.proj-stat-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Project spending distribution grid */
+.proj-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 768px) {
+  .proj-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Dashboard recent transactions (compact TransactionTable) */
@@ -573,56 +616,4 @@ dialog > form > div {
 .txn-filters .cat-select-trigger {
   padding-block: 0.25rem;
   font-size: 0.85rem;
-}
-
-/* Cash Flow card */
-.cashflow-card {
-  margin-top: 1.25rem;
-}
-.cashflow-header {
-  cursor: pointer;
-  padding: 0.75rem 1rem;
-  user-select: none;
-}
-.cashflow-body {
-  padding: 0 1rem 1rem;
-}
-.cashflow-section {
-  margin-bottom: 0.75rem;
-}
-.cashflow-section-label {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 0.25rem;
-}
-.cashflow-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.2rem 0;
-  font-size: 0.9rem;
-}
-.cashflow-total {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.35rem 0 0.1rem;
-  margin-top: 0.25rem;
-  border-top: 1px solid var(--border);
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-.cashflow-net {
-  border-top: 2px solid var(--border);
-  padding-top: 0.5rem;
-}
-.cashflow-net-row {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 1rem;
-}
-.cashflow-saved {
-  font-weight: 400;
-  font-size: 0.85rem;
-  margin-top: 0.15rem;
 }

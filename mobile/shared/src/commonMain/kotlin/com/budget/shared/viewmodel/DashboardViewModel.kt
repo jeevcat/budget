@@ -7,7 +7,7 @@ import com.budget.shared.api.BudgetMode
 import com.budget.shared.api.BudgetMonth
 import com.budget.shared.api.BudgetStatus
 import com.budget.shared.api.CashFlowItem
-import com.budget.shared.api.CashFlowSummary
+import com.budget.shared.api.LedgerSummary
 import com.budget.shared.api.PaceIndicator
 import com.budget.shared.api.ProjectStatusEntry
 import com.budget.shared.api.TransactionEntry
@@ -36,10 +36,8 @@ data class DashboardUiState(
     val monthlyStatuses: List<BudgetStatus> = emptyList(),
     val annualStatuses: List<BudgetStatus> = emptyList(),
     val projects: List<ProjectStatusEntry> = emptyList(),
-    val monthlySummary: BudgetSummary = BudgetSummary(),
-    val annualSummary: BudgetSummary = BudgetSummary(),
-    val monthlyCashflow: CashFlowSummary? = null,
-    val annualCashflow: CashFlowSummary? = null,
+    val monthlyLedger: LedgerSummary? = null,
+    val annualLedger: LedgerSummary? = null,
     val projectSummary: BudgetSummary = BudgetSummary(),
     val monthlyTransactions: List<TransactionEntry> = emptyList(),
     val annualTransactions: List<TransactionEntry> = emptyList(),
@@ -190,18 +188,12 @@ class DashboardViewModel(
           if (tl == null) "open-ended" else "${tl}mo left"
         } else ""
 
-    // Collect all cashflow transactions for the monthly transaction list
-    val monthlyCashflowTxns =
-        (resp.monthlyCashflow.income.items +
-                resp.monthlyCashflow.otherIncome.items +
-                resp.monthlyCashflow.unbudgetedSpending.items)
-            .flatMap { it.transactions }
+    // Collect ledger transactions (income + unbudgeted) for the transaction lists
+    val monthlyLedgerTxns =
+        (resp.monthlyLedger.income + resp.monthlyLedger.unbudgeted).flatMap { it.transactions }
 
-    val annualCashflowTxns =
-        (resp.annualCashflow.income.items +
-                resp.annualCashflow.otherIncome.items +
-                resp.annualCashflow.unbudgetedSpending.items)
-            .flatMap { it.transactions }
+    val annualLedgerTxns =
+        (resp.annualLedger.income + resp.annualLedger.unbudgeted).flatMap { it.transactions }
 
     _uiState.update {
       it.copy(
@@ -212,19 +204,15 @@ class DashboardViewModel(
           monthlyStatuses = monthly,
           annualStatuses = annual,
           projects = projects,
-          monthlySummary = resp.monthlySummary.toUiSummary(),
-          annualSummary = resp.annualSummary.toUiSummary(),
-          monthlyCashflow = resp.monthlyCashflow,
-          annualCashflow = resp.annualCashflow,
+          monthlyLedger = resp.monthlyLedger,
+          annualLedger = resp.annualLedger,
           projectSummary = resp.projectSummary.toUiSummary(),
           monthlyTransactions =
-              (resp.monthlyTransactions + monthlyCashflowTxns).sortedByDescending { t ->
+              (resp.monthlyTransactions + monthlyLedgerTxns).sortedByDescending { t ->
                 t.postedDate
               },
           annualTransactions =
-              (resp.annualTransactions + annualCashflowTxns).sortedByDescending { t ->
-                t.postedDate
-              },
+              (resp.annualTransactions + annualLedgerTxns).sortedByDescending { t -> t.postedDate },
           projectTransactions = resp.projectTransactions.sortedByDescending { t -> t.postedDate },
           budgetYear = resp.budgetYear,
           monthlyTimeLabel = monthlyTimeLabel,
