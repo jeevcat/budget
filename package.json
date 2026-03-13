@@ -1,0 +1,16 @@
+{
+  "name": "budget-frontend",
+  "private": true,
+  "scripts": {
+    "build": "bun build frontend/index.html --outdir frontend/dist --minify",
+    "dev": "bun build frontend/index.html --outdir frontend/dist --watch",
+    "check": "biome check frontend/",
+    "fix": "biome check --write frontend/"
+  },
+  "dependencies": {
+    "preact": "^10.25.4",
+    "htm": "^3.1.1",
+    "@knadh/oat": "^0.4.2",
+    "@someshkar/oat-chips": "^1.0.1"
+  }
+}

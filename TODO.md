@@ -3,10 +3,6 @@
 ## Bugs
 
 
-## Security
-
-- [ ] **Pin CDN versions and add SRI**: `index.html` loads Oat CSS from unpkg without version pins and all CDN resources (Preact, HTM, Oat) lack `integrity` attributes. Pin exact versions, then add SRI hashes
-
 ## From Spec — Remaining Work
 
 ### Backfill Logic

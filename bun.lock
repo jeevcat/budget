@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "budget-frontend",
+      "dependencies": {
+        "@knadh/oat": "^0.4.2",
+        "@someshkar/oat-chips": "^1.0.1",
+        "htm": "^3.1.1",
+        "preact": "^10.25.4",
+      },
+    },
+  },
+  "packages": {
+    "@knadh/oat": ["@knadh/oat@0.4.2", "", {}, "sha512-+mQnuJP11TKasrtiHKwyrFLXFyb1hxmKzbLALBjUlJHbS2bPV+YPkGN9/5QNRU/3nvM7zZHRVqtWaASFaFC3IA=="],
+
+    "@someshkar/oat-chips": ["@someshkar/oat-chips@1.0.1", "", { "peerDependencies": { "@knadh/oat": ">=0.1.0" } }, "sha512-CSX1deVlTX7Kgh7Kd8nJw0oATi7hQEnBx4aLvKE9wsLzM2kIvj8IKkQTw3yt8gIzb/Q0Hng4Kkg724xZCVaZEg=="],
+
+    "htm": ["htm@3.1.1", "", {}, "sha512-983Vyg8NwUE7JkZ6NmOqpCZ+sh1bKv2iYTlUkzlWmA5JD2acKoxd4KVxbMmxX/85mtfdnDmTFoNKcg5DGAvxNQ=="],
+
+    "preact": ["preact@10.29.0", "", {}, "sha512-wSAGyk2bYR1c7t3SZ3jHcM6xy0lcBcDel6lODcs9ME6Th++Dx2KU+6D3HD8wMMKGA8Wpw7OMd3/4RGzYRpzwRg=="],
+  }
+}

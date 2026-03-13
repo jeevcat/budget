@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let frontend_dir = config.frontend_dir.map_or_else(
-        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend"),
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend/dist"),
         std::path::PathBuf::from,
     );
     let app = build_router(state, &frontend_dir);

@@ -160,11 +160,21 @@ for rc in /root/.bashrc /root/.profile; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Biome (for frontend linting / formatting)
+# 4. Bun (package manager + frontend build)
 # ---------------------------------------------------------------------------
+if ! command -v bun &>/dev/null; then
+  echo "Installing Bun..."
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+  persist_env "PATH" "$HOME/.bun/bin:$PATH"
+fi
+
+echo "Installing frontend dependencies..."
+cd "$PROJECT_DIR" && bun install >/dev/null 2>&1
+
 if ! command -v biome &>/dev/null; then
   echo "Installing Biome..."
-  npm install --prefix "$PROJECT_DIR" --save-dev @biomejs/biome >/dev/null 2>&1
+  cd "$PROJECT_DIR" && bun add --dev @biomejs/biome >/dev/null 2>&1
   ln -sf "$PROJECT_DIR/node_modules/.bin/biome" /usr/local/bin/biome
 fi
 
@@ -182,5 +192,5 @@ echo "  DATABASE_URL=$DATABASE_URL"
 echo "  JAVA_HOME=$JAVA_HOME"
 echo "  ANDROID_HOME=$ANDROID_HOME"
 echo "  java: $(java -version 2>&1 | head -1)"
-echo "  biome: $(biome --version 2>/dev/null || echo 'not found')"
+echo "  bun: $(bun --version 2>/dev/null || echo 'not found')"
 echo "  pg_isready: $(pg_isready 2>&1)"

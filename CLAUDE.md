@@ -39,10 +39,12 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 
 ## Frontend
 
+- **Bun** is the package manager and bundler — `bun install` for deps, `bun run build` to bundle into `frontend/dist/`
+- Source files live in `frontend/` (app.js, style.css, index.html); the server serves `frontend/dist/`
 - **Strongly prefer [Oat CSS](https://oat.ink/) classes and components over custom CSS** — always check `frontend/oat-reference.md` and Oat utility classes (`hstack`, `vstack`, `text-light`, `gap-*`, `badge`, `card`, `chip`, etc.) before writing anything in `style.css`
 - Custom CSS in `style.css` is a last resort — only for things Oat genuinely cannot do (custom visualizations, pseudo-elements, responsive grid breakpoints, sticky table headers)
 - When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
-- **Use Biome for linting/formatting** — run `biome check frontend/`, fix with `biome check --write frontend/`. Never use node/python hacks for syntax checks.
+- **Use Biome for linting/formatting** — run `bun run check`, fix with `bun run fix`. Never use node/python hacks for syntax checks.
 
 ## Mobile
 

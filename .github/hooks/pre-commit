@@ -55,6 +55,14 @@ output=$(run biome check frontend/ 2>&1) || {
 }
 echo -e "${GREEN}OK${NC}"
 
+echo -n "Building frontend... "
+output=$(run bun run build 2>&1) || {
+    echo -e "${RED}FAILED${NC}"
+    echo "$output"
+    exit 1
+}
+echo -e "${GREEN}OK${NC}"
+
 if git diff --cached --name-only | grep -q '^mobile/'; then
     # Detect the specific reason a Gradle task can't run
     gradle_skip_reason() {
