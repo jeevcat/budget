@@ -392,6 +392,7 @@ function Ledger({
   ledger,
   selectedCategoryId,
   onCategoryClick,
+  onMonthlyClick,
   catMap,
 }) {
   if (!ledger) return null;
@@ -517,12 +518,9 @@ function Ledger({
           Number(ledger.monthly_out) > 0 &&
           html`
           <div class="ledger-divider"></div>
-          <div class="ledger-unbudgeted-row">
+          <div class="hstack text-light clickable-row" style="padding:0.2rem 0.35rem;font-size:var(--text-7)" onClick=${onMonthlyClick}>
             <span>Monthly budgets</span>
-            <span></span>
-            <span></span>
             <span class="ledger-amount">${formatAmount(ledger.monthly_out, { decimals: 0 })}</span>
-            <span></span>
           </div>
         `
         }
@@ -1112,6 +1110,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               ledger=${annualLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
+              onMonthlyClick=${() => setActiveTab(0)}
               catMap=${catMap}
             />`
             : html`<p class="text-light">No annual budgets.</p>`
