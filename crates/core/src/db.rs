@@ -270,6 +270,22 @@ impl Db {
         rows.iter().map(row_to_account).collect()
     }
 
+    /// List accounts that have a bank connection (excludes CSV-only accounts).
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error` if the query fails.
+    pub async fn list_connected_accounts(&self) -> Result<Vec<Account>, sqlx::Error> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id \
+             FROM accounts WHERE connection_id IS NOT NULL",
+        )
+        .fetch_all(pool)
+        .await?;
+        rows.iter().map(row_to_account).collect()
+    }
+
     /// Get a single account by its ID.
     ///
     /// Returns `None` if no account with the given ID exists.

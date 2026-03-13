@@ -193,7 +193,9 @@ pub async fn update_next_run_at(
     Ok(())
 }
 
-/// Return schedule status for every account (latest run per account).
+/// Return schedule status for every connected account (latest run per account).
+///
+/// Excludes CSV-only accounts that have no bank connection.
 ///
 /// # Errors
 ///
@@ -212,6 +214,7 @@ pub async fn get_all_schedule_status(
              WHERE account_id = a.id \
              ORDER BY created_at DESC LIMIT 1 \
          ) sr ON true \
+         WHERE a.connection_id IS NOT NULL \
          ORDER BY a.name",
     )
     .fetch_all(pool)

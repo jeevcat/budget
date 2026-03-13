@@ -8,7 +8,9 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use budget_core::db::Db;
-use budget_core::models::{Account, AccountId, AccountType, CurrencyCode};
+use budget_core::models::{
+    Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
+};
 use budget_jobs::schedule_queries::{self, RunStatus, ScheduleRun, TriggerReason};
 use budget_jobs::scheduler::scheduler_tick;
 use budget_jobs::{ApalisPool, PipelineStorage};
@@ -26,7 +28,23 @@ async fn setup_db(pool: PgPool) -> (Db, ApalisPool) {
     (db, pool)
 }
 
-async fn seed_account(db: &Db, name: &str) -> Account {
+async fn seed_connection(db: &Db) -> ConnectionId {
+    let id = ConnectionId::new();
+    let connection = Connection {
+        id,
+        provider: "enable_banking".to_owned(),
+        provider_session_id: format!("mock-session-{id}"),
+        institution_name: "Mock Bank".to_owned(),
+        valid_until: Utc::now() + Duration::days(90),
+        status: ConnectionStatus::Active,
+    };
+    db.insert_connection(&connection)
+        .await
+        .expect("seed connection");
+    id
+}
+
+async fn seed_account(db: &Db, name: &str, connection_id: ConnectionId) -> Account {
     let account = Account {
         id: AccountId::new(),
         provider_account_id: format!("mock-{}", name.to_lowercase().replace(' ', "-")),
@@ -35,7 +53,7 @@ async fn seed_account(db: &Db, name: &str) -> Account {
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        connection_id: Some(connection_id),
     };
     db.upsert_account(&account).await.expect("seed account");
     account
@@ -72,7 +90,8 @@ fn make_run(
 #[sqlx::test]
 async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let now = Utc::now();
 
@@ -96,7 +115,8 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
 #[sqlx::test]
 async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -131,7 +151,8 @@ async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
 #[sqlx::test]
 async fn scheduler_retries_failed_transient_error(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -177,7 +198,8 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
 #[sqlx::test]
 async fn scheduler_respects_backoff_delay(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -214,7 +236,8 @@ async fn scheduler_respects_backoff_delay(pool: PgPool) {
 #[sqlx::test]
 async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -260,7 +283,8 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
 #[sqlx::test]
 async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -292,11 +316,48 @@ async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
     assert_eq!(count.0, 1, "should not retry permanent error");
 }
 
+/// CSV-only accounts (no connection_id) are not scheduled.
+#[sqlx::test]
+async fn scheduler_skips_csv_only_accounts(pool: PgPool) {
+    let (db, apalis_pool) = setup_db(pool).await;
+    let now = Utc::now();
+
+    // Create an account with no connection (CSV-only, like Amex)
+    let csv_account = Account {
+        id: AccountId::new(),
+        provider_account_id: "csv-amex".to_owned(),
+        name: "Amex CSV".to_owned(),
+        nickname: None,
+        institution: "American Express".to_owned(),
+        account_type: AccountType::Checking,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        connection_id: None,
+    };
+    db.upsert_account(&csv_account)
+        .await
+        .expect("seed csv account");
+
+    let pipeline_storage = PipelineStorage::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+        .await
+        .expect("tick should succeed");
+
+    // No schedule runs should exist for the CSV-only account
+    let csv_uuid: uuid::Uuid = csv_account.id.into();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
+        .bind(csv_uuid)
+        .fetch_one(&apalis_pool)
+        .await
+        .expect("count query");
+    assert_eq!(count.0, 0, "CSV-only account should not be scheduled");
+}
+
 /// `complete_schedule_run` correctly marks a run as succeeded.
 #[sqlx::test]
 async fn pipeline_completion_updates_schedule_run(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let account = seed_account(&db, "Primary Checking").await;
+    let conn_id = seed_connection(&db).await;
+    let account = seed_account(&db, "Primary Checking", conn_id).await;
     let account_uuid: uuid::Uuid = account.id.into();
     let now = Utc::now();
 
@@ -333,8 +394,9 @@ async fn pipeline_completion_updates_schedule_run(pool: PgPool) {
 #[sqlx::test]
 async fn schedule_status_query_returns_summary(pool: PgPool) {
     let (db, apalis_pool) = setup_db(pool).await;
-    let acct1 = seed_account(&db, "Checking").await;
-    let acct2 = seed_account(&db, "Savings").await;
+    let conn_id = seed_connection(&db).await;
+    let acct1 = seed_account(&db, "Checking", conn_id).await;
+    let acct2 = seed_account(&db, "Savings", conn_id).await;
     let now = Utc::now();
 
     // Checking: succeeded run

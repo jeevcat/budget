@@ -48,7 +48,7 @@ pub async fn scheduler_tick(
     pipeline_storage: &PipelineStorage,
     now: DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let accounts = db.list_accounts().await?;
+    let accounts = db.list_connected_accounts().await?;
 
     for account in &accounts {
         let account_uuid: uuid::Uuid = account.id.into();
