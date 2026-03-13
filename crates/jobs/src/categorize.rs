@@ -173,6 +173,8 @@ pub async fn handle_categorize_transaction_job(
             suggested = %result.category_name,
             "LLM confidence below threshold"
         );
+        db.update_transaction_suggested_category(txn_id, &result.category_name, justification)
+            .await?;
         return Ok(());
     }
 
