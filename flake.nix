@@ -262,6 +262,7 @@
             craneLib.devShell {
               inputsFrom = [ budget ];
               packages = [
+                pkgs.biome
                 pkgs.bun
                 pkgs.jdk21_headless
                 androidSdk
