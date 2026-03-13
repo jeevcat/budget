@@ -389,6 +389,10 @@ dialog > form > div {
   align-items: center;
   color: var(--muted-foreground);
   font-size: var(--text-7);
+  cursor: pointer;
+}
+.ledger-unbudgeted-row:hover {
+  background: var(--muted);
 }
 .ledger-bar-track {
   height: 12px;

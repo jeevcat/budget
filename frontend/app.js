@@ -549,7 +549,7 @@ function Ledger({
               <div
                 class="ledger-income-row"
                 key=${item.category_id || item.label}
-                onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
+                onClick=${() => onCategoryClick?.(item.category_id || "__none")}
               >
                 <span class="ledger-row-name">
                   <span class="ledger-pace-dot" title=${catMap && categoryBudgetMode(catMap, item.category_id) === "salary" ? "Salary" : "Other income"} style="background:${catMap && categoryBudgetMode(catMap, item.category_id) === "salary" ? "var(--success)" : "var(--muted-foreground)"}"></span>
@@ -643,10 +643,9 @@ function Ledger({
           ${ledger.unbudgeted.map(
             (item) => html`
               <div
-                class="ledger-unbudgeted-row"
+                class="ledger-unbudgeted-row${selectedCategoryId === (item.category_id || "__none") ? " ledger-row-selected" : ""}"
                 key=${item.category_id || item.label}
-                style=${item.category_id ? "cursor:pointer" : ""}
-                onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
+                onClick=${() => onCategoryClick?.(item.category_id || "__none")}
               >
                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.category_id && item.label !== "Uncategorized" ? html`<span title="No budget mode set — consider setting one" style="color:var(--warning);cursor:help">⚠ </span>` : ""}${item.label}</span>
                 <span></span>
@@ -1183,8 +1182,12 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       list = list.filter((t) => t.category_id && subtree.has(t.category_id));
     }
     if (selectedCategoryId) {
-      const subtree = collectSubtree(selectedCategoryId);
-      list = list.filter((t) => t.category_id && subtree.has(t.category_id));
+      if (selectedCategoryId === "__none") {
+        list = list.filter((t) => !t.category_id);
+      } else {
+        const subtree = collectSubtree(selectedCategoryId);
+        list = list.filter((t) => t.category_id && subtree.has(t.category_id));
+      }
     }
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
   })();
@@ -1349,11 +1352,11 @@ function Dashboard({ tab = "monthly", monthId = null }) {
           selectedCategoryId &&
           html`
           <button
-            class="chip outline small ${budgetModeColor(categoryBudgetMode(catMap, selectedCategoryId))}"
+            class="chip outline small${selectedCategoryId !== "__none" ? ` ${budgetModeColor(categoryBudgetMode(catMap, selectedCategoryId))}` : ""}"
             style="margin-left:0.5rem"
             onClick=${() => setSelectedCategoryId(null)}
           >
-            ${categoryName(catMap, selectedCategoryId)} \u00d7
+            ${selectedCategoryId === "__none" ? "Uncategorized" : categoryName(catMap, selectedCategoryId)} \u00d7
           </button>
         `
         }
