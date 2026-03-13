@@ -140,7 +140,10 @@ function NavLink({ href, match, children }) {
 
 /** Navigate by replacing the current history entry (no back/forward noise). */
 function navigateReplace(path) {
-  location.replace(`#${path}`);
+  const url = new URL(location.href);
+  url.hash = `#${path}`;
+  history.replaceState(null, "", url);
+  dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 // ---------------------------------------------------------------------------
