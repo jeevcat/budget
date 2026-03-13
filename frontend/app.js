@@ -523,7 +523,13 @@ function paceColor(pace) {
   return "var(--text-light)";
 }
 
-function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
+function Ledger({
+  items,
+  ledger,
+  selectedCategoryId,
+  onCategoryClick,
+  catMap,
+}) {
   if (!ledger) return null;
   const barMax = Number(ledger.bar_max) || 1;
 
@@ -543,7 +549,7 @@ function Ledger({ items, ledger, selectedCategoryId, onCategoryClick }) {
                 onClick=${() => item.category_id && onCategoryClick?.(item.category_id)}
               >
                 <span class="ledger-row-name">
-                  <span class="ledger-pace-dot" style="background:var(--success)"></span>
+                  <span class="ledger-pace-dot" title=${catMap && categoryBudgetMode(catMap, item.category_id) === "salary" ? "Salary" : "Other income"} style="background:${catMap && categoryBudgetMode(catMap, item.category_id) === "salary" ? "var(--success)" : "var(--muted-foreground)"}"></span>
                   ${item.label}
                 </span>
                 <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
@@ -1169,6 +1175,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               ledger=${monthlyLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
+              catMap=${catMap}
             />`
             : html`<p class="text-light">No monthly budgets.</p>`
         }
@@ -1187,6 +1194,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               ledger=${annualLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
+              catMap=${catMap}
             />`
             : html`<p class="text-light">No annual budgets.</p>`
         }
@@ -3061,7 +3069,6 @@ function Connections() {
   const [authorizing, setAuthorizing] = useState(null);
   const [authError, setAuthError] = useState(null);
   const [importingAccount, setImportingAccount] = useState(null);
-  const [importError, setImportError] = useState(null);
 
   function load() {
     Promise.all([api.get("/connections"), api.get("/accounts")])
@@ -3129,7 +3136,6 @@ function Connections() {
 
   async function importCsv(accountId, file) {
     setImportingAccount(accountId);
-    setImportError(null);
     try {
       const text = await file.text();
       const result = await api.raw(
@@ -3143,7 +3149,6 @@ function Connections() {
         { variant: result.failed > 0 ? "warning" : "success" },
       );
     } catch (e) {
-      setImportError(e.message);
       ot.toast(e.message, "Import failed", { variant: "danger" });
     } finally {
       setImportingAccount(null);
