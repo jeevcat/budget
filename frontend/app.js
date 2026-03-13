@@ -121,11 +121,7 @@ function hashParams() {
 function useRoute() {
   const [route, setRoute] = useState(hashPath());
   useEffect(() => {
-    const onHash = () => {
-      const p = hashPath();
-      console.log("[useRoute] hashchange ->", p);
-      setRoute(p);
-    };
+    const onHash = () => setRoute(hashPath());
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
@@ -146,7 +142,6 @@ function NavLink({ href, match, children }) {
 function navigateReplace(path) {
   const url = new URL(location.href);
   url.hash = `#${path}`;
-  console.log("[navigateReplace]", { from: location.hash, to: url.hash });
   history.replaceState(null, "", url);
   dispatchEvent(new HashChangeEvent("hashchange"));
 }
@@ -922,7 +917,6 @@ function ProjectDrillDown({
 const TAB_NAMES = ["monthly", "annual", "projects"];
 
 function Dashboard({ tab = "monthly", monthId = null }) {
-  console.log("[Dashboard render]", { tab, monthId });
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
@@ -958,15 +952,9 @@ function Dashboard({ tab = "monthly", monthId = null }) {
   // Re-fetch status when month changes via URL
   const prevMonthRef = useRef(selectedMonthId);
   useEffect(() => {
-    console.log("[month effect]", {
-      selectedMonthId,
-      prev: prevMonthRef.current,
-      statusUrl,
-    });
     if (selectedMonthId === prevMonthRef.current) return;
     prevMonthRef.current = selectedMonthId;
     if (selectedMonthId === null) return;
-    console.log("[month effect] fetching", statusUrl);
     api.get(statusUrl).then(setStatusResp).catch(setError);
   }, [statusUrl]);
 
@@ -3832,12 +3820,11 @@ function App() {
   const page = () => {
     const segments = route.split("/").filter(Boolean);
     const [s0, s1] = segments;
-    console.log("[router]", { route, segments, s0, s1 });
 
     // Dashboard routes: /, /monthly, /monthly/:id, /annual, /projects
     if (!s0 || s0 === "monthly" || s0 === "annual" || s0 === "projects") {
       const tab = s0 || "monthly";
-      const monthId = tab === "monthly" && s1 ? Number(s1) : null;
+      const monthId = tab === "monthly" && s1 ? s1 : null;
       return html`<${Dashboard} tab=${tab} monthId=${monthId} />`;
     }
     if (s0 === "transactions") return html`<${Transactions} />`;
