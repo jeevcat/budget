@@ -290,7 +290,6 @@ pub fn convert_raw_transaction(raw: &RawTransaction) -> Result<AmazonTransaction
 /// Returns an error if the HTML cannot be parsed.
 pub fn parse_invoice_html(html: &str, order_id: &str) -> Result<AmazonOrder> {
     debug!(order_id = %order_id, html_len = html.len(), "parsing invoice HTML");
-    debug!(order_id = %order_id, html_body = %html, "full invoice HTML");
 
     let document = Html::parse_document(html);
 

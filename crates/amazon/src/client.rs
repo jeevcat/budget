@@ -87,8 +87,6 @@ impl AmazonClient {
             title = title.as_deref().unwrap_or("(none)"),
             "received transactions page HTML"
         );
-        debug!(html_body = %html, "full transactions page HTML");
-
         let data = parse_next_data(&html).map_err(|e| {
             warn!(
                 error = %e,
