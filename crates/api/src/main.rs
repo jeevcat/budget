@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let db = Db::connect(config.database_url.as_ref()).await?;
-    let apalis_pool = ApalisPool::connect(config.database_url.as_ref()).await?;
+    let apalis_pool = budget_jobs::connect_pool(config.database_url.as_ref()).await?;
 
     run_migrations(&db, &apalis_pool).await?;
     tracing::info!("migrations applied");

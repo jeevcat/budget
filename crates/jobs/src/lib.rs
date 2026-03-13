@@ -39,6 +39,21 @@ pub mod sync;
 /// Concrete pool type for apalis storage (`PostgreSQL`).
 pub type ApalisPool = sqlx::postgres::PgPool;
 
+/// Connect to `PostgreSQL` with a pool sized for the worker fleet.
+///
+/// Each of the 10 workers holds a persistent `LISTEN` connection, and the
+/// scheduler, reclaim loop, purge loop, and HTTP queries also need connections.
+///
+/// # Errors
+///
+/// Returns an error if the database connection fails.
+pub async fn connect_pool(url: &str) -> Result<ApalisPool, sqlx::Error> {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(100)
+        .connect(url)
+        .await
+}
+
 /// Apalis jobs table name.
 pub const JOBS_TABLE: &str = "apalis.jobs";
 
