@@ -1322,11 +1322,11 @@ function TxnDetail({
       await api.del(`/transactions/${txn.id}/categorize`);
       onCategorize(txn.id, null);
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const updated = await api.get(`/transactions/${txn.id}`);
         if (updated.category_id) {
-          onCategorize(txn.id, updated.category_id);
+          onCategorize(txn.id, updated.category_id, updated.category_method);
           break;
         }
       }
@@ -1759,11 +1759,11 @@ function TransactionTable({
     </th>`;
   }
 
-  function handleCategorize(txnId, categoryId) {
+  function handleCategorize(txnId, categoryId, method) {
     const patch = categoryId
       ? {
           category_id: categoryId,
-          category_method: "manual",
+          category_method: method || "manual",
           suggested_category: null,
         }
       : { category_id: null, category_method: null };
