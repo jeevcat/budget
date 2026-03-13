@@ -3,11 +3,11 @@
 
 use apalis::prelude::*;
 
-use budget_core::db::Db;
 use budget_core::models::{
     AccountId, Bic, ConnectionStatus, CurrencyCode, DomainCode, ExchangeRateType, Iban,
     MerchantCategoryCode, ReferenceNumberSchema, SubFamilyCode, Transaction,
 };
+use budget_db::Db;
 
 use super::{BankProviderFactory, SyncJob};
 

@@ -36,7 +36,9 @@ trait-variant = "0.1"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 
 # Internal crates
+budget-amazon = { path = "crates/amazon" }
 budget-core = { path = "crates/core" }
+budget-db = { path = "crates/db" }
 budget-jobs = { path = "crates/jobs" }
 budget-providers = { path = "crates/providers" }
 

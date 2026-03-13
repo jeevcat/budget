@@ -12,11 +12,11 @@ use api::routes;
 use api::state::AppState;
 use budget_jobs::{JobStorage, PipelineStorage};
 
-use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
     CurrencyCode, Priority, Rule, RuleCondition, SecretKey, Transaction,
 };
+use budget_db::Db;
 
 /// Mirror of the paginated response from `GET /api/transactions`.
 #[derive(serde::Deserialize)]
@@ -55,6 +55,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         llm: LlmClient::new(MockLlmProvider::new()),
         expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
         host: "http://localhost:3000".to_owned(),
+        amazon_config: None,
     };
 
     let api_routes = Router::new()

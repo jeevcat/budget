@@ -1,15 +1,14 @@
-//! Core domain library: configuration, database access, models, and business rules.
+//! Core domain library: configuration, models, and business rules.
 //!
 //! This crate has no knowledge of HTTP, job queues, or external providers.
-//! It defines the shared vocabulary (models, IDs, enums) and persistence layer
-//! used by all other crates.
+//! It defines the shared vocabulary (models, IDs, enums) used by all other
+//! crates. Database queries live in `budget-db`.
 
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
 pub mod budget;
-pub mod db;
 pub mod error;
 pub mod models;
 pub mod rules;
@@ -33,6 +32,8 @@ pub struct Config {
     pub host: Option<Host>,
     pub log_path: Option<String>,
     pub frontend_dir: Option<String>,
+    pub amazon_base_url: Option<String>,
+    pub amazon_cookies_path: Option<String>,
 }
 
 impl Default for Config {
@@ -53,6 +54,8 @@ impl Default for Config {
             host: None,
             log_path: None,
             frontend_dir: None,
+            amazon_base_url: None,
+            amazon_cookies_path: None,
         }
     }
 }

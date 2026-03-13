@@ -7,10 +7,10 @@
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
-use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
 };
+use budget_db::Db;
 use budget_jobs::schedule_queries::{self, RunStatus, ScheduleRun, TriggerReason};
 use budget_jobs::scheduler::scheduler_tick;
 use budget_jobs::{ApalisPool, PipelineStorage};

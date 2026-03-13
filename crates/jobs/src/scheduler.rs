@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use budget_core::db::Db;
+use budget_db::Db;
 
 use super::ApalisPool;
 use super::pipeline::PipelineContext;

@@ -21,6 +21,7 @@ use budget_providers::{
 
 pub mod categorize;
 pub mod correlate;
+pub mod enrich;
 pub mod pipeline;
 pub mod queries;
 pub mod schedule_queries;
@@ -446,7 +447,7 @@ pub async fn handle_noop_job(_job: NoOpJob) -> Result<(), BoxDynError> {
 ///
 /// Returns an error if any worker fails.
 pub async fn run_workers(
-    db: &budget_core::db::Db,
+    db: &budget_db::Db,
     apalis_pool: &ApalisPool,
     bank_factory: BankProviderFactory,
     llm: LlmClient,

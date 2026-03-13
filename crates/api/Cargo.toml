@@ -8,7 +8,9 @@ name = "budget"
 path = "src/main.rs"
 
 [dependencies]
+budget-amazon = { workspace = true }
 budget-core = { workspace = true }
+budget-db = { workspace = true }
 budget-jobs = { workspace = true }
 budget-providers = { workspace = true }
 tokio = { workspace = true }

@@ -9,8 +9,8 @@ use std::sync::Arc;
 use axum::middleware;
 use axum::routing::get;
 use axum::{Json, Router};
-use budget_core::db::Db;
 use budget_core::models::Host;
+use budget_db::Db;
 use budget_jobs::{ApalisPool, BankProviderFactory, JobStorage, PipelineStorage};
 use budget_providers::{
     EnableBankingAuth, EnableBankingClient, EnableBankingConfig, MockBankProvider,
@@ -50,6 +50,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = budget_jobs::init_llm_provider(&config);
 
+    let amazon_config = config.amazon_base_url.as_ref().map(|base_url| {
+        let cookies_path = config.amazon_cookies_path.as_ref().map_or_else(
+            || {
+                budget_core::config_path().map_or_else(
+                    |_| std::path::PathBuf::from("amazon-cookies.json"),
+                    |p| p.with_file_name("amazon-cookies.json"),
+                )
+            },
+            std::path::PathBuf::from,
+        );
+        api::routes::amazon::AmazonConfig {
+            base_url: base_url.clone(),
+            cookies_path,
+        }
+    });
+
     let state = AppState {
         db: db.clone(),
         secret_key: config.secret_key,
@@ -66,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || format!("http://localhost:{}", config.server_port),
             String::from,
         ),
+        amazon_config,
     };
 
     let frontend_dir = config.frontend_dir.map_or_else(
@@ -204,6 +221,7 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .nest("/budgets", routes::budgets::router())
         .nest("/jobs", routes::jobs::router())
         .nest("/connections", routes::connections::router())
+        .nest("/amazon", routes::amazon::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,

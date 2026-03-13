@@ -1,12 +1,14 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use budget_core::db::Db;
 use budget_core::models::SecretKey;
+use budget_db::Db;
 use budget_jobs::{
     ApalisPool, CategorizeJob, CorrelateJob, JobStorage, LlmClient, PipelineStorage, SyncJob,
 };
 use budget_providers::EnableBankingAuth;
+
+use crate::routes::amazon::AmazonConfig;
 
 /// Shared application state passed to all route handlers via axum's State extractor.
 ///
@@ -37,4 +39,6 @@ pub struct AppState {
     /// Public base URL (e.g. `https://budget.example.com`). Derived from
     /// `server_port` when not explicitly configured.
     pub host: String,
+    /// Amazon enrichment configuration (None if not configured).
+    pub amazon_config: Option<AmazonConfig>,
 }

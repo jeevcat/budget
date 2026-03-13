@@ -8,8 +8,8 @@ use apalis::prelude::*;
 use apalis_workflow::Workflow;
 use serde::{Deserialize, Serialize};
 
-use budget_core::db::Db;
 use budget_core::models::AccountId;
+use budget_db::Db;
 
 use super::schedule_queries::{self, RunStatus};
 use super::{ApalisPool, BankProviderFactory};

@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use apalis::prelude::*;
 
-use budget_core::db::Db;
 use budget_core::models::{CategoryId, CorrelationType, RuleType, TransactionId};
 use budget_core::rules::{CompiledRule, compile_rule, evaluate_correlation_rules};
+use budget_db::Db;
 use budget_providers::TransactionSummary;
 
 use super::{ApalisPool, CorrelateJob, CorrelateTransactionJob, LlmClient};

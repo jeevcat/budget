@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod amazon;
 pub mod budgets;
 pub mod categories;
 pub mod connections;

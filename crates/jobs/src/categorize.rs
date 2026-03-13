@@ -6,9 +6,9 @@
 
 use apalis::prelude::*;
 
-use budget_core::db::Db;
 use budget_core::models::{CategoryMethod, RuleType};
 use budget_core::rules::{CompiledRule, compile_rule, evaluate_categorization_rules};
+use budget_db::Db;
 
 use super::{ApalisPool, CategorizeJob, CategorizeTransactionJob, LlmClient};
 

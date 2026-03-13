@@ -10,12 +10,12 @@ use chrono::{NaiveDate, TimeZone};
 use rust_decimal_macros::dec;
 use sqlx::PgPool;
 
-use budget_core::db::Db;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
     Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField,
     Priority, Rule, RuleCondition, RuleId, RuleType, Transaction,
 };
+use budget_db::Db;
 use budget_jobs::{
     ApalisPool, BankClient, BankProviderFactory, CategorizeJob, CategorizeTransactionJob,
     CorrelateJob, CorrelateTransactionJob, LlmClient, SyncJob, handle_categorize_job,

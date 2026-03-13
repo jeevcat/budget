@@ -1429,6 +1429,7 @@ function TxnDetail({
   const [creatingRule, setCreatingRule] = useState(false);
   const [proposalPreview, setProposalPreview] = useState(null);
   const [proposalPreviewing, setProposalPreviewing] = useState(false);
+  const [amazonEnrichment, setAmazonEnrichment] = useState(null);
   const debounceRef = useRef(null);
   if (!txn) return null;
 
@@ -1440,11 +1441,16 @@ function TxnDetail({
           setRuleProposals(null);
           setSelectedProposal(null);
           setProposalPreview(null);
+          setAmazonEnrichment(null);
           onClose();
         },
         { once: true },
       );
       el.showModal();
+      api
+        .get(`/amazon/enrichment/${txn.id}`)
+        .then(setAmazonEnrichment)
+        .catch(() => setAmazonEnrichment(null));
     }
   };
   const remittanceSegments = formatRemittanceInfo(txn.remittance_information);
@@ -1711,6 +1717,44 @@ function TxnDetail({
                 : null
             }
           </dl>
+
+          ${
+            amazonEnrichment &&
+            html`
+              <div style="margin-top:1rem">
+                <h4 style="margin:0 0 0.5rem">Amazon Order Details</h4>
+                <span class="chip outline small">${amazonEnrichment.confidence} match</span>
+                ${amazonEnrichment.orders.map(
+                  (order) => html`
+                    <div class="card" style="margin-top:0.5rem;padding:0.75rem">
+                      <div class="hstack" style="justify-content:space-between;margin-bottom:0.5rem">
+                        <code class="small">${order.order_id}</code>
+                        ${order.order_date ? html`<span class="text-light small">${formatDate(order.order_date)}</span>` : null}
+                      </div>
+                      ${order.items.map(
+                        (item) => html`
+                          <div class="hstack" style="gap:0.5rem;padding:0.25rem 0;align-items:start">
+                            <span style="flex:1">${item.quantity > 1 ? `${item.quantity}\u00d7 ` : ""}${item.title}</span>
+                            ${item.price != null ? html`<span class="mono">${formatAmount(item.price)}</span>` : null}
+                          </div>
+                        `,
+                      )}
+                      ${
+                        order.grand_total != null
+                          ? html`
+                          <div class="hstack" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.5rem">
+                            <span class="text-light">Total</span>
+                            <span class="mono" style="font-weight:600">${formatAmount(order.grand_total)}</span>
+                          </div>
+                        `
+                          : null
+                      }
+                    </div>
+                  `,
+                )}
+              </div>
+            `
+          }
 
           ${
             ruleProposals &&
@@ -3535,6 +3579,152 @@ function Connections() {
           </div>
         `
     }
+
+    <${AmazonPanel} />
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Amazon Enrichment
+// ---------------------------------------------------------------------------
+
+function AmazonPanel() {
+  const [status, setStatus] = useState(null);
+  const [cookieText, setCookieText] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+
+  function loadStatus() {
+    api
+      .get("/amazon/status")
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }
+
+  useEffect(loadStatus, []);
+
+  async function uploadCookies() {
+    setUploading(true);
+    try {
+      const cookies = JSON.parse(cookieText);
+      await api.post("/amazon/cookies", { cookies });
+      setCookieText("");
+      loadStatus();
+      ot.toast("Cookies saved", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Cookie upload failed", { variant: "danger" });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function triggerSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api.post("/amazon/sync");
+      setSyncResult(result);
+      loadStatus();
+      ot.toast(
+        `Fetched ${result.transactions_fetched} transactions, ${result.orders_fetched} orders, ${result.matches_created} matches`,
+        "Amazon sync complete",
+        { variant: "success" },
+      );
+    } catch (e) {
+      ot.toast(e.message, "Sync failed", { variant: "danger" });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  if (!status) return null;
+
+  return html`
+    <div style="margin-top:2rem">
+      <h3 style="margin-bottom:0.75rem">Amazon Enrichment</h3>
+
+      ${
+        !status.configured
+          ? html`<p class="text-light">Not configured. Set <code>amazon_base_url</code> in your config file.</p>`
+          : html`
+          <div class="vstack gap-3">
+            <div class="hstack gap-3" style="align-items:start">
+              <div>
+                <span class="text-light">Cookies:</span>${" "}
+                ${
+                  status.cookies_valid === true
+                    ? html`<span class="chip success">Valid</span>`
+                    : status.cookies_valid === false
+                      ? html`<span class="chip danger">Expired</span>`
+                      : html`<span class="chip">Not loaded</span>`
+                }
+                ${
+                  status.cookies_expiry
+                    ? html`<span class="text-light small" style="margin-left:0.5rem">expires ${formatDate(status.cookies_expiry)}${status.cookies_days_remaining != null ? ` (${status.cookies_days_remaining}d)` : ""}</span>`
+                    : null
+                }
+              </div>
+              <button
+                data-variant="primary"
+                class="small"
+                onClick=${triggerSync}
+                disabled=${syncing || !status.cookies_valid}
+              >
+                ${syncing ? "Syncing\u2026" : "Sync Now"}
+              </button>
+            </div>
+
+            ${
+              status.stats
+                ? html`
+                <div class="hstack gap-3" style="flex-wrap:wrap">
+                  <span class="text-light">${status.stats.total_transactions} transactions</span>
+                  <span class="text-light">${status.stats.matched_transactions} matched</span>
+                  <span class="text-light">${status.stats.total_orders} orders</span>
+                  <span class="text-light">${status.stats.total_items} items</span>
+                </div>
+              `
+                : null
+            }
+
+            ${
+              syncResult
+                ? html`
+                <div class="hstack gap-3" style="flex-wrap:wrap">
+                  <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
+                  <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
+                  <span class="chip outline small">+${syncResult.matches_created} matches</span>
+                </div>
+              `
+                : null
+            }
+
+            <details>
+              <summary>Update Cookies</summary>
+              <div style="margin-top:0.5rem">
+                <textarea
+                  placeholder="Paste cookie JSON array here..."
+                  rows="4"
+                  style="width:100%;font-family:monospace;font-size:0.85rem"
+                  value=${cookieText}
+                  onInput=${(e) => setCookieText(e.target.value)}
+                ></textarea>
+                <button
+                  class="small"
+                  data-variant="primary"
+                  style="margin-top:0.5rem"
+                  onClick=${uploadCookies}
+                  disabled=${uploading || !cookieText.trim()}
+                >
+                  ${uploading ? "Saving\u2026" : "Save Cookies"}
+                </button>
+              </div>
+            </details>
+          </div>
+        `
+      }
+    </div>
   `;
 }
 
