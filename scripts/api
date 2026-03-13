@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Wrapper for authenticated calls to the local budget API.
+# Token is read from secrets and never printed to stdout.
+set -euo pipefail
+
+PORT="${BUDGET_PORT:-3001}"
+BASE="http://localhost:${PORT}/api"
+
+TOKEN=$(awk '/\[budget\]/{found=1} found && /secret_key/{gsub(/.*= *"|"/, ""); print; exit}' ~/nix/secrets/secrets.toml)
+
+if [ -z "$TOKEN" ]; then
+  echo "error: could not read secret_key from ~/nix/secrets/secrets.toml" >&2
+  exit 1
+fi
+
+METHOD="GET"
+BODY=""
+
+usage() {
+  cat >&2 <<EOF
+Usage: scripts/api [-X METHOD] [-d BODY] PATH
+
+Examples:
+  scripts/api /health
+  scripts/api /budgets/status
+  scripts/api -X POST /rules/apply
+  scripts/api -X POST -d '{"key":"value"}' /some/endpoint
+  scripts/api -X PUT -d @file.json /some/endpoint
+EOF
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X) METHOD="$2"; shift 2 ;;
+    -d) BODY="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    /*) PATH_ARG="$1"; shift ;;
+    *) echo "error: path must start with /" >&2; usage ;;
+  esac
+done
+
+if [ -z "${PATH_ARG:-}" ]; then
+  usage
+fi
+
+CURL_ARGS=(
+  -s
+  -X "$METHOD"
+  -H "Authorization: Bearer $TOKEN"
+  -H "Content-Type: application/json"
+)
+
+if [ -n "$BODY" ]; then
+  CURL_ARGS+=(-d "$BODY")
+fi
+
+curl "${CURL_ARGS[@]}" "${BASE}${PATH_ARG}"

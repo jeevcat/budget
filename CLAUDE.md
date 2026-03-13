@@ -7,6 +7,16 @@ Activate the pre-commit hook:
 ln -sf ../../.github/hooks/pre-commit .git/hooks/pre-commit
 ```
 
+## Production API
+
+Server runs on port 3001. Use `scripts/api` for all local API calls — it injects the auth token so secrets never appear in command output.
+
+```bash
+scripts/api /budgets/status                          # GET (default)
+scripts/api -X POST /rules/apply                     # POST
+scripts/api -X POST -d '{"key":"val"}' /some/endpoint  # POST with body
+```
+
 ## Config
 
 Path is determined by `confy` via the `directories` crate. Run `cargo run -- config` to print the resolved path. On this machine: `~/.config/budget/default-config.toml`.
@@ -32,6 +42,7 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - **Strongly prefer [Oat CSS](https://oat.ink/) classes and components over custom CSS** — always check `frontend/oat-reference.md` and Oat utility classes (`hstack`, `vstack`, `text-light`, `gap-*`, `badge`, `card`, `chip`, etc.) before writing anything in `style.css`
 - Custom CSS in `style.css` is a last resort — only for things Oat genuinely cannot do (custom visualizations, pseudo-elements, responsive grid breakpoints, sticky table headers)
 - When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
+- **Use Biome for linting/formatting** — run `biome check frontend/`, fix with `biome check --write frontend/`. Never use node/python hacks for syntax checks.
 
 ## Mobile
 
@@ -60,3 +71,4 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Parse, don't validate — use newtypes to make invalid states unrepresentable
 - Prefer `&str` over `String` when ownership isn't needed
 - **Never add, remove, or update dependencies** without explicit human approval
+- When completing a TODO item, delete the line from `TODO.md` — don't mark it `[x]`
