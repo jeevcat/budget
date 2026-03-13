@@ -51,7 +51,16 @@ struct MatchedTransaction {
 
 #[derive(Deserialize)]
 struct CookiesPayload {
-    cookies: Vec<AmazonCookie>,
+    cookies: CookiesInput,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CookiesInput {
+    /// Pre-parsed JSON array of cookie objects.
+    Parsed(Vec<AmazonCookie>),
+    /// Raw text — auto-detected as JSON array or Netscape cookies.txt.
+    Raw(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +69,11 @@ struct CookiesPayload {
 
 /// Upload Amazon cookies.
 ///
-/// Accepts a JSON body with a `cookies` array. Validates that auth tokens
-/// are present and not expired, then saves to the configured cookies path.
+/// Accepts a JSON body with `cookies` as either:
+/// - a JSON array of cookie objects
+/// - a raw string in JSON or Netscape cookies.txt format
+///
+/// Validates that auth tokens are present and not expired, then saves to disk.
 ///
 /// # Errors
 ///
@@ -71,8 +83,17 @@ async fn upload_cookies(
     State(state): State<AppState>,
     Json(payload): Json<CookiesPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let store =
-        CookieStore::from_cookies(payload.cookies, state.amazon_config.cookies_path.clone());
+    let cookies = match payload.cookies {
+        CookiesInput::Parsed(c) => c,
+        CookiesInput::Raw(text) => CookieStore::parse_cookies_auto(&text).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("failed to parse cookies: {e}"),
+            )
+        })?,
+    };
+
+    let store = CookieStore::from_cookies(cookies, state.amazon_config.cookies_path.clone());
 
     if store.is_expired() {
         return Err(AppError(

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
-use crate::error::Result;
+use crate::error::{AmazonError, Result};
 use crate::types::AmazonCookie;
 
 /// Manages Amazon session cookies loaded from a JSON file.
@@ -96,6 +96,64 @@ impl CookieStore {
     pub fn cookies(&self) -> &[AmazonCookie] {
         &self.cookies
     }
+
+    /// Parse cookies from text, auto-detecting format (JSON array or Netscape cookies.txt).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the text cannot be parsed as either format.
+    pub fn parse_cookies_auto(text: &str) -> Result<Vec<AmazonCookie>> {
+        let trimmed = text.trim();
+
+        // Try JSON first — starts with '[' or '{' (some exports wrap in an object)
+        if trimmed.starts_with('[') {
+            let cookies: Vec<AmazonCookie> = serde_json::from_str(trimmed)?;
+            return Ok(cookies);
+        }
+
+        // Otherwise try Netscape cookies.txt format
+        parse_netscape_cookies(trimmed)
+    }
+}
+
+/// Parse Netscape/Mozilla cookies.txt format.
+///
+/// Format: tab-separated fields per line:
+/// `domain \t include_subdomains \t path \t secure \t expires \t name \t value`
+///
+/// Lines starting with `#` or that are blank are skipped.
+fn parse_netscape_cookies(text: &str) -> Result<Vec<AmazonCookie>> {
+    let mut cookies = Vec::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 7 {
+            continue;
+        }
+
+        let expires = fields[4].parse::<i64>().ok().filter(|&e| e > 0);
+
+        cookies.push(AmazonCookie {
+            domain: fields[0].to_owned(),
+            path: fields[2].to_owned(),
+            expires,
+            name: fields[5].to_owned(),
+            value: fields[6].to_owned(),
+        });
+    }
+
+    if cookies.is_empty() {
+        return Err(AmazonError::Parse(
+            "no cookies found — expected JSON array or Netscape cookies.txt format".to_owned(),
+        ));
+    }
+
+    Ok(cookies)
 }
 
 #[cfg(test)]
@@ -186,6 +244,45 @@ mod tests {
         assert!(header.contains("session-id=123-456-789"));
         assert!(header.contains("at-acbde=auth-token-value"));
         assert!(header.contains("; "));
+    }
+
+    #[test]
+    fn parse_netscape_format() {
+        let text = "# Netscape HTTP Cookie File\n\
+                     .amazon.de\tTRUE\t/\tFALSE\t2000000000\tsession-id\t123-456-789\n\
+                     .amazon.de\tTRUE\t/\tTRUE\t2000000000\tat-acbde\tauth-token-value\n\
+                     # a comment\n\
+                     \n\
+                     .amazon.de\tTRUE\t/\tFALSE\t0\tx-acbde\taccount-id\n";
+
+        let cookies = CookieStore::parse_cookies_auto(text).unwrap();
+        assert_eq!(cookies.len(), 3);
+        assert_eq!(cookies[0].name, "session-id");
+        assert_eq!(cookies[0].value, "123-456-789");
+        assert_eq!(cookies[0].domain, ".amazon.de");
+        assert_eq!(cookies[0].expires, Some(2_000_000_000));
+        assert_eq!(cookies[1].name, "at-acbde");
+        // expires=0 is treated as no expiry
+        assert_eq!(cookies[2].expires, None);
+    }
+
+    #[test]
+    fn parse_auto_detects_json() {
+        let json = r#"[{"name":"at-x","value":"v","domain":".amazon.de","path":"/","expires":2000000000}]"#;
+        let cookies = CookieStore::parse_cookies_auto(json).unwrap();
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].name, "at-x");
+    }
+
+    #[test]
+    fn parse_empty_text_errors() {
+        assert!(CookieStore::parse_cookies_auto("").is_err());
+    }
+
+    #[test]
+    fn parse_comments_only_errors() {
+        let text = "# Netscape HTTP Cookie File\n# nothing else\n";
+        assert!(CookieStore::parse_cookies_auto(text).is_err());
     }
 
     #[test]

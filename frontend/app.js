@@ -3607,7 +3607,9 @@ function AmazonPanel() {
   async function uploadCookies() {
     setUploading(true);
     try {
-      const cookies = JSON.parse(cookieText);
+      const trimmed = cookieText.trim();
+      // Send as pre-parsed JSON array if it looks like JSON, otherwise as raw text
+      const cookies = trimmed.startsWith("[") ? JSON.parse(trimmed) : trimmed;
       await api.post("/amazon/cookies", { cookies });
       setCookieText("");
       loadStatus();
@@ -3700,7 +3702,7 @@ function AmazonPanel() {
           <summary>Update Cookies</summary>
           <div style="margin-top:0.5rem">
             <textarea
-              placeholder="Paste cookie JSON array here..."
+              placeholder="Paste cookies here (JSON array or Netscape cookies.txt)..."
               rows="4"
               style="width:100%;font-family:monospace;font-size:0.85rem"
               value=${cookieText}
