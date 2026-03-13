@@ -5,7 +5,6 @@
 
 ## Security
 
-- [ ] **Constant-time token comparison**: `auth.rs` uses `==` for bearer-token checks in the middleware (lines 52, 67) *and* the login handler (line 99). Use `subtle::ConstantTimeEq` for timing-attack resistance
 - [ ] **Pin CDN versions and add SRI**: `index.html` loads Oat CSS from unpkg without version pins and all CDN resources (Preact, HTM, Oat) lack `integrity` attributes. Pin exact versions, then add SRI hashes
 
 ## From Spec — Remaining Work

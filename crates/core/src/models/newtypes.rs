@@ -708,9 +708,22 @@ impl std::str::FromStr for DatabaseUrl {
 ///
 /// Invariants:
 /// - Empty (development/unconfigured) OR at least 8 characters
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Eq, Serialize)]
 #[serde(transparent)]
 pub struct SecretKey(String);
+
+impl PartialEq for SecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        use subtle::ConstantTimeEq as _;
+        self.0.as_bytes().ct_eq(other.0.as_bytes()).into()
+    }
+}
+
+impl std::hash::Hash for SecretKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 impl SecretKey {
     /// Create a new `SecretKey`, validating minimum length.
