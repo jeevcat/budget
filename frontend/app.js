@@ -17,7 +17,6 @@ import {
   categoryLabel,
   categoryName,
   categoryQualifiedName,
-  cleanMerchant,
   formatAmount,
   formatDate,
   formatDateFull,
@@ -31,6 +30,7 @@ import {
   shortType,
   syncUrlFor,
   timeAgo,
+  transactionTitle,
 } from "./helpers.js";
 
 const html = htm.bind(h);
@@ -617,13 +617,19 @@ function BudgetSection({
   `;
 }
 
+function guessMonthName(month) {
+  const start = new Date(`${month.start_date}T00:00:00`);
+  const end = month.end_date ? new Date(`${month.end_date}T00:00:00`) : null;
+  const mid = end ? new Date((start.getTime() + end.getTime()) / 2) : start;
+  return mid.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
 function formatMonthRange(month) {
   const fmt = (d) => {
     const date = new Date(`${d}T00:00:00`);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: "numeric",
     });
   };
   const start = fmt(month.start_date);
@@ -1036,7 +1042,8 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               aria-label="Previous month"
             >\u2039</button>
             <div style="text-align:center">
-              <strong>${formatMonthRange(activeMonth)}</strong>
+              <strong>${guessMonthName(activeMonth)}</strong>
+              <div class="text-light text-body">${formatMonthRange(activeMonth)}</div>
               ${
                 isCurrentMonth
                   ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
@@ -1413,7 +1420,7 @@ function TxnDetail({
     <div class="txn-panel-backdrop${open ? " open" : ""}" onClick=${closePanel}></div>
     <aside class="txn-panel${open ? " open" : ""}" role="complementary" aria-label="Transaction detail">
       <div class="txn-panel-header">
-        <h3>${cleanMerchant(txn.merchant_name || txn.remittance_information?.[0] || "")}</h3>
+        <h3>${transactionTitle(txn)}</h3>
         <button class="ghost small" onClick=${closePanel} aria-label="Close">\u2715</button>
       </div>
       <div class="txn-panel-body">
@@ -1793,7 +1800,7 @@ function TransactionTable({
                 onClick=${() => setSelected(t)}
               >
                 <td class="mono${compact ? " text-light" : ""}" style="${compact ? "width:7rem" : ""}">${formatDate(t.posted_date)}</td>
-                <td style="font-weight:500">${cleanMerchant(t.merchant_name || t.remittance_information?.[0] || "")}</td>
+                <td style="font-weight:500">${transactionTitle(t)}</td>
                 <td class="${amountClass(t.amount)}" style="${compact ? "text-align:right" : ""}">${formatAmount(t.amount, compact ? { decimals: 0, sign: true } : { sign: true })}</td>
                 <td>
                   ${!compact && html`<${MethodDot} method=${t.category_method} />`}
