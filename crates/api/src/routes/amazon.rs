@@ -10,6 +10,7 @@ use uuid::Uuid;
 use budget_amazon::{AmazonCookie, CookieStore};
 use budget_core::models::{AmazonAccount, AmazonAccountId};
 use budget_db::AmazonEnrichmentStats;
+use budget_jobs::schedule_queries::{self, AccountType, RunStatus, ScheduleRun, TriggerReason};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -253,11 +254,13 @@ async fn account_status(
     }))
 }
 
-/// Trigger an Amazon enrichment sync for a specific account.
+/// Enqueue an Amazon enrichment sync for a specific account.
+///
+/// Returns 202 Accepted immediately; the sync runs asynchronously via the job queue.
 async fn trigger_sync(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<StatusCode, AppError> {
     state.db.get_amazon_account(id).await?.ok_or_else(|| {
         AppError(
             StatusCode::NOT_FOUND,
@@ -265,25 +268,37 @@ async fn trigger_sync(
         )
     })?;
 
-    let enrich_config = budget_jobs::enrich::AmazonEnrichConfig {
-        account_id: id,
-        cookies_path: cookies_path_for(&state.amazon_config.cookies_dir, id),
+    let run_id = uuid::Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let account_uuid: uuid::Uuid = id.into();
+
+    let run = ScheduleRun {
+        id: run_id,
+        account_id: account_uuid,
+        account_type: AccountType::Amazon,
+        status: RunStatus::Running,
+        trigger_reason: TriggerReason::Manual,
+        attempt: 1,
+        started_at: Some(now),
+        finished_at: None,
+        next_run_at: None,
+        error_message: None,
+        created_at: now,
     };
-
-    let result = budget_jobs::enrich::run_amazon_enrich(&state.db, &enrich_config)
+    schedule_queries::insert_schedule_run(&state.apalis_pool, &run)
         .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("enrichment failed: {e}"),
-            )
-        })?;
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(serde_json::json!({
-        "transactions_fetched": result.transactions_fetched,
-        "orders_fetched": result.orders_fetched,
-        "matches_created": result.matches_created,
-    })))
+    state
+        .amazon_sync_storage
+        .push(budget_jobs::AmazonSyncJob {
+            account_id: id,
+            schedule_run_id: Some(run_id.to_string()),
+        })
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(StatusCode::ACCEPTED)
 }
 
 // ---------------------------------------------------------------------------

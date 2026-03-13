@@ -3,8 +3,8 @@ use apalis_workflow::WorkflowSink;
 
 use super::pipeline::PipelineContext;
 use super::{
-    ApalisPool, CategorizeJob, CategorizeTransactionJob, CorrelateJob, CorrelateTransactionJob,
-    SyncJob,
+    AmazonSyncJob, ApalisPool, CategorizeJob, CategorizeTransactionJob, CorrelateJob,
+    CorrelateTransactionJob, SyncJob,
 };
 
 /// Wrapper around an `ApalisPool` that provides a typed `push` method for
@@ -62,6 +62,7 @@ impl_push!(CategorizeJob);
 impl_push!(CategorizeTransactionJob);
 impl_push!(CorrelateJob);
 impl_push!(CorrelateTransactionJob);
+impl_push!(AmazonSyncJob);
 
 /// Storage wrapper for pushing jobs into the full-sync pipeline workflow.
 ///

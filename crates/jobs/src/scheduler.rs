@@ -9,10 +9,10 @@ use chrono::{DateTime, Utc};
 
 use budget_db::Db;
 
-use super::ApalisPool;
 use super::pipeline::PipelineContext;
-use super::schedule_queries::{self, RunStatus, ScheduleRun, TriggerReason};
-use super::storage::PipelineStorage;
+use super::schedule_queries::{self, AccountType, RunStatus, ScheduleRun, TriggerReason};
+use super::storage::{JobStorage, PipelineStorage};
+use super::{AmazonSyncJob, ApalisPool};
 
 /// Sync interval: 1 hour between successful runs.
 const SYNC_INTERVAL_SECS: i64 = 3600;
@@ -26,10 +26,13 @@ const MAX_BACKOFF_SECS: i64 = 900; // 15 minutes
 /// Run the scheduler loop forever, ticking every 30 seconds.
 pub async fn run_scheduler(db: &Db, pool: &ApalisPool) {
     let pipeline_storage = PipelineStorage::new(pool);
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(pool);
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     loop {
         interval.tick().await;
-        if let Err(e) = scheduler_tick(db, pool, &pipeline_storage, Utc::now()).await {
+        if let Err(e) =
+            scheduler_tick(db, pool, &pipeline_storage, &amazon_storage, Utc::now()).await
+        {
             tracing::warn!(error = %e, "scheduler tick failed");
         }
     }
@@ -46,13 +49,16 @@ pub async fn scheduler_tick(
     db: &Db,
     pool: &ApalisPool,
     pipeline_storage: &PipelineStorage,
+    amazon_storage: &JobStorage<AmazonSyncJob>,
     now: DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Bank accounts
     let accounts = db.list_connected_accounts().await?;
-
     for account in &accounts {
         let account_uuid: uuid::Uuid = account.id.into();
-        let latest = schedule_queries::get_latest_run_for_account(pool, account_uuid).await?;
+        let latest =
+            schedule_queries::get_latest_run_for_account(pool, account_uuid, AccountType::Bank)
+                .await?;
 
         match evaluate_account(latest.as_ref(), now) {
             Action::Skip => {}
@@ -70,6 +76,41 @@ pub async fn scheduler_tick(
                 enqueue_pipeline(
                     pool,
                     pipeline_storage,
+                    account_uuid,
+                    reason,
+                    attempt,
+                    next_run_at,
+                    now,
+                )
+                .await?;
+            }
+        }
+    }
+
+    // Amazon accounts
+    let amazon_accounts = db.list_amazon_accounts().await?;
+    for account in &amazon_accounts {
+        let account_uuid: uuid::Uuid = account.id.into();
+        let latest =
+            schedule_queries::get_latest_run_for_account(pool, account_uuid, AccountType::Amazon)
+                .await?;
+
+        match evaluate_account(latest.as_ref(), now) {
+            Action::Skip => {}
+            Action::UpdateNextRun {
+                run_id,
+                next_run_at,
+            } => {
+                schedule_queries::update_next_run_at(pool, run_id, next_run_at).await?;
+            }
+            Action::Enqueue {
+                reason,
+                attempt,
+                next_run_at,
+            } => {
+                enqueue_amazon_sync(
+                    pool,
+                    amazon_storage,
                     account_uuid,
                     reason,
                     attempt,
@@ -220,6 +261,7 @@ async fn enqueue_pipeline(
     let run = ScheduleRun {
         id: run_id,
         account_id,
+        account_type: AccountType::Bank,
         status: RunStatus::Running,
         trigger_reason: reason,
         attempt,
@@ -250,6 +292,57 @@ async fn enqueue_pipeline(
         reason = %reason,
         attempt,
         "scheduled pipeline"
+    );
+
+    Ok(())
+}
+
+/// Insert a `schedule_runs` row and push an Amazon sync job.
+async fn enqueue_amazon_sync(
+    pool: &ApalisPool,
+    amazon_storage: &JobStorage<AmazonSyncJob>,
+    account_id: uuid::Uuid,
+    reason: TriggerReason,
+    attempt: i32,
+    next_run_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let run_id = uuid::Uuid::new_v4();
+
+    let run = ScheduleRun {
+        id: run_id,
+        account_id,
+        account_type: AccountType::Amazon,
+        status: RunStatus::Running,
+        trigger_reason: reason,
+        attempt,
+        started_at: Some(now),
+        finished_at: None,
+        next_run_at,
+        error_message: None,
+        created_at: now,
+    };
+
+    schedule_queries::insert_schedule_run(pool, &run).await?;
+
+    if let Err(e) = amazon_storage
+        .push(AmazonSyncJob {
+            account_id: budget_core::models::AmazonAccountId::from_uuid(account_id),
+            schedule_run_id: Some(run_id.to_string()),
+        })
+        .await
+    {
+        let _ = schedule_queries::complete_schedule_run(pool, run_id, RunStatus::Failed, Some(&e))
+            .await;
+        return Err(e.into());
+    }
+
+    tracing::info!(
+        %account_id,
+        %run_id,
+        reason = %reason,
+        attempt,
+        "scheduled Amazon sync"
     );
 
     Ok(())
@@ -319,6 +412,7 @@ mod tests {
         let run = ScheduleRun {
             id: uuid::Uuid::new_v4(),
             account_id: uuid::Uuid::new_v4(),
+            account_type: AccountType::Bank,
             status: RunStatus::Running,
             trigger_reason: TriggerReason::Scheduled,
             attempt: 1,

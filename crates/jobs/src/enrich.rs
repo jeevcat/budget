@@ -1,42 +1,82 @@
-//! Amazon enrichment job: fetches Amazon transactions and order details,
-//! matches them against bank transactions, and stores the results.
+//! Amazon enrichment jobs: transaction sync, order detail fetching, and matching.
+//!
+//! Split into three job types that run via the apalis queue:
+//! - [`AmazonSyncJob`]: fetches transactions, upserts to DB, enqueues order fetches + match job
+//! - [`AmazonFetchOrderJob`]: fetches a single order's invoice page (rate-limited by the worker)
+//! - [`AmazonMatchJob`]: matches Amazon transactions to bank transactions
 
 use std::path::PathBuf;
-use std::time::Duration;
 
+use apalis::prelude::*;
 use tracing::{debug, error, info, warn};
 
 use budget_amazon::{AmazonClient, CookieStore};
-use budget_core::models::AmazonAccountId;
 use budget_db::Db;
+
+use super::pipeline::parse_run_id;
+use super::schedule_queries::{self, RunStatus};
+use super::{AmazonFetchOrderJob, AmazonMatchJob, ApalisPool};
 
 /// Configuration for the Amazon enrichment client.
 #[derive(Clone)]
 pub struct AmazonEnrichConfig {
-    pub account_id: AmazonAccountId,
-    pub cookies_path: PathBuf,
+    pub cookies_dir: PathBuf,
 }
 
-/// Run the Amazon enrichment job.
-///
-/// 1. Loads cookies and verifies they're valid
-/// 2. Fetches new transactions (stops at already-known ones)
-/// 3. Upserts transactions to DB
-/// 4. Fetches order details for unfetched order IDs
-/// 5. Matches Amazon transactions to bank transactions
+/// Handle an [`AmazonSyncJob`]: load cookies, paginate transactions, upsert to DB,
+/// then fan out one [`AmazonFetchOrderJob`] per unfetched order and one [`AmazonMatchJob`].
 ///
 /// # Errors
 ///
 /// Returns an error if cookies are expired, network requests fail, or DB operations fail.
-pub async fn run_amazon_enrich(
+pub async fn handle_amazon_sync_job(
+    job: super::AmazonSyncJob,
+    db: Data<Db>,
+    config: Data<AmazonEnrichConfig>,
+    pool: Data<ApalisPool>,
+) -> Result<(), BoxDynError> {
+    let account_id = job.account_id;
+    info!(%account_id, "starting Amazon sync job");
+
+    let result = amazon_sync_inner(account_id, &db, &config, &pool).await;
+
+    if let Err(ref e) = result {
+        if let Some(run_uuid) = parse_run_id(job.schedule_run_id.as_deref()) {
+            let _ = schedule_queries::complete_schedule_run(
+                &pool,
+                run_uuid,
+                RunStatus::Failed,
+                Some(&e.to_string()),
+            )
+            .await;
+        }
+        return result;
+    }
+
+    // Enqueue the match job, propagating schedule_run_id
+    let mut match_storage = apalis_postgres::PostgresStorage::<AmazonMatchJob>::new(&pool);
+    match_storage
+        .push(AmazonMatchJob {
+            account_id,
+            schedule_run_id: job.schedule_run_id,
+        })
+        .await
+        .map_err(|e| format!("failed to enqueue match job: {e}"))?;
+
+    Ok(())
+}
+
+/// Core sync logic extracted so errors can be caught for schedule run tracking.
+async fn amazon_sync_inner(
+    account_id: budget_core::models::AmazonAccountId,
     db: &Db,
     config: &AmazonEnrichConfig,
-) -> Result<EnrichResult, Box<dyn std::error::Error + Send + Sync>> {
-    let account_id = config.account_id;
-    info!(%account_id, "starting Amazon enrichment job");
+    pool: &ApalisPool,
+) -> Result<(), BoxDynError> {
+    let cookies_path = config.cookies_dir.join(format!("{account_id}.json"));
 
-    let cookies = CookieStore::load(&config.cookies_path).map_err(|e| {
-        error!(path = %config.cookies_path.display(), %account_id, "failed to load Amazon cookies: {e}");
+    let cookies = CookieStore::load(&cookies_path).map_err(|e| {
+        error!(path = %cookies_path.display(), %account_id, "failed to load Amazon cookies: {e}");
         e
     })?;
 
@@ -74,67 +114,128 @@ pub async fn run_amazon_enrich(
         db.upsert_amazon_transaction(account_id, txn).await?;
     }
 
-    // Fetch order details for any unfetched order IDs
+    // Enqueue one job per unfetched order
     let unfetched_orders = db.get_unfetched_order_ids(account_id).await?;
     info!(
         %account_id,
         count = unfetched_orders.len(),
-        "fetching order details for unfetched orders"
+        "enqueuing order detail fetch jobs"
     );
 
-    let mut orders_fetched = 0;
+    let mut order_storage = apalis_postgres::PostgresStorage::<AmazonFetchOrderJob>::new(pool);
     for order_id in &unfetched_orders {
-        // Randomized delay between order fetches (2-5 seconds)
-        let delay_secs = 2 + (rand_u32() % 4);
-        tokio::time::sleep(Duration::from_secs(u64::from(delay_secs))).await;
+        order_storage
+            .push(AmazonFetchOrderJob {
+                account_id,
+                order_id: order_id.clone(),
+            })
+            .await
+            .map_err(|e| format!("failed to enqueue order fetch for {order_id}: {e}"))?;
+    }
 
-        match client.fetch_order_details(order_id).await {
-            Ok(order) => {
-                db.upsert_amazon_order(&order).await?;
-                orders_fetched += 1;
-                debug!(%account_id, order_id = %order_id, items = order.items.len(), "fetched order details");
+    info!(
+        %account_id,
+        order_jobs = unfetched_orders.len(),
+        "Amazon sync job completed"
+    );
+    Ok(())
+}
+
+/// Handle an [`AmazonFetchOrderJob`]: fetch a single order's invoice page and upsert to DB.
+///
+/// Rate limiting is handled by the worker configuration (not in-handler sleeps).
+///
+/// # Errors
+///
+/// Returns an error if cookies are expired, the fetch fails, or DB operations fail.
+pub async fn handle_amazon_fetch_order_job(
+    job: AmazonFetchOrderJob,
+    db: Data<Db>,
+    config: Data<AmazonEnrichConfig>,
+) -> Result<(), BoxDynError> {
+    let cookies_path = config.cookies_dir.join(format!("{}.json", job.account_id));
+
+    let cookies = CookieStore::load(&cookies_path).map_err(|e| {
+        error!(path = %cookies_path.display(), "failed to load Amazon cookies: {e}");
+        e
+    })?;
+
+    let client = AmazonClient::new(cookies).map_err(|e| {
+        error!("failed to create Amazon client: {e}");
+        e
+    })?;
+
+    match client.fetch_order_details(&job.order_id).await {
+        Ok(order) => {
+            db.upsert_amazon_order(&order).await?;
+            debug!(
+                order_id = %job.order_id,
+                items = order.items.len(),
+                "fetched order details"
+            );
+        }
+        Err(e) => {
+            warn!(order_id = %job.order_id, "failed to fetch order details: {e}");
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle an [`AmazonMatchJob`]: match unmatched Amazon transactions to bank transactions.
+///
+/// # Errors
+///
+/// Returns an error if DB operations fail.
+pub async fn handle_amazon_match_job(
+    job: AmazonMatchJob,
+    db: Data<Db>,
+    pool: Data<ApalisPool>,
+) -> Result<(), BoxDynError> {
+    let run_uuid = parse_run_id(job.schedule_run_id.as_deref());
+
+    let result = amazon_match_inner(&job, &db).await;
+
+    if let Some(run_id) = run_uuid {
+        match &result {
+            Ok(()) => {
+                let _ = schedule_queries::complete_schedule_run(
+                    &pool,
+                    run_id,
+                    RunStatus::Succeeded,
+                    None,
+                )
+                .await;
             }
             Err(e) => {
-                warn!(%account_id, order_id = %order_id, "failed to fetch order details: {e}");
+                let _ = schedule_queries::complete_schedule_run(
+                    &pool,
+                    run_id,
+                    RunStatus::Failed,
+                    Some(&e.to_string()),
+                )
+                .await;
             }
         }
     }
 
-    // Match Amazon transactions to bank transactions
-    let unmatched_amazon = db.get_unmatched_amazon_transactions(account_id).await?;
+    result
+}
+
+async fn amazon_match_inner(job: &AmazonMatchJob, db: &Db) -> Result<(), BoxDynError> {
+    let unmatched_amazon = db.get_unmatched_amazon_transactions(job.account_id).await?;
     let bank_candidates = db.get_amazon_matchable_bank_transactions().await?;
 
     let matches = budget_amazon::find_matches(&unmatched_amazon, &bank_candidates);
     let matches_count = matches.len();
 
-    if !matches.is_empty() {
+    if matches.is_empty() {
+        info!(account_id = %job.account_id, "no new Amazon matches found");
+    } else {
         db.insert_amazon_matches(&matches).await?;
-        info!(%account_id, count = matches_count, "inserted Amazon matches");
+        info!(account_id = %job.account_id, count = matches_count, "inserted Amazon matches");
     }
 
-    let result = EnrichResult {
-        transactions_fetched: transactions.len(),
-        orders_fetched,
-        matches_created: matches_count,
-    };
-
-    info!(%account_id, ?result, "Amazon enrichment job completed");
-    Ok(result)
-}
-
-#[derive(Debug)]
-pub struct EnrichResult {
-    pub transactions_fetched: usize,
-    pub orders_fetched: usize,
-    pub matches_created: usize,
-}
-
-/// Simple non-crypto random u32 for delay jitter.
-#[allow(clippy::cast_possible_truncation)]
-fn rand_u32() -> u32 {
-    use std::time::SystemTime;
-    let t = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    t.subsec_nanos() ^ (t.as_secs() as u32)
+    Ok(())
 }

@@ -101,7 +101,7 @@ pub async fn step_correlate(
 }
 
 /// Parse the optional schedule run ID string to a UUID.
-fn parse_run_id(run_id: Option<&str>) -> Option<uuid::Uuid> {
+pub(crate) fn parse_run_id(run_id: Option<&str>) -> Option<uuid::Uuid> {
     run_id?.parse().ok()
 }
 

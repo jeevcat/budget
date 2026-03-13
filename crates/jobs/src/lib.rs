@@ -146,6 +146,10 @@ pub async fn setup_test_storage(pool: &ApalisPool) -> Result<(), sqlx::Error> {
 
 pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
+pub use enrich::{
+    AmazonEnrichConfig, handle_amazon_fetch_order_job, handle_amazon_match_job,
+    handle_amazon_sync_job,
+};
 pub use sync::{ImportResult, handle_sync_job, import_provider_transactions};
 
 mod storage;
@@ -424,6 +428,31 @@ pub struct CorrelateTransactionJob {
     pub transaction_id: TransactionId,
 }
 
+/// Fetch Amazon transactions and enqueue order detail fetches.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AmazonSyncJob {
+    pub account_id: budget_core::models::AmazonAccountId,
+    /// Set when the scheduler triggers the job; `None` for legacy/manual triggers.
+    #[serde(default)]
+    pub schedule_run_id: Option<String>,
+}
+
+/// Fetch a single Amazon order's invoice page.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AmazonFetchOrderJob {
+    pub account_id: budget_core::models::AmazonAccountId,
+    pub order_id: String,
+}
+
+/// Match Amazon transactions to bank transactions.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AmazonMatchJob {
+    pub account_id: budget_core::models::AmazonAccountId,
+    /// Propagated from the sync job for schedule run tracking.
+    #[serde(default)]
+    pub schedule_run_id: Option<String>,
+}
+
 /// A no-op job for health checks and testing the job queue.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NoOpJob;
@@ -451,6 +480,7 @@ pub async fn run_workers(
     apalis_pool: &ApalisPool,
     bank_factory: BankProviderFactory,
     llm: LlmClient,
+    amazon_config: enrich::AmazonEnrichConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     macro_rules! backend {
         ($T:ty) => {{
@@ -506,6 +536,29 @@ pub async fn run_workers(
         .data(llm)
         .build(handle_correlate_transaction_job);
 
+    // Amazon enrichment workers
+    let amazon_sync_worker = WorkerBuilder::new("budget-amazon-sync")
+        .backend(backend!(AmazonSyncJob))
+        .data(db.clone())
+        .data(amazon_config.clone())
+        .data(apalis_pool.clone())
+        .build(handle_amazon_sync_job);
+
+    // Rate-limited: 1 request per 3 seconds to avoid Amazon throttling
+    let amazon_order_worker = WorkerBuilder::new("budget-amazon-order")
+        .backend(backend!(AmazonFetchOrderJob))
+        .data(db.clone())
+        .data(amazon_config.clone())
+        .concurrency(1)
+        .rate_limit(1, std::time::Duration::from_secs(3))
+        .build(handle_amazon_fetch_order_job);
+
+    let amazon_match_worker = WorkerBuilder::new("budget-amazon-match")
+        .backend(backend!(AmazonMatchJob))
+        .data(db.clone())
+        .data(apalis_pool.clone())
+        .build(handle_amazon_match_job);
+
     let noop_worker = WorkerBuilder::new("budget-no-op")
         .backend(backend!(NoOpJob))
         .build(handle_noop_job);
@@ -527,6 +580,15 @@ pub async fn run_workers(
         }
         res = correlate_txn_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
+        }
+        res = amazon_sync_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "amazon-sync worker error"); }
+        }
+        res = amazon_order_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "amazon-order worker error"); }
+        }
+        res = amazon_match_worker.run() => {
+            if let Err(e) = res { tracing::error!(%e, "amazon-match worker error"); }
         }
         res = noop_worker.run() => {
             if let Err(e) = res { tracing::error!(%e, "noop worker error"); }

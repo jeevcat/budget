@@ -3686,7 +3686,6 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
   const [cookieText, setCookieText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
 
   async function uploadCookies() {
     setUploading(true);
@@ -3706,16 +3705,9 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
 
   async function triggerSync() {
     setSyncing(true);
-    setSyncResult(null);
     try {
-      const result = await api.post(`/amazon/accounts/${account.id}/sync`);
-      setSyncResult(result);
-      onReload();
-      ot.toast(
-        `Fetched ${result.transactions_fetched} transactions, ${result.orders_fetched} orders, ${result.matches_created} matches`,
-        "Amazon sync complete",
-        { variant: "success" },
-      );
+      await api.post(`/amazon/accounts/${account.id}/sync`);
+      ot.toast("Amazon sync queued", "", { variant: "success" });
     } catch (e) {
       ot.toast(e.message, "Sync failed", { variant: "danger" });
     } finally {
@@ -3751,18 +3743,6 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
                 <span class="text-light">${status.stats.matched_transactions} matched</span>
                 <span class="text-light">${status.stats.total_orders} orders</span>
                 <span class="text-light">${status.stats.total_items} items</span>
-              </div>
-            `
-              : null
-          }
-
-          ${
-            syncResult
-              ? html`
-              <div class="hstack gap-3" style="flex-wrap:wrap">
-                <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
-                <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
-                <span class="chip outline small">+${syncResult.matches_created} matches</span>
               </div>
             `
               : null
@@ -3822,7 +3802,7 @@ const QUEUE_CARDS = [
   {
     key: "sync",
     title: "Sync",
-    desc: "Fetch new transactions from connected bank accounts",
+    desc: "Fetch new transactions from connected bank and Amazon accounts",
     types: ["SyncJob", "Vec<u8>"],
   },
   {
@@ -3836,6 +3816,12 @@ const QUEUE_CARDS = [
     title: "Correlate",
     desc: "Link related transactions (transfers, reimbursements)",
     types: ["CorrelateJob", "CorrelateTransactionJob"],
+  },
+  {
+    key: "amazon",
+    title: "Amazon",
+    desc: "Fetch Amazon transactions, order details, and match to bank",
+    types: ["AmazonSyncJob", "AmazonFetchOrderJob", "AmazonMatchJob"],
   },
 ];
 
@@ -3904,6 +3890,12 @@ function Jobs() {
     }
   }
 
+  function syncUrlFor(s) {
+    return s.account_type === "amazon"
+      ? `/amazon/accounts/${s.account_id}/sync`
+      : `/jobs/pipeline/${s.account_id}`;
+  }
+
   async function triggerSyncAll() {
     if (!schedule || schedule.length === 0) return;
     addTriggering("sync-all");
@@ -3912,7 +3904,7 @@ function Jobs() {
         schedule.map((s) => {
           addTriggering(`sync-${s.account_id}`);
           return api
-            .post(`/jobs/pipeline/${s.account_id}`)
+            .post(syncUrlFor(s))
             .finally(() => removeTriggering(`sync-${s.account_id}`));
         }),
       );
@@ -3988,7 +3980,7 @@ function Jobs() {
                   </span>
                   <button
                     class="small outline"
-                    onClick=${() => trigger(`/jobs/pipeline/${s.account_id}`, `sync-${s.account_id}`, `Sync queued for ${s.account_name}`)}
+                    onClick=${() => trigger(syncUrlFor(s), `sync-${s.account_id}`, `Sync queued for ${s.account_name}`)}
                     disabled=${busy}
                   >
                     ${busy ? "..." : "Sync"}

@@ -11,9 +11,11 @@ use budget_core::models::{
     Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
 };
 use budget_db::Db;
-use budget_jobs::schedule_queries::{self, RunStatus, ScheduleRun, TriggerReason};
+use budget_jobs::schedule_queries::{
+    self, AccountType as ScheduleAccountType, RunStatus, ScheduleRun, TriggerReason,
+};
 use budget_jobs::scheduler::scheduler_tick;
-use budget_jobs::{ApalisPool, PipelineStorage};
+use budget_jobs::{AmazonSyncJob, ApalisPool, JobStorage, PipelineStorage};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,6 +73,7 @@ fn make_run(
     ScheduleRun {
         id: uuid::Uuid::new_v4(),
         account_id,
+        account_type: ScheduleAccountType::Bank,
         status,
         trigger_reason: reason,
         attempt,
@@ -93,17 +96,22 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
     let conn_id = seed_connection(&db).await;
     let account = seed_account(&db, "Primary Checking", conn_id).await;
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
     let now = Utc::now();
 
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
     let account_uuid: uuid::Uuid = account.id.into();
-    let run = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
-        .await
-        .expect("query should succeed")
-        .expect("should have a run");
+    let run = schedule_queries::get_latest_run_for_account(
+        &apalis_pool,
+        account_uuid,
+        ScheduleAccountType::Bank,
+    )
+    .await
+    .expect("query should succeed")
+    .expect("should have a run");
 
     assert_eq!(run.status, RunStatus::Running);
     assert_eq!(run.trigger_reason, TriggerReason::Scheduled);
@@ -134,7 +142,8 @@ async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
         .expect("insert run");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -172,7 +181,8 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
         .expect("insert run");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -185,10 +195,14 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
     assert_eq!(count.0, 2);
 
     // Latest run should be a retry at attempt 2
-    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
-        .await
-        .expect("query")
-        .expect("should have latest run");
+    let latest = schedule_queries::get_latest_run_for_account(
+        &apalis_pool,
+        account_uuid,
+        ScheduleAccountType::Bank,
+    )
+    .await
+    .expect("query")
+    .expect("should have latest run");
     assert_eq!(latest.status, RunStatus::Running);
     assert_eq!(latest.trigger_reason, TriggerReason::Retry);
     assert_eq!(latest.attempt, 2);
@@ -219,7 +233,8 @@ async fn scheduler_respects_backoff_delay(pool: PgPool) {
         .expect("insert run");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -256,7 +271,8 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
         .expect("insert run");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -269,10 +285,14 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
     assert_eq!(count.0, 1, "should not retry after max attempts");
 
     // But next_run_at should be set on the existing run
-    let latest = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
-        .await
-        .expect("query")
-        .expect("should have latest run");
+    let latest = schedule_queries::get_latest_run_for_account(
+        &apalis_pool,
+        account_uuid,
+        ScheduleAccountType::Bank,
+    )
+    .await
+    .expect("query")
+    .expect("should have latest run");
     assert!(
         latest.next_run_at.is_some(),
         "next_run_at should be set for UI"
@@ -303,7 +323,8 @@ async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
         .expect("insert run");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -338,7 +359,8 @@ async fn scheduler_skips_csv_only_accounts(pool: PgPool) {
         .expect("seed csv account");
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, now)
+    let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
         .await
         .expect("tick should succeed");
 
@@ -380,10 +402,14 @@ async fn pipeline_completion_updates_schedule_run(pool: PgPool) {
         .await
         .expect("complete should succeed");
 
-    let updated = schedule_queries::get_latest_run_for_account(&apalis_pool, account_uuid)
-        .await
-        .expect("query")
-        .expect("should have run");
+    let updated = schedule_queries::get_latest_run_for_account(
+        &apalis_pool,
+        account_uuid,
+        ScheduleAccountType::Bank,
+    )
+    .await
+    .expect("query")
+    .expect("should have run");
 
     assert_eq!(updated.status, RunStatus::Succeeded);
     assert!(updated.finished_at.is_some());

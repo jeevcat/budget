@@ -62,6 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = std::fs::create_dir_all(&amazon_cookies_dir) {
         tracing::warn!(path = %amazon_cookies_dir.display(), error = %e, "failed to create Amazon cookies directory");
     }
+    let amazon_enrich_config = budget_jobs::AmazonEnrichConfig {
+        // clone() justified: both the route config and worker config need the same path
+        cookies_dir: amazon_cookies_dir.clone(),
+    };
     let amazon_config = api::routes::amazon::AmazonConfig {
         cookies_dir: amazon_cookies_dir,
     };
@@ -82,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || format!("http://localhost:{}", config.server_port),
             String::from,
         ),
+        amazon_sync_storage: JobStorage::new(&apalis_pool),
         amazon_config,
     };
 
@@ -90,7 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::path::PathBuf::from,
     );
     let app = build_router(state, &frontend_dir);
-    let workers = budget_jobs::run_workers(&db, &apalis_pool, bank_factory, llm);
+    let workers =
+        budget_jobs::run_workers(&db, &apalis_pool, bank_factory, llm, amazon_enrich_config);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.server_port)).await?;
     tracing::info!(port = config.server_port, "listening");
 
