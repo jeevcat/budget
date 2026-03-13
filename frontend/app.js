@@ -128,12 +128,19 @@ function useRoute() {
   return route;
 }
 
-function NavLink({ href, children }) {
+function NavLink({ href, match, children }) {
   const route = hashPath();
-  const current = route === href || route.startsWith(`${href}/`);
+  const current = match
+    ? match(route)
+    : route === href || route.startsWith(`${href}/`);
   return html`<a href="#${href}" aria-current=${current ? "page" : undefined}
     >${children}</a
   >`;
+}
+
+/** Navigate by replacing the current history entry (no back/forward noise). */
+function navigateReplace(path) {
+  location.replace(`#${path}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -848,16 +855,26 @@ function ProjectDrillDown({
   `;
 }
 
-function Dashboard() {
+const TAB_NAMES = ["monthly", "annual", "projects"];
+
+function Dashboard({ tab = "monthly", monthId = null }) {
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
   const [error, setError] = useState(null);
-  const [selectedMonthId, setSelectedMonthId] = useState(null);
+
+  const selectedMonthId = monthId;
+  function setSelectedMonthId(id) {
+    navigateReplace(`/monthly/${id}`);
+  }
+
+  const statusUrl = selectedMonthId
+    ? `/budgets/status?month_id=${selectedMonthId}`
+    : "/budgets/status";
 
   const load = useCallback(() => {
     Promise.all([
-      api.get("/budgets/status"),
+      api.get(statusUrl),
       api.get("/categories"),
       api.get("/budgets/months"),
     ])
@@ -873,14 +890,14 @@ function Dashboard() {
     load();
   }, []);
 
-  // Re-fetch status when selectedMonthId changes (skip the initial null)
+  // Re-fetch status when month changes via URL
+  const prevMonthRef = useRef(selectedMonthId);
   useEffect(() => {
+    if (selectedMonthId === prevMonthRef.current) return;
+    prevMonthRef.current = selectedMonthId;
     if (selectedMonthId === null) return;
-    api
-      .get(`/budgets/status?month_id=${selectedMonthId}`)
-      .then(setStatusResp)
-      .catch(setError);
-  }, [selectedMonthId]);
+    api.get(statusUrl).then(setStatusResp).catch(setError);
+  }, [statusUrl]);
 
   if (error) return html`<p class="text-light">${error.message}</p>`;
   if (!statusResp || !categories || !months)
@@ -1037,25 +1054,40 @@ function Dashboard() {
     return { childBreakdown: rows, drilledTotalSpent: total };
   }, [drilledProjectId, drilledProject, statusResp]);
 
-  // Track active tab (0 = Monthly, 1 = Annual, 2 = Projects)
-  const [activeTab, setActiveTab] = useState(0);
+  // Tab derived from route prop
+  const activeTab = Math.max(0, TAB_NAMES.indexOf(tab));
+  const syncedTabRef = useRef(-1);
+  function setActiveTab(idx) {
+    syncedTabRef.current = idx;
+    setSelectedCategoryId(null);
+    setDrilledProjectId(null);
+    location.hash = `#/${TAB_NAMES[idx]}`;
+  }
+
   const tabsRef = useRef(null);
   const tabsCallbackRef = useCallback((el) => {
     if (tabsRef.current === el) return;
     tabsRef.current = el;
     if (!el) return;
     el.addEventListener("click", (e) => {
+      if (!e.isTrusted) return;
       const tab = e.target.closest("[role=tab]");
       if (!tab) return;
       const tabs = [...el.querySelectorAll("[role=tab]")];
       const idx = tabs.indexOf(tab);
-      if (idx >= 0) {
-        setActiveTab(idx);
-        setSelectedCategoryId(null);
-        setDrilledProjectId(null);
-      }
+      if (idx >= 0) setActiveTab(idx);
     });
   }, []);
+
+  // Sync ot-tabs web component when URL drives a tab change (initial load + back/forward)
+  useEffect(() => {
+    if (activeTab === syncedTabRef.current) return;
+    syncedTabRef.current = activeTab;
+    const el = tabsRef.current;
+    if (!el) return;
+    const tabs = [...el.querySelectorAll("[role=tab]")];
+    if (tabs[activeTab]) tabs[activeTab].click();
+  });
 
   const annualTimeLabel = timeLeft(annual, "mo");
 
@@ -3606,12 +3638,20 @@ function App() {
   if (!authed) return html`<${Login} onLogin=${() => setAuthed(true)} />`;
 
   const page = () => {
-    if (route === "/") return html`<${Dashboard} />`;
-    if (route === "/transactions") return html`<${Transactions} />`;
-    if (route === "/categories") return html`<${Categories} />`;
-    if (route === "/rules") return html`<${Rules} />`;
-    if (route === "/connections") return html`<${Connections} />`;
-    if (route === "/jobs") return html`<${Jobs} />`;
+    const segments = route.split("/").filter(Boolean);
+    const [s0, s1] = segments;
+
+    // Dashboard routes: /, /monthly, /monthly/:id, /annual, /projects
+    if (!s0 || s0 === "monthly" || s0 === "annual" || s0 === "projects") {
+      const tab = s0 || "monthly";
+      const monthId = tab === "monthly" && s1 ? Number(s1) : null;
+      return html`<${Dashboard} tab=${tab} monthId=${monthId} />`;
+    }
+    if (s0 === "transactions") return html`<${Transactions} />`;
+    if (s0 === "categories") return html`<${Categories} />`;
+    if (s0 === "rules") return html`<${Rules} />`;
+    if (s0 === "connections") return html`<${Connections} />`;
+    if (s0 === "jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;
   };
 
@@ -3620,7 +3660,7 @@ function App() {
       <aside data-sidebar>
         <h1>Budget</h1>
         <nav>
-          <${NavLink} href="/">Dashboard<//>
+          <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Dashboard<//>
           <${NavLink} href="/transactions">Transactions<//>
           <${NavLink} href="/categories">Categories<//>
           <${NavLink} href="/rules">Rules<//>
