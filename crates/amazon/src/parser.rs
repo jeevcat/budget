@@ -3,6 +3,7 @@ use regex::Regex;
 use rust_decimal::Decimal;
 use scraper::{Html, Selector};
 use std::sync::LazyLock;
+use tracing::{debug, info, warn};
 
 use crate::error::{AmazonError, Result};
 use crate::types::{
@@ -150,7 +151,17 @@ pub fn parse_next_data(html: &str) -> Result<TransactionsPageData> {
         .ok_or_else(|| AmazonError::Parse("no __NEXT_DATA__ script tag found".into()))?;
 
     let json_text = script.text().collect::<String>();
-    let next_data: NextData = serde_json::from_str(&json_text)?;
+    debug!(json_len = json_text.len(), "__NEXT_DATA__ extracted");
+
+    let next_data: NextData = serde_json::from_str(&json_text).map_err(|e| {
+        warn!(
+            error = %e,
+            json_len = json_text.len(),
+            json_body = %json_text,
+            "failed to parse __NEXT_DATA__ JSON"
+        );
+        AmazonError::Json(e)
+    })?;
 
     let page_props = next_data.props.page_props;
     let visible = page_props
@@ -158,11 +169,46 @@ pub fn parse_next_data(html: &str) -> Result<TransactionsPageData> {
         .transaction_response_state
         .visible_transaction_response;
 
-    let transactions = visible
+    info!(
+        raw_transaction_count = visible.transaction_list.len(),
+        has_more = visible.has_more,
+        has_page_key = visible.last_evaluated_page_key.is_some(),
+        "parsed __NEXT_DATA__ structure"
+    );
+
+    let mut parse_errors = 0u32;
+    let transactions: Vec<_> = visible
         .transaction_list
         .into_iter()
-        .filter_map(|raw| convert_raw_transaction(&raw).ok())
+        .filter_map(|raw| match convert_raw_transaction(&raw) {
+            Ok(txn) => Some(txn),
+            Err(e) => {
+                parse_errors += 1;
+                warn!(
+                    error = %e,
+                    amount = %raw.formatted_amount,
+                    date = %raw.formatted_date,
+                    "skipped unparseable transaction"
+                );
+                None
+            }
+        })
         .collect();
+
+    if parse_errors > 0 {
+        warn!(
+            parse_errors,
+            parsed = transactions.len(),
+            "some transactions failed to parse"
+        );
+    }
+
+    info!(
+        token_len = page_props.token.len(),
+        transaction_count = transactions.len(),
+        has_more = visible.has_more,
+        "parsed transactions from __NEXT_DATA__"
+    );
 
     Ok(TransactionsPageData {
         token: page_props.token,
@@ -245,11 +291,22 @@ pub fn convert_raw_transaction(raw: &RawTransaction) -> Result<AmazonTransaction
 ///
 /// Returns an error if the HTML cannot be parsed.
 pub fn parse_invoice_html(html: &str, order_id: &str) -> Result<AmazonOrder> {
+    debug!(order_id = %order_id, html_len = html.len(), "parsing invoice HTML");
+    debug!(order_id = %order_id, html_body = %html, "full invoice HTML");
+
     let document = Html::parse_document(html);
 
     let items = parse_invoice_items(&document);
     let totals = parse_invoice_totals(&document);
     let order_date = parse_invoice_date(&document);
+
+    info!(
+        order_id = %order_id,
+        item_count = items.len(),
+        total_keys = ?totals.keys().collect::<Vec<_>>(),
+        order_date = ?order_date,
+        "parsed invoice"
+    );
 
     Ok(AmazonOrder {
         order_id: order_id.to_owned(),

@@ -75,11 +75,15 @@ impl CookieStore {
             .any(|c| c.expires.is_some_and(|exp| exp < now))
     }
 
-    /// Return the earliest expiry time across all cookies, if any have expiry set.
+    /// Return the earliest auth token expiry time.
+    ///
+    /// Only considers `at-*` and `sess-at-*` cookies (the actual auth tokens),
+    /// not session cookies that may expire sooner but are less important.
     #[must_use]
     pub fn earliest_expiry(&self) -> Option<DateTime<Utc>> {
         self.cookies
             .iter()
+            .filter(|c| c.name.starts_with("at-") || c.name.starts_with("sess-at-"))
             .filter_map(|c| c.expires)
             .min()
             .and_then(|ts| DateTime::from_timestamp(ts, 0))
@@ -286,25 +290,33 @@ mod tests {
     }
 
     #[test]
-    fn earliest_expiry_returns_minimum() {
+    fn earliest_expiry_returns_minimum_auth_token() {
         let cookies = vec![
             AmazonCookie {
-                name: "a".into(),
+                name: "at-acbde".into(),
                 value: "1".into(),
                 domain: ".amazon.de".into(),
                 path: "/".into(),
                 expires: Some(2_000_000_000),
             },
             AmazonCookie {
-                name: "b".into(),
+                name: "sess-at-acbde".into(),
                 value: "2".into(),
                 domain: ".amazon.de".into(),
                 path: "/".into(),
                 expires: Some(1_500_000_000),
             },
+            AmazonCookie {
+                name: "session-id".into(),
+                value: "3".into(),
+                domain: ".amazon.de".into(),
+                path: "/".into(),
+                expires: Some(1_000_000_000),
+            },
         ];
         let store = CookieStore::from_cookies(cookies, PathBuf::from("/tmp/test.json"));
         let earliest = store.earliest_expiry().unwrap();
+        // Should pick sess-at-acbde (1_500_000_000), not session-id (1_000_000_000)
         assert_eq!(earliest.timestamp(), 1_500_000_000);
     }
 }

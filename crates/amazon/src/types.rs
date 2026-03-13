@@ -125,9 +125,9 @@ pub struct TransactionResponseState {
 
 #[derive(Debug, Deserialize)]
 pub struct VisibleTransactionResponse {
-    #[serde(rename = "transactionList")]
+    #[serde(rename = "transactionList", default)]
     pub transaction_list: Vec<RawTransaction>,
-    #[serde(rename = "hasMore")]
+    #[serde(rename = "hasMore", default)]
     pub has_more: bool,
     #[serde(rename = "lastEvaluatedPageKey")]
     pub last_evaluated_page_key: Option<String>,

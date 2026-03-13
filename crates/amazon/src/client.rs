@@ -80,27 +80,20 @@ impl AmazonClient {
         }
 
         let html = resp.text().await?;
+        let title = extract_title(&html);
         info!(
             html_len = html.len(),
             has_next_data = html.contains("__NEXT_DATA__"),
+            title = title.as_deref().unwrap_or("(none)"),
             "received transactions page HTML"
         );
-
-        if html.len() < 1000 {
-            warn!(html = %html, "suspiciously short response — likely an error page");
-        }
-
-        let title = extract_title(&html);
-        if let Some(ref t) = title {
-            debug!(title = %t, "page title");
-        }
+        debug!(html_body = %html, "full transactions page HTML");
 
         let data = parse_next_data(&html).map_err(|e| {
             warn!(
                 error = %e,
                 html_len = html.len(),
                 title = title.as_deref().unwrap_or("(none)"),
-                html_preview = %truncate(&html, 2000),
                 "failed to parse transactions page"
             );
             e
@@ -165,11 +158,13 @@ impl AmazonClient {
             warn!("pagination returned 503 — rate limited");
             return Err(AmazonError::RateLimited);
         }
+        let body_text = resp.text().await?;
+        debug!(body = %body_text, "full pagination response body");
+
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
             warn!(
                 status = %status,
-                body_preview = %truncate(&body, 2000),
+                body = %body_text,
                 "unexpected pagination response status"
             );
             return Err(AmazonError::Parse(format!(
@@ -177,7 +172,14 @@ impl AmazonClient {
             )));
         }
 
-        let pagination: PaginationResponse = resp.json().await?;
+        let pagination: PaginationResponse = serde_json::from_str(&body_text).map_err(|e| {
+            warn!(
+                error = %e,
+                body = %body_text,
+                "failed to parse pagination response JSON"
+            );
+            AmazonError::Json(e)
+        })?;
 
         let (raw_txns, next_key) = match pagination.display_response {
             Some(dr) => {
@@ -188,14 +190,28 @@ impl AmazonClient {
             None => (Vec::new(), None),
         };
 
+        let mut parse_errors = 0u32;
         let transactions: Vec<_> = raw_txns
             .iter()
-            .filter_map(|raw| convert_raw_transaction(raw).ok())
+            .filter_map(|raw| match convert_raw_transaction(raw) {
+                Ok(txn) => Some(txn),
+                Err(e) => {
+                    parse_errors += 1;
+                    warn!(
+                        error = %e,
+                        amount = %raw.formatted_amount,
+                        date = %raw.formatted_date,
+                        "skipped unparseable paginated transaction"
+                    );
+                    None
+                }
+            })
             .collect();
 
         info!(
             raw_count = raw_txns.len(),
             parsed_count = transactions.len(),
+            parse_errors,
             has_next = next_key.is_some(),
             "parsed pagination response"
         );
