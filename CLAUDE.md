@@ -45,6 +45,7 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Custom CSS in `style.css` is a last resort — only for things Oat genuinely cannot do (custom visualizations, pseudo-elements, responsive grid breakpoints, sticky table headers)
 - When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
 - **Use Biome for linting/formatting** — run `bun run check`, fix with `bun run fix`. Never use node/python hacks for syntax checks.
+- **Frontend tests** — `bun test frontend/` (bun's built-in test runner). Pure helpers live in `frontend/helpers.js`, tested by `frontend/helpers.test.js`. Pre-commit hook runs tests automatically.
 
 ## Mobile
 

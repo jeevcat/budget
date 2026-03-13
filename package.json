@@ -4,6 +4,7 @@
   "scripts": {
     "build": "bun build frontend/index.html --outdir frontend/dist --minify",
     "dev": "bun build frontend/index.html --outdir frontend/dist --watch",
+    "test": "bun test frontend/",
     "check": "biome check frontend/",
     "fix": "biome check --write frontend/",
     "postinstall": "bun2nix -o bun.nix"

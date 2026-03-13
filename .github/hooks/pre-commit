@@ -55,6 +55,17 @@ output=$(run biome check frontend/ 2>&1) || {
 }
 echo -e "${GREEN}OK${NC}"
 
+echo -n "Running frontend tests... "
+output=$(run bun test frontend/ 2>&1) || {
+    echo -e "${RED}FAILED${NC}"
+    echo "$output"
+    echo ""
+    echo "To see failures, run:"
+    echo "  ${prefix:+$prefix }bun test frontend/"
+    exit 1
+}
+echo -e "${GREEN}OK${NC}"
+
 echo -n "Building frontend... "
 output=$(run bun run build 2>&1) || {
     echo -e "${RED}FAILED${NC}"
