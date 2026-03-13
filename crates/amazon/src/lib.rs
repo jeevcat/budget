@@ -11,5 +11,5 @@ pub use error::AmazonError;
 pub use matching::find_matches;
 pub use types::{
     AmazonCookie, AmazonItem, AmazonOrder, AmazonTransaction, AmazonTransactionStatus,
-    BankCandidate, MatchConfidence, TransactionsPageData,
+    BankCandidate, TransactionsPageData,
 };

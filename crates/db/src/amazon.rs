@@ -8,7 +8,6 @@ use crate::{Db, DbError};
 
 /// Amazon enrichment data for a bank transaction.
 pub struct AmazonEnrichment {
-    pub confidence: String,
     pub orders: Vec<budget_amazon::AmazonOrder>,
 }
 
@@ -377,18 +376,14 @@ impl Db {
 
         for m in matches {
             let result = sqlx::query(
-                "INSERT INTO amazon_matches (amazon_transaction_id, bank_transaction_id, confidence)
-                 SELECT at.id, $2, $3
+                "INSERT INTO amazon_matches (amazon_transaction_id, bank_transaction_id)
+                 SELECT at.id, $2
                  FROM amazon_transactions at
                  WHERE at.dedup_key = $1
                  ON CONFLICT DO NOTHING",
             )
             .bind(&m.amazon_dedup_key)
             .bind(m.bank_transaction_id)
-            .bind(match m.confidence {
-                budget_amazon::MatchConfidence::Exact => "Exact",
-                budget_amazon::MatchConfidence::Approximate => "Approximate",
-            })
             .execute(pool)
             .await?;
 
@@ -415,7 +410,7 @@ impl Db {
         let pool = &self.0;
 
         let match_row = sqlx::query(
-            "SELECT am.confidence, at.transaction_date, at.amount, at.dedup_key
+            "SELECT at.dedup_key
              FROM amazon_matches am
              JOIN amazon_transactions at ON am.amazon_transaction_id = at.id
              WHERE am.bank_transaction_id = $1
@@ -429,7 +424,6 @@ impl Db {
             return Ok(None);
         };
 
-        let confidence: String = mr.try_get("confidence")?;
         let dedup_key: String = mr.try_get("dedup_key")?;
 
         // Get order IDs for this Amazon transaction
@@ -508,7 +502,7 @@ impl Db {
             });
         }
 
-        Ok(Some(AmazonEnrichment { confidence, orders }))
+        Ok(Some(AmazonEnrichment { orders }))
     }
 
     /// Get all bank transaction IDs that have an Amazon match.

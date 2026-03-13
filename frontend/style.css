@@ -51,6 +51,12 @@
 .clickable-row:hover {
   background: var(--muted);
 }
+.clickable-item {
+  gap: 0.65rem;
+  padding: 0.5rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
 
 .main {
   padding: var(--space-6) var(--space-8);
@@ -94,9 +100,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.amount-positive {
-  color: var(--success);
 }
 .row-correlated {
   opacity: 0.6;
@@ -169,43 +172,59 @@
   font-size: var(--text-7);
 }
 
-.txn-table {
+/* Shared sortable transaction table base */
+.txn-table,
+.dash-txn-table {
   font-size: var(--text-7);
 }
-.txn-table thead th {
+.txn-table thead th,
+.dash-txn-table thead th {
   position: sticky;
   top: 0;
-  background: var(--background);
   z-index: 1;
   user-select: none;
   white-space: nowrap;
 }
-.txn-table thead th.sortable {
+.txn-table thead th.sortable,
+.dash-txn-table thead th.sortable {
   cursor: pointer;
 }
-.txn-table thead th.sortable:hover {
+.txn-table thead th.sortable:hover,
+.dash-txn-table thead th.sortable:hover {
   color: var(--primary);
 }
-.txn-table thead th .sort-arrow {
+.txn-table thead th .sort-arrow,
+.dash-txn-table thead th .sort-arrow {
   display: inline-block;
   width: 1em;
   text-align: center;
   opacity: 0.35;
   font-size: 0.75em;
 }
-.txn-table thead th.sort-active .sort-arrow {
+.txn-table thead th.sort-active .sort-arrow,
+.dash-txn-table thead th.sort-active .sort-arrow {
   opacity: 1;
 }
-
-.txn-table tbody td {
-  padding-block: 0.35rem;
+.txn-table tbody td,
+.dash-txn-table tbody td {
   white-space: nowrap;
 }
-.txn-table tbody td:nth-child(2) {
+.txn-table tbody td:nth-child(2),
+.dash-txn-table tbody td:nth-child(2) {
   white-space: normal;
-  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Full-page variant */
+.txn-table thead th {
+  background: var(--background);
+}
+.txn-table tbody td {
+  padding-block: 0.35rem;
+}
+.txn-table tbody td:nth-child(2) {
+  max-width: 260px;
 }
 
 .cat-parent {
@@ -309,6 +328,66 @@
 dialog > form > div {
   overflow-y: auto;
   max-height: 60vh;
+}
+
+/* Transaction detail side panel */
+.txn-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.txn-panel-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.txn-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(34rem, 92vw);
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+.txn-panel.open {
+  transform: translateX(0);
+}
+.txn-panel-header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.txn-panel-header h3 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.txn-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+}
+.txn-panel-footer {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .txn-dl {
@@ -547,43 +626,15 @@ dialog > form > div {
   }
 }
 
-/* Dashboard recent transactions (compact TransactionTable) */
-.dash-txn-table {
-  font-size: var(--text-7);
-}
+/* Dashboard compact variant */
 .dash-txn-table thead th {
-  position: sticky;
-  top: 0;
   background: var(--card);
-  z-index: 1;
-  user-select: none;
-  white-space: nowrap;
-}
-.dash-txn-table thead th.sortable {
-  cursor: pointer;
-}
-.dash-txn-table thead th.sortable:hover {
-  color: var(--primary);
-}
-.dash-txn-table thead th .sort-arrow {
-  display: inline-block;
-  width: 1em;
-  text-align: center;
-  opacity: 0.35;
-  font-size: 0.75em;
-}
-.dash-txn-table thead th.sort-active .sort-arrow {
-  opacity: 1;
 }
 .dash-txn-table tbody td {
   padding-block: 0.3rem;
-  white-space: nowrap;
 }
 .dash-txn-table tbody td:nth-child(2) {
-  white-space: normal;
   max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Searchable category select */

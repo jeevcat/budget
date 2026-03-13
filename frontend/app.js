@@ -347,6 +347,24 @@ function CategorySelect({
 // Dashboard
 // ---------------------------------------------------------------------------
 
+function BudgetBar({ pace, fillPct, markPct }) {
+  return html`
+    <div class="ledger-bar-track">
+      <div
+        class="ledger-bar-fill ledger-bar-fill-${pace}"
+        style="width:${fillPct}%"
+      ></div>
+      ${
+        markPct != null &&
+        html`<div
+        class="ledger-bar-mark"
+        style="left:${markPct}%"
+      ></div>`
+      }
+    </div>
+  `;
+}
+
 function Ledger({
   items,
   ledger,
@@ -417,16 +435,11 @@ function Ledger({
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
               </span>
-              <div class="ledger-bar-track">
-                <div
-                  class="ledger-bar-fill ledger-bar-fill-${s.pace}"
-                  style="width:${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}%"
-                ></div>
-                <div
-                  class="ledger-bar-mark"
-                  style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
-                ></div>
-              </div>
+              <${BudgetBar}
+                pace=${s.pace}
+                fillPct=${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}
+                markPct=${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}
+              />
               <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
               <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
               <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
@@ -566,16 +579,11 @@ function BudgetSection({
                 html` <span class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
               }
             </span>
-            <div class="ledger-bar-track">
-              <div
-                class="ledger-bar-fill ledger-bar-fill-${s.pace}"
-                style="width:${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}%"
-              ></div>
-              <div
-                class="ledger-bar-mark"
-                style="left:${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}%"
-              ></div>
-            </div>
+            <${BudgetBar}
+              pace=${s.pace}
+              fillPct=${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}
+              markPct=${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}
+            />
             <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
             <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
             <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
@@ -636,8 +644,8 @@ function ProjectDrillDown({
   return html`
     <nav
       aria-label="Breadcrumb"
-      class="hstack"
-      style="gap:0.5rem;align-items:center;margin-bottom:0.75rem;cursor:pointer"
+      class="hstack gap-2"
+      style="align-items:center;margin-bottom:0.75rem;cursor:pointer"
       onClick=${onBack}
     >
       <span class="text-display">\u2190</span>
@@ -674,7 +682,7 @@ function ProjectDrillDown({
 
     ${
       childBreakdown.length === 0
-        ? html`<p class="text-light" style="margin-top:1rem">No spending yet.</p>`
+        ? html`<p class="text-light mt-4">No spending yet.</p>`
         : html`
     <div class="proj-grid">
       <article class="card" style="padding:var(--space-4)">
@@ -689,12 +697,10 @@ function ProjectDrillDown({
                 onClick=${() => onCategoryClick?.(item.id)}
               >
                 <span class="ledger-row-name">${item.name}</span>
-                <div class="ledger-bar-track">
-                  <div
-                    class="ledger-bar-fill ledger-bar-fill-${project.pace}"
-                    style="width:${totalSpent > 0 ? (item.spent / totalSpent) * 100 : 0}%"
-                  ></div>
-                </div>
+                <${BudgetBar}
+                  pace=${project.pace}
+                  fillPct=${totalSpent > 0 ? (item.spent / totalSpent) * 100 : 0}
+                />
                 <span class="ledger-amount">${formatAmount(item.spent, { decimals: 0 })}</span>
               </div>
             `,
@@ -708,8 +714,7 @@ function ProjectDrillDown({
           ${childBreakdown.map(
             (item) => html`
               <div
-                class="hstack clickable-row${selectedCategoryId === item.id ? " ledger-row-selected" : ""}"
-                style="gap:0.65rem;padding:0.5rem 0.35rem;border-radius:4px;cursor:pointer"
+                class="hstack clickable-row clickable-item${selectedCategoryId === item.id ? " ledger-row-selected" : ""}"
                 key=${item.id}
                 onClick=${() => onCategoryClick?.(item.id)}
               >
@@ -1023,7 +1028,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       </div>
       <div role="tabpanel">
         <div class="hstack" style="margin-bottom:1.25rem">
-          <div class="hstack" style="gap:0.5rem;align-items:center">
+          <div class="hstack gap-2" style="align-items:center">
             <button
               onClick=${goPrev}
               disabled=${!hasPrev}
@@ -1105,14 +1110,13 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               ${
                 finishedProjects.length > 0 &&
                 html`
-                <details style="margin-top:1rem">
+                <details class="mt-4">
                   <summary class="text-light" style="cursor:pointer;padding:0.5rem 0">Finished (${finishedProjects.length})</summary>
                   <div class="vstack" style="gap:0;margin-top:0.5rem;opacity:0.5">
                     ${finishedProjects.map(
                       (s) => html`
                         <div
-                          class="hstack clickable-row${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
-                          style="gap:0.65rem;padding:0.5rem 0.35rem;border-radius:4px;cursor:pointer"
+                          class="hstack clickable-row clickable-item${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
                           key=${s.category_id}
                           title="${paceLabel(s.pace, s.pace_delta)}"
                           onClick=${() => handleProjectClick?.(s.category_id)}
@@ -1563,9 +1567,8 @@ function TxnDetail({
         ${
           amazonEnrichment &&
           html`
-            <div style="margin-top:1rem">
+            <div class="mt-4">
               <h4 style="margin:0 0 0.5rem">Amazon Order Details</h4>
-              <span class="chip outline small">${amazonEnrichment.confidence} match</span>
               ${amazonEnrichment.orders.map(
                 (order) => html`
                   <div class="card" style="margin-top:0.5rem;padding:0.75rem">
@@ -1575,7 +1578,7 @@ function TxnDetail({
                     </div>
                     ${order.items.map(
                       (item) => html`
-                        <div class="hstack" style="gap:0.5rem;padding:0.25rem 0;align-items:start">
+                        <div class="hstack gap-2" style="padding:0.25rem 0;align-items:start">
                           <span style="flex:1">${item.quantity > 1 ? `${item.quantity}\u00d7 ` : ""}${item.title}</span>
                           ${item.price != null ? html`<span class="mono">${formatAmount(item.price)}</span>` : null}
                         </div>
@@ -1601,7 +1604,7 @@ function TxnDetail({
         ${
           ruleProposals &&
           html`
-            <div style="margin-top:1rem">
+            <div class="mt-4">
               <h4 style="margin:0 0 0.5rem">Rule Proposals</h4>
               <p class="text-light" style="margin:0 0 0.5rem">
                 Category: <strong>${ruleProposals.category_name}</strong>
@@ -1613,7 +1616,7 @@ function TxnDetail({
                     style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.5rem;cursor:pointer;${selectedProposal === idx ? "background:var(--bg-light)" : ""}"
                     onClick=${() => handleSelectProposal(idx)}
                   >
-                    <div class="hstack" style="gap:0.5rem;align-items:center">
+                    <div class="hstack gap-2" style="align-items:center">
                       <span class="chip outline text-caption">${p.match_field.replace(/_/g, " ")}</span>
                       <code class="text-body">${p.match_pattern}</code>
                     </div>
@@ -2887,7 +2890,7 @@ function Rules() {
       showForm &&
       html`
       <form style="border:1px solid var(--border);border-radius:4px;padding:1rem;margin-bottom:1rem;display:flex;flex-direction:column;gap:0.75rem" onSubmit=${handleSubmit}>
-        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center">${renderFormFields()}</div>
+        <div class="hstack gap-2" style="flex-wrap:wrap;align-items:center">${renderFormFields()}</div>
         <div class="hstack gap-sm">
           <button data-variant="primary" type="submit" disabled=${saving}>
             Create Rule
@@ -2912,7 +2915,7 @@ function Rules() {
 
     ${
       rules.length === 0
-        ? html`<p class="text-light" style="margin-top:1rem">
+        ? html`<p class="text-light mt-4">
           No rules yet. Add a rule to teach the system how to categorize and
           correlate your transactions.
         </p>`
@@ -3186,7 +3189,7 @@ function Connections() {
   return html`
     <div class="conn-header">
       <h2 style="margin:0">Accounts</h2>
-      <div class="hstack" style="gap:0.5rem">
+      <div class="hstack gap-2">
         <button
           class="small ${showBankSearch ? "" : "outline"}"
           data-variant="primary"
@@ -3267,7 +3270,7 @@ function Connections() {
               />
             </label>
           </div>
-          <div class="hstack" style="gap:0.5rem;margin-top:1rem">
+          <div class="hstack gap-2 mt-4">
             <button type="submit" data-variant="primary" class="small" disabled=${manualSaving}>
               ${manualSaving ? "Creating\u2026" : "Create Account"}
             </button>
@@ -3286,7 +3289,7 @@ function Connections() {
         <p class="text-light text-body" style="margin-bottom:1rem">
           Link a bank account via Open Banking API for automatic transaction sync.
         </p>
-        <div class="hstack" style="gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <div class="hstack gap-2" style="flex-wrap:wrap;margin-bottom:0.75rem">
           <input
             type="text"
             placeholder="Country code (e.g. FI)"

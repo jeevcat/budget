@@ -67,7 +67,6 @@ struct AccountStatus {
 #[derive(Serialize)]
 struct MatchedTransaction {
     bank_transaction_id: Uuid,
-    confidence: String,
     orders: Vec<budget_amazon::AmazonOrder>,
 }
 
@@ -316,7 +315,6 @@ async fn list_matches(
         if let Some(enrichment) = state.db.get_amazon_enrichment_for_transaction(id).await? {
             results.push(MatchedTransaction {
                 bank_transaction_id: id,
-                confidence: enrichment.confidence,
                 orders: enrichment.orders,
             });
         }
@@ -343,7 +341,6 @@ async fn get_enrichment(
 
     Ok(Json(MatchedTransaction {
         bank_transaction_id: transaction_id,
-        confidence: enrichment.confidence,
         orders: enrichment.orders,
     }))
 }

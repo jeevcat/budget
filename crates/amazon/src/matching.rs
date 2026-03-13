@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::types::{AmazonTransaction, BankCandidate, MatchConfidence, MatchResult};
+use crate::types::{AmazonTransaction, BankCandidate, MatchResult};
 
 /// Maximum date offset (in days) for a transaction match.
 const DATE_WINDOW_DAYS: i64 = 3;
@@ -52,7 +52,7 @@ pub fn find_matches(
     // Sort by date distance (closest first) for greedy matching
     candidates.sort_by_key(|&(_, _, dist)| dist);
 
-    for (ai, bi, date_diff) in candidates {
+    for (ai, bi, _) in candidates {
         let atxn = &amazon_txns[ai];
         let bank = &bank_candidates[bi];
 
@@ -60,19 +60,12 @@ pub fn find_matches(
             continue;
         }
 
-        let confidence = if date_diff == 0 {
-            MatchConfidence::Exact
-        } else {
-            MatchConfidence::Approximate
-        };
-
         used_dedup_keys.insert(atxn.dedup_key.clone());
         used_bank_ids.insert(bank.id);
 
         results.push(MatchResult {
             amazon_dedup_key: atxn.dedup_key.clone(),
             bank_transaction_id: bank.id,
-            confidence,
         });
     }
 
@@ -121,7 +114,6 @@ mod tests {
             &[bank(d, dec!(-42.91), "AMZN Mktp DE")],
         );
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].confidence, MatchConfidence::Exact);
     }
 
     #[test]
@@ -133,7 +125,6 @@ mod tests {
             &[bank(bank_date, dec!(-42.91), "AMZN Mktp DE")],
         );
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].confidence, MatchConfidence::Approximate);
     }
 
     #[test]

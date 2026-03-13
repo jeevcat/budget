@@ -77,17 +77,10 @@ pub struct BankCandidate {
     pub merchant_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MatchConfidence {
-    Exact,
-    Approximate,
-}
-
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     pub amazon_dedup_key: String,
     pub bank_transaction_id: Uuid,
-    pub confidence: MatchConfidence,
 }
 
 // ---------------------------------------------------------------------------
