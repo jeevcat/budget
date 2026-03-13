@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = res { tracing::error!(%e, "worker error"); }
         }
         () = budget_jobs::reclaim_stale_jobs_loop(&apalis_pool) => {}
+        () = budget_jobs::purge_finished_jobs_loop(&apalis_pool) => {}
         () = budget_jobs::scheduler::run_scheduler(&db, &apalis_pool) => {}
     }
 

@@ -11,9 +11,13 @@ use super::{ApalisPool, JOBS_TABLE};
 /// A single job record from the apalis queue.
 #[derive(Serialize)]
 pub struct JobRecord {
+    pub id: String,
     pub job_type: String,
     pub status: String,
     pub run_at: String,
+    pub done_at: Option<String>,
+    pub attempts: i32,
+    pub error: Option<String>,
 }
 
 /// Aggregate queue depth for one job type.
@@ -33,17 +37,29 @@ pub struct QueueCount {
 /// Returns `sqlx::Error` on database failure.
 pub async fn list_jobs(pool: &ApalisPool) -> Result<Vec<JobRecord>, sqlx::Error> {
     let rows = sqlx::query(&format!(
-        "SELECT job_type, status, CAST(run_at AS TEXT) as run_at FROM {JOBS_TABLE} ORDER BY run_at DESC",
+        "SELECT id, job_type, status, \
+                CAST(run_at AS TEXT) as run_at, \
+                CAST(done_at AS TEXT) as done_at, \
+                attempts, \
+                last_result \
+         FROM {JOBS_TABLE} ORDER BY run_at DESC LIMIT 200",
     ))
     .fetch_all(pool)
     .await?;
 
     rows.iter()
         .map(|row| {
+            let last_result: Option<sqlx::types::JsonValue> = row.try_get("last_result")?;
+            let error =
+                last_result.and_then(|v| v.get("Err").and_then(|e| e.as_str().map(String::from)));
             Ok(JobRecord {
+                id: row.try_get("id")?,
                 job_type: row.try_get("job_type")?,
                 status: row.try_get("status")?,
                 run_at: row.try_get("run_at")?,
+                done_at: row.try_get("done_at")?,
+                attempts: row.try_get("attempts")?,
+                error,
             })
         })
         .collect()
@@ -111,6 +127,22 @@ pub async fn reclaim_stale(pool: &ApalisPool, stale_seconds: i64) -> Result<u64,
     let res = sqlx::query(&format!(
         "UPDATE {JOBS_TABLE} SET status = 'Pending', lock_by = NULL, lock_at = NULL \
          WHERE status = 'Running' AND lock_at < $1",
+    ))
+    .bind(cutoff)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Delete finished jobs (`Done`, `Failed`, `Killed`) older than `max_age_seconds`.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` on database failure.
+pub async fn purge_finished(pool: &ApalisPool, max_age_seconds: i64) -> Result<u64, sqlx::Error> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_seconds);
+    let res = sqlx::query(&format!(
+        "DELETE FROM {JOBS_TABLE} WHERE status IN ('Done', 'Failed', 'Killed') AND done_at < $1",
     ))
     .bind(cutoff)
     .execute(pool)

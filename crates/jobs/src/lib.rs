@@ -91,6 +91,28 @@ pub async fn reclaim_stale_jobs_loop(pool: &ApalisPool) {
     }
 }
 
+/// Periodically delete finished jobs older than 24 hours.
+///
+/// Keeps the apalis queue table bounded and prevents stale `Failed`/`Killed`
+/// counts from accumulating in the UI. Durable failure history is preserved
+/// in the `schedule_runs` table.
+pub async fn purge_finished_jobs_loop(pool: &ApalisPool) {
+    const MAX_AGE_SECS: i64 = 86_400; // 24 hours
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+    loop {
+        interval.tick().await;
+        match queries::purge_finished(pool, MAX_AGE_SECS).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "purged finished jobs older than 24h");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to purge finished jobs");
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Build the LLM provider from config.
 ///
 /// Uses Gemini when an API key is configured, otherwise falls back to the
