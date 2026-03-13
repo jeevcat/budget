@@ -88,8 +88,12 @@ struct LedgerSummary {
     saved: Decimal,
     /// `max(spent, budget)` across budgeted categories (for bar scaling).
     bar_max: Decimal,
+    /// Year-to-date monthly-budgeted total budget, included in `total_out`.
+    monthly_budget: Decimal,
     /// Year-to-date monthly-budgeted spending, included in `total_out`.
-    monthly_out: Decimal,
+    monthly_spent: Decimal,
+    /// `monthly_budget - monthly_spent`
+    monthly_remaining: Decimal,
 }
 
 #[derive(Serialize)]
@@ -426,7 +430,8 @@ fn group_by_category(transactions: &[Transaction], categories: &[Category]) -> V
 fn build_ledger(
     entries: &[&StatusEntry],
     budgeted_spending_total: Decimal,
-    monthly_out: Decimal,
+    monthly_budget: Decimal,
+    monthly_spent: Decimal,
     income_txns: &[Transaction],
     unbudgeted_txns: &[Transaction],
     categories: &[Category],
@@ -455,7 +460,7 @@ fn build_ledger(
         .iter()
         .fold(Decimal::ZERO, |acc, i| acc + i.amount);
 
-    let total_out = budgeted_spending_total + unbudgeted_spending_total + monthly_out;
+    let total_out = budgeted_spending_total + unbudgeted_spending_total + monthly_spent;
     let net = total_in - total_out;
 
     // Saved: salary income only (not other income like RSUs)
@@ -471,6 +476,7 @@ fn build_ledger(
         bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
     }
 
+    let monthly_remaining = monthly_budget - monthly_spent;
     LedgerSummary {
         income: income_items,
         total_in,
@@ -479,7 +485,9 @@ fn build_ledger(
         net,
         saved,
         bar_max,
-        monthly_out,
+        monthly_budget,
+        monthly_spent,
+        monthly_remaining,
     }
 }
 
@@ -550,6 +558,7 @@ fn build_ledgers(
     statuses: &[StatusEntry],
     classified: &DashboardContext,
     categories: &[Category],
+    num_months: usize,
 ) -> (LedgerSummary, LedgerSummary) {
     let monthly_entries: Vec<&StatusEntry> = statuses
         .iter()
@@ -565,6 +574,7 @@ fn build_ledgers(
         &monthly_entries,
         monthly_budgeted_spent,
         Decimal::ZERO,
+        Decimal::ZERO,
         &classified.income,
         &classified.unbudgeted,
         categories,
@@ -572,9 +582,14 @@ fn build_ledgers(
 
     let annual_budgeted_spent = negate_sum(&classified.annual);
     let monthly_annual_spent = negate_sum(&classified.monthly_annual);
+    let monthly_annual_budget = monthly_entries
+        .iter()
+        .fold(Decimal::ZERO, |acc, e| acc + e.status.budget_amount)
+        * Decimal::from(num_months);
     let annual_ledger = build_ledger(
         &annual_entries,
         annual_budgeted_spent,
+        monthly_annual_budget,
         monthly_annual_spent,
         &classified.annual_income,
         &classified.unbudgeted_annual,
@@ -673,7 +688,8 @@ async fn status(
         reference_date,
     );
 
-    let (monthly_ledger, annual_ledger) = build_ledgers(&statuses, &classified, &categories);
+    let (monthly_ledger, annual_ledger) =
+        build_ledgers(&statuses, &classified, &categories, year_months.len());
     let project_summary = compute_project_group_summary(&projects);
 
     Ok(Json(StatusResponse {
@@ -1158,6 +1174,7 @@ mod tests {
             &[],
             dec(2500),
             dec(0),
+            dec(0),
             &income_txns,
             &unbudgeted_txns,
             &categories,
@@ -1194,6 +1211,7 @@ mod tests {
             &[],
             dec(3000),
             dec(0),
+            dec(0),
             &income_txns,
             &unbudgeted_txns,
             &categories,
@@ -1226,6 +1244,7 @@ mod tests {
             &[],
             dec(4000),
             dec(0),
+            dec(0),
             &income_txns,
             &unbudgeted_txns,
             &categories,
@@ -1244,7 +1263,7 @@ mod tests {
 
         let income_txns = vec![txn(salary_id, 5000)];
 
-        let ledger = build_ledger(&[], dec(0), dec(0), &income_txns, &[], &categories);
+        let ledger = build_ledger(&[], dec(0), dec(0), dec(0), &income_txns, &[], &categories);
 
         assert_eq!(ledger.total_in, dec(5000));
         assert_eq!(ledger.total_out, dec(0));
@@ -1259,7 +1278,15 @@ mod tests {
 
         let unbudgeted_txns = vec![txn(misc_id, -1500)];
 
-        let ledger = build_ledger(&[], dec(2000), dec(0), &[], &unbudgeted_txns, &categories);
+        let ledger = build_ledger(
+            &[],
+            dec(2000),
+            dec(0),
+            dec(0),
+            &[],
+            &unbudgeted_txns,
+            &categories,
+        );
 
         assert_eq!(ledger.total_in, dec(0));
         assert_eq!(ledger.total_out, dec(3500));
@@ -1275,7 +1302,15 @@ mod tests {
         // Zero-amount transaction → neither positive nor negative
         let unbudgeted_txns = vec![txn(misc_id, 0)];
 
-        let ledger = build_ledger(&[], dec(0), dec(0), &[], &unbudgeted_txns, &categories);
+        let ledger = build_ledger(
+            &[],
+            dec(0),
+            dec(0),
+            dec(0),
+            &[],
+            &unbudgeted_txns,
+            &categories,
+        );
 
         assert!(ledger.income.is_empty());
         assert!(ledger.unbudgeted.is_empty());
@@ -1288,7 +1323,7 @@ mod tests {
             vec![],
         );
         let entries: Vec<&StatusEntry> = vec![&food_entry];
-        let ledger = build_ledger(&entries, dec(0), dec(0), &[], &[], &[]);
+        let ledger = build_ledger(&entries, dec(0), dec(0), dec(0), &[], &[], &[]);
         assert_eq!(ledger.bar_max, dec(5000));
     }
 
@@ -1421,6 +1456,7 @@ mod tests {
             &entries,
             dec(600),
             dec(0),
+            dec(0),
             &income_txns,
             &unbudgeted,
             &categories,
@@ -1442,7 +1478,7 @@ mod tests {
 
     #[test]
     fn build_ledger_empty() {
-        let ledger = build_ledger(&[], dec(0), dec(0), &[], &[], &[]);
+        let ledger = build_ledger(&[], dec(0), dec(0), dec(0), &[], &[], &[]);
 
         assert_eq!(ledger.total_in, dec(0));
         assert_eq!(ledger.total_out, dec(0));
@@ -1528,6 +1564,7 @@ mod tests {
             &entries,
             monthly_budgeted_spent,
             dec(0),
+            dec(0),
             &classified.income,
             &classified.unbudgeted,
             &categories,
@@ -1551,7 +1588,15 @@ mod tests {
 
         let unbudgeted_txns = vec![txn(rsu_id, 59000), txn(car_id, 15000)];
 
-        let ledger = build_ledger(&[], dec(0), dec(0), &[], &unbudgeted_txns, &categories);
+        let ledger = build_ledger(
+            &[],
+            dec(0),
+            dec(0),
+            dec(0),
+            &[],
+            &unbudgeted_txns,
+            &categories,
+        );
 
         assert_eq!(ledger.income.len(), 2);
         // Sorted by amount descending
@@ -1573,7 +1618,15 @@ mod tests {
             uncategorized_txn(-800),
         ];
 
-        let ledger = build_ledger(&[], dec(0), dec(0), &[], &unbudgeted_txns, &categories);
+        let ledger = build_ledger(
+            &[],
+            dec(0),
+            dec(0),
+            dec(0),
+            &[],
+            &unbudgeted_txns,
+            &categories,
+        );
 
         assert_eq!(ledger.unbudgeted.len(), 2);
         // Tax: |-2000 + -500| = 2500 (sorted first)
@@ -1803,7 +1856,7 @@ mod tests {
         // Both are income transactions (salary-category)
         let income_txns = vec![txn(salary_id, 5000), txn(bonus_id, 1000)];
 
-        let ledger = build_ledger(&[], dec(0), dec(0), &income_txns, &[], &categories);
+        let ledger = build_ledger(&[], dec(0), dec(0), dec(0), &income_txns, &[], &categories);
 
         assert_eq!(ledger.total_in, dec(6000));
         assert_eq!(ledger.income.len(), 2);
@@ -1836,6 +1889,7 @@ mod tests {
             &[],
             dec(4500),
             dec(0),
+            dec(0),
             &income_txns,
             &unbudgeted_txns,
             &categories,
@@ -1867,7 +1921,15 @@ mod tests {
 
         let income_txns = vec![txn(salary_id, 3000)];
 
-        let ledger = build_ledger(&[], dec(4000), dec(0), &income_txns, &[], &categories);
+        let ledger = build_ledger(
+            &[],
+            dec(4000),
+            dec(0),
+            dec(0),
+            &income_txns,
+            &[],
+            &categories,
+        );
 
         // saved = salary (3000) - total_out (4000) = -1000
         assert_eq!(ledger.saved, dec(-1000));
@@ -1887,7 +1949,7 @@ mod tests {
         transport_entry.status.budget_mode = BudgetMode::Monthly;
 
         let monthly_entries: Vec<&StatusEntry> = vec![&food_entry, &transport_entry];
-        let monthly = build_ledger(&monthly_entries, dec(950), dec(0), &[], &[], &[]);
+        let monthly = build_ledger(&monthly_entries, dec(950), dec(0), dec(0), &[], &[], &[]);
 
         // total_out = budgeted spending only
         assert_eq!(monthly.total_out, dec(950));
@@ -2139,6 +2201,7 @@ mod tests {
             &entries,
             monthly_budgeted_spent,
             dec(0),
+            dec(0),
             &classified.income,
             &classified.unbudgeted,
             &categories,
@@ -2267,6 +2330,7 @@ mod tests {
         let annual_ledger = build_ledger(
             &annual_entries,
             annual_budgeted_spent,
+            dec(0),
             monthly_annual_spent,
             &classified.annual_income,
             &classified.unbudgeted_annual,

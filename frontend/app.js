@@ -515,12 +515,15 @@ function Ledger({
         `
         }
         ${
-          Number(ledger.monthly_out) > 0 &&
+          Number(ledger.monthly_spent) > 0 &&
           html`
           <div class="ledger-divider"></div>
-          <div class="hstack text-light clickable-row" style="padding:0.2rem 0.35rem;font-size:var(--text-7)" onClick=${onMonthlyClick}>
-            <span>Monthly budgets</span>
-            <span class="ledger-amount">${formatAmount(ledger.monthly_out, { decimals: 0 })}</span>
+          <div class="ledger-row clickable-row" onClick=${onMonthlyClick} style="color:var(--muted-foreground)">
+            <span class="ledger-row-name">Monthly budgets</span>
+            <span></span>
+            <span class="ledger-amount">${formatAmount(ledger.monthly_budget, { decimals: 0 })}</span>
+            <span class="ledger-amount">${formatAmount(ledger.monthly_spent, { decimals: 0 })}</span>
+            <span class="ledger-amount" style="color:${Number(ledger.monthly_remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(ledger.monthly_remaining, { decimals: 0, sign: true })}</span>
           </div>
         `
         }
