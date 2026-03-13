@@ -513,6 +513,19 @@ function Ledger({
           )}
         `
         }
+        ${
+          Number(ledger.monthly_out) > 0 &&
+          html`
+          <div class="ledger-divider"></div>
+          <div class="ledger-unbudgeted-row">
+            <span>Monthly budgets</span>
+            <span></span>
+            <span></span>
+            <span class="ledger-amount">${formatAmount(ledger.monthly_out, { decimals: 0 })}</span>
+            <span></span>
+          </div>
+        `
+        }
         <div class="ledger-subtotal">
           <span>Total Out</span>
           <span class="ledger-amount" style="color:var(--danger)">${formatAmount(ledger.total_out, { decimals: 0 })}</span>
