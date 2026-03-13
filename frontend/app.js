@@ -3591,6 +3591,7 @@ function Connections() {
 function AmazonPanel() {
   const [accounts, setAccounts] = useState([]);
   const [statuses, setStatuses] = useState({});
+  const [showForm, setShowForm] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -3611,12 +3612,14 @@ function AmazonPanel() {
 
   useEffect(loadAccounts, []);
 
-  async function addAccount() {
+  async function addAccount(e) {
+    e.preventDefault();
     if (!newLabel.trim()) return;
     setCreating(true);
     try {
       await api.post("/amazon/accounts", { label: newLabel.trim() });
       setNewLabel("");
+      setShowForm(false);
       loadAccounts();
       ot.toast("Account created", "", { variant: "success" });
     } catch (e) {
@@ -3644,7 +3647,38 @@ function AmazonPanel() {
 
   return html`
     <div style="margin-top:2rem">
-      <h3 style="margin-bottom:0.75rem">Amazon Enrichment</h3>
+      <div class="conn-header">
+        <h3 style="margin:0">Amazon Enrichment</h3>
+        <button
+          class="small ${showForm ? "" : "outline"}"
+          data-variant="primary"
+          onClick=${() => setShowForm(!showForm)}
+        >
+          Add Account
+        </button>
+      </div>
+
+      ${
+        showForm &&
+        html`
+        <article class="card" style="margin-bottom:1.25rem">
+          <form class="hstack gap-2" onSubmit=${addAccount}>
+            <input
+              type="text"
+              placeholder="Account label (e.g. Amazon DE)"
+              required
+              value=${newLabel}
+              onInput=${(e) => setNewLabel(e.target.value)}
+              style="flex:1"
+            />
+            <button type="submit" data-variant="primary" class="small" disabled=${creating}>
+              ${creating ? "Creating\u2026" : "Create Account"}
+            </button>
+            <button type="button" class="small outline" onClick=${() => setShowForm(false)}>Cancel</button>
+          </form>
+        </article>
+      `
+      }
 
       <div class="vstack gap-3">
         ${accounts.map(
@@ -3658,25 +3692,6 @@ function AmazonPanel() {
             />
           `,
         )}
-
-        <div class="hstack gap-2">
-          <input
-            type="text"
-            placeholder="New account label..."
-            value=${newLabel}
-            onInput=${(e) => setNewLabel(e.target.value)}
-            onKeyDown=${(e) => e.key === "Enter" && addAccount()}
-            style="flex:1"
-          />
-          <button
-            class="small"
-            data-variant="primary"
-            onClick=${addAccount}
-            disabled=${creating || !newLabel.trim()}
-          >
-            ${creating ? "Adding\u2026" : "Add Account"}
-          </button>
-        </div>
       </div>
     </div>
   `;

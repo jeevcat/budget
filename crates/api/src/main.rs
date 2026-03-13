@@ -102,16 +102,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::select! {
         res = axum::serve(listener, app) => {
-            if let Err(e) = res { tracing::error!(%e, "server error"); }
+            match res {
+                Ok(()) => tracing::warn!("HTTP server exited"),
+                Err(e) => tracing::error!(%e, "HTTP server error"),
+            }
         }
         res = workers => {
-            if let Err(e) = res { tracing::error!(%e, "worker error"); }
+            match res {
+                Ok(()) => tracing::warn!("worker pool exited"),
+                Err(e) => tracing::error!(%e, "worker pool error"),
+            }
         }
-        () = budget_jobs::reclaim_stale_jobs_loop(&apalis_pool) => {}
-        () = budget_jobs::purge_finished_jobs_loop(&apalis_pool) => {}
-        () = budget_jobs::scheduler::run_scheduler(&db, &apalis_pool) => {}
+        () = budget_jobs::reclaim_stale_jobs_loop(&apalis_pool) => {
+            tracing::warn!("reclaim loop exited");
+        }
+        () = budget_jobs::purge_finished_jobs_loop(&apalis_pool) => {
+            tracing::warn!("purge loop exited");
+        }
+        () = budget_jobs::scheduler::run_scheduler(&db, &apalis_pool) => {
+            tracing::warn!("scheduler loop exited");
+        }
     }
 
+    tracing::error!("main loop exited — shutting down (this should not happen)");
     Ok(())
 }
 
