@@ -80,7 +80,8 @@
   "permissions": {
     "allow": [
       "Bash(./gradlew *)",
-      "Bash(cd mobile && ./gradlew *)"
+      "Bash(cd mobile && ./gradlew *)",
+      "Bash(scripts/*)"
     ]
   },
   "enabledPlugins": {
