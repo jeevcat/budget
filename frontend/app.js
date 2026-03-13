@@ -3122,6 +3122,15 @@ function Connections() {
   const [authorizing, setAuthorizing] = useState(null);
   const [authError, setAuthError] = useState(null);
   const [importingAccount, setImportingAccount] = useState(null);
+  const [showBankSearch, setShowBankSearch] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    name: "",
+    institution: "",
+    account_type: "credit_card",
+    currency: "EUR",
+  });
+  const [manualSaving, setManualSaving] = useState(false);
 
   function load() {
     Promise.all([api.get("/connections"), api.get("/accounts")])
@@ -3138,11 +3147,6 @@ function Connections() {
     if (status === "active") return "success";
     if (status === "expired") return "warning";
     return "danger";
-  }
-
-  function accountCount(connectionId) {
-    if (!accounts) return 0;
-    return accounts.filter((a) => a.connection_id === connectionId).length;
   }
 
   async function searchAspsps() {
@@ -3208,6 +3212,33 @@ function Connections() {
     }
   }
 
+  async function createManualAccount(e) {
+    e.preventDefault();
+    setManualSaving(true);
+    try {
+      await api.post("/accounts", {
+        provider_account_id: `manual-${Date.now()}`,
+        name: manualForm.name,
+        institution: manualForm.institution,
+        account_type: manualForm.account_type,
+        currency: manualForm.currency.toUpperCase(),
+      });
+      setManualForm({
+        name: "",
+        institution: "",
+        account_type: "credit_card",
+        currency: "EUR",
+      });
+      setShowManualForm(false);
+      load();
+      ot.toast("Account created", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Failed to create account", { variant: "danger" });
+    } finally {
+      setManualSaving(false);
+    }
+  }
+
   const filteredAspsps =
     aspsps && searchQuery
       ? aspsps.filter((a) =>
@@ -3218,198 +3249,289 @@ function Connections() {
   if (error) return html`<p class="text-light">${error.message}</p>`;
   if (!connections) return html`<p class="text-light">Loading...</p>`;
 
-  return html`
-    <h2>Connections</h2>
+  const connectedAccounts = accounts
+    ? connections.map((c) => ({
+        connection: c,
+        accounts: accounts.filter((a) => a.connection_id === c.id),
+      }))
+    : [];
+  const manualAccounts = accounts
+    ? accounts.filter((a) => !a.connection_id)
+    : [];
+  const hasAny = (accounts && accounts.length > 0) || connections.length > 0;
 
-    ${
-      connections.length === 0
-        ? html`<p class="text-light" style="margin-bottom:1.5rem">
-            No bank connections yet. Search for your bank below to get started.
-          </p>`
-        : html`
-            <p class="text-light" style="margin-bottom:1rem">
-              ${connections.length} connection${connections.length !== 1 ? "s" : ""}
-            </p>
-            <table>
-              <thead>
-                <tr>
-                  <th>Institution</th>
-                  <th>Status</th>
-                  <th>Valid Until</th>
-                  <th>Accounts</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${connections.map(
-                  (c) => html`
-                    <tr>
-                      <td>${c.institution_name}</td>
-                      <td>
-                        <span class="chip ${statusBadge(c.status)}">${c.status}</span>
-                      </td>
-                      <td class="mono">${formatDate(c.valid_until)}</td>
-                      <td>${accountCount(c.id)}</td>
-                      <td>
-                        ${
-                          c.status === "expired"
-                            ? html`<button
-                                data-variant="primary" class="small"
-                                style="margin-right:0.5rem"
-                                onClick=${() =>
-                                  startAuth({
-                                    name: c.institution_name,
-                                    country: "",
-                                  })}
-                              >
-                                Reconnect
-                              </button>`
-                            : null
-                        }
-                        ${
-                          c.status !== "revoked"
-                            ? html`<button data-variant="danger" class="small" onClick=${() => revokeConnection(c.id)}>
-                                Revoke
-                              </button>`
-                            : null
-                        }
-                      </td>
-                    </tr>
-                  `,
-                )}
-              </tbody>
-            </table>
-          `
-    }
-
-    ${
-      accounts &&
-      accounts.length > 0 &&
-      html`
-        <div style="margin-top:2rem">
-          <h3>Accounts</h3>
-          <p class="text-light" style="margin-bottom:0.75rem">
-            Click a name to set a nickname.
-          </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Currency</th>
-                <th>Institution</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${accounts.map(
-                (a) => html`
-                  <tr key=${a.id}>
-                    <td>
-                      <${AccountNickname}
-                        account=${a}
-                        onRenamed=${(updated) =>
-                          setAccounts((prev) =>
-                            prev.map((x) =>
-                              x.id === updated.id ? updated : x,
-                            ),
-                          )}
-                      />
-                    </td>
-                    <td>${a.account_type}</td>
-                    <td>${a.currency}</td>
-                    <td class="text-light">${a.institution}</td>
-                    <td>
-                      <label class="button outline small" style="cursor:pointer;margin:0">
-                        ${importingAccount === a.id ? "Importing..." : "Import CSV"}
-                        <input
-                          type="file"
-                          accept=".csv"
-                          style="display:none"
-                          disabled=${importingAccount === a.id}
-                          onChange=${(e) => {
-                            const file = e.target.files[0];
-                            if (file) importCsv(a.id, file);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    </td>
-                  </tr>
-                `,
+  function renderAccountRow(a) {
+    return html`
+      <div class="conn-account-row" key=${a.id}>
+        <div class="conn-account-info">
+          <${AccountNickname}
+            account=${a}
+            onRenamed=${(updated) =>
+              setAccounts((prev) =>
+                prev.map((x) => (x.id === updated.id ? updated : x)),
               )}
-            </tbody>
-          </table>
+          />
+          <span class="conn-account-meta">
+            ${a.account_type}${" "}<span class="mono">${a.currency}</span>
+          </span>
         </div>
-      `
-    }
+        <label class="button outline small" style="cursor:pointer;margin:0">
+          ${importingAccount === a.id ? "Importing\u2026" : "Import CSV"}
+          <input
+            type="file"
+            accept=".csv"
+            style="display:none"
+            disabled=${importingAccount === a.id}
+            onChange=${(e) => {
+              const file = e.target.files[0];
+              if (file) importCsv(a.id, file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+    `;
+  }
 
-    <div style="margin-top:2rem">
-      <h3>Connect Bank</h3>
-      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem" style="margin-top:0.75rem;margin-bottom:0.75rem">
-        <input
-          type="text"
-          placeholder="Country code (e.g. FI)"
-          value=${searchCountry}
-          onInput=${(e) => setSearchCountry(e.target.value)}
-          style="width:140px"
-        />
-        <button data-variant="primary" onClick=${searchAspsps} disabled=${searchLoading}>
-          ${searchLoading ? "Searching..." : "Search Banks"}
+  return html`
+    <div class="conn-header">
+      <h2 style="margin:0">Accounts</h2>
+      <div class="hstack" style="gap:0.5rem">
+        <button
+          class="small ${showBankSearch ? "" : "outline"}"
+          data-variant="primary"
+          onClick=${() => {
+            setShowBankSearch(!showBankSearch);
+            setShowManualForm(false);
+          }}
+        >
+          Connect Bank
+        </button>
+        <button
+          class="small ${showManualForm ? "" : "outline"}"
+          data-variant="primary"
+          onClick=${() => {
+            setShowManualForm(!showManualForm);
+            setShowBankSearch(false);
+          }}
+        >
+          Add Manual Account
         </button>
       </div>
+    </div>
 
-      ${searchError ? html`<p role="alert" data-variant="error">${searchError}</p>` : null}
-
-      ${
-        aspsps
-          ? html`
+    ${
+      showManualForm &&
+      html`
+      <article class="card" style="margin-bottom:1.25rem">
+        <h3 style="margin-top:0;margin-bottom:0.75rem">New Manual Account</h3>
+        <p class="text-light text-body" style="margin-bottom:1rem">
+          For providers without API access (e.g. Amex EU). Import transactions later via CSV.
+        </p>
+        <form onSubmit=${createManualAccount}>
+          <div class="conn-manual-grid">
+            <label data-field>
+              Name
               <input
                 type="text"
-                placeholder="Filter results..."
-                value=${searchQuery}
-                onInput=${(e) => setSearchQuery(e.target.value)}
-                style="width:100%;margin-bottom:0.75rem"
+                placeholder="e.g. Amex Platinum"
+                required
+                value=${manualForm.name}
+                onInput=${(e) => setManualForm({ ...manualForm, name: e.target.value })}
               />
-              ${authError ? html`<p role="alert" data-variant="error">${authError}</p>` : null}
-              ${
-                filteredAspsps && filteredAspsps.length > 0
-                  ? html`
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Bank</th>
-                            <th>Country</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody>
+            </label>
+            <label data-field>
+              Institution
+              <input
+                type="text"
+                placeholder="e.g. American Express"
+                required
+                value=${manualForm.institution}
+                onInput=${(e) => setManualForm({ ...manualForm, institution: e.target.value })}
+              />
+            </label>
+            <label data-field>
+              Account Type
+              <select
+                value=${manualForm.account_type}
+                onChange=${(e) => setManualForm({ ...manualForm, account_type: e.target.value })}
+              >
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+                <option value="credit_card">Credit Card</option>
+                <option value="investment">Investment</option>
+                <option value="loan">Loan</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label data-field>
+              Currency
+              <input
+                type="text"
+                placeholder="EUR"
+                maxlength="3"
+                required
+                value=${manualForm.currency}
+                onInput=${(e) => setManualForm({ ...manualForm, currency: e.target.value })}
+                style="width:6rem"
+              />
+            </label>
+          </div>
+          <div class="hstack" style="gap:0.5rem;margin-top:1rem">
+            <button type="submit" data-variant="primary" class="small" disabled=${manualSaving}>
+              ${manualSaving ? "Creating\u2026" : "Create Account"}
+            </button>
+            <button type="button" class="small outline" onClick=${() => setShowManualForm(false)}>Cancel</button>
+          </div>
+        </form>
+      </article>
+    `
+    }
+
+    ${
+      showBankSearch &&
+      html`
+      <article class="card" style="margin-bottom:1.25rem">
+        <h3 style="margin-top:0;margin-bottom:0.75rem">Connect Bank</h3>
+        <p class="text-light text-body" style="margin-bottom:1rem">
+          Link a bank account via Open Banking API for automatic transaction sync.
+        </p>
+        <div class="hstack" style="gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+          <input
+            type="text"
+            placeholder="Country code (e.g. FI)"
+            value=${searchCountry}
+            onInput=${(e) => setSearchCountry(e.target.value)}
+            style="width:140px"
+          />
+          <button data-variant="primary" class="small" onClick=${searchAspsps} disabled=${searchLoading}>
+            ${searchLoading ? "Searching\u2026" : "Search"}
+          </button>
+          <button class="small outline" onClick=${() => {
+            setShowBankSearch(false);
+            setAspsps(null);
+          }}>Cancel</button>
+        </div>
+
+        ${searchError ? html`<p role="alert" data-variant="error">${searchError}</p>` : null}
+
+        ${
+          aspsps
+            ? html`
+                <input
+                  type="text"
+                  placeholder="Filter results\u2026"
+                  value=${searchQuery}
+                  onInput=${(e) => setSearchQuery(e.target.value)}
+                  style="width:100%;margin-bottom:0.75rem"
+                />
+                ${authError ? html`<p role="alert" data-variant="error">${authError}</p>` : null}
+                ${
+                  filteredAspsps && filteredAspsps.length > 0
+                    ? html`
+                        <div class="conn-bank-list">
                           ${filteredAspsps.map(
                             (a) => html`
-                              <tr>
-                                <td>${a.name}</td>
-                                <td>${a.country}</td>
-                                <td>
-                                  <button
-                                    data-variant="primary" class="small"
-                                    onClick=${() => startAuth(a)}
-                                    disabled=${authorizing === a.name}
-                                  >
-                                    ${authorizing === a.name ? "Redirecting..." : "Connect"}
-                                  </button>
-                                </td>
-                              </tr>
+                              <div class="conn-bank-item" key=${a.name}>
+                                <span>${a.name}</span>
+                                <span class="text-light">${a.country}</span>
+                                <button
+                                  data-variant="primary" class="small"
+                                  onClick=${() => startAuth(a)}
+                                  disabled=${authorizing === a.name}
+                                >
+                                  ${authorizing === a.name ? "Redirecting\u2026" : "Connect"}
+                                </button>
+                              </div>
                             `,
                           )}
-                        </tbody>
-                      </table>
-                    `
-                  : html`<p class="text-light">No banks found matching your search.</p>`
-              }
+                        </div>
+                      `
+                    : html`<p class="text-light">No banks found.</p>`
+                }
+              `
+            : null
+        }
+      </article>
+    `
+    }
+
+    ${
+      !hasAny
+        ? html`
+          <div class="conn-empty">
+            <p class="text-light">No accounts yet.</p>
+            <p class="text-light text-body">
+              Connect a bank for automatic sync, or add a manual account to import CSV files.
+            </p>
+          </div>
+        `
+        : html`
+          <div class="conn-groups">
+            ${connectedAccounts.map(
+              ({ connection: c, accounts: accts }) => html`
+                <div class="conn-group" key=${c.id}>
+                  <div class="conn-group-header">
+                    <div class="conn-group-title">
+                      <span style="font-weight:600">${c.institution_name}</span>
+                      <span class="chip ${statusBadge(c.status)}">${c.status}</span>
+                      ${
+                        c.valid_until &&
+                        html`
+                        <span class="text-light text-body">
+                          expires ${formatDate(c.valid_until)}
+                        </span>
+                      `
+                      }
+                    </div>
+                    <div class="hstack" style="gap:0.35rem">
+                      ${
+                        c.status === "expired" &&
+                        html`
+                        <button
+                          data-variant="primary" class="small"
+                          onClick=${() => startAuth({ name: c.institution_name, country: "" })}
+                        >
+                          Reconnect
+                        </button>
+                      `
+                      }
+                      ${
+                        c.status !== "revoked" &&
+                        html`
+                        <button data-variant="danger" class="small ghost" onClick=${() => revokeConnection(c.id)}>
+                          Revoke
+                        </button>
+                      `
+                      }
+                    </div>
+                  </div>
+                  ${
+                    accts.length > 0
+                      ? accts.map(renderAccountRow)
+                      : html`<div class="conn-account-row"><span class="text-light">No accounts</span></div>`
+                  }
+                </div>
+              `,
+            )}
+
+            ${
+              manualAccounts.length > 0 &&
+              html`
+              <div class="conn-group">
+                <div class="conn-group-header">
+                  <div class="conn-group-title">
+                    <span style="font-weight:600">Manual Accounts</span>
+                    <span class="chip">csv</span>
+                  </div>
+                </div>
+                ${manualAccounts.map(renderAccountRow)}
+              </div>
             `
-          : null
-      }
-    </div>
+            }
+          </div>
+        `
+    }
   `;
 }
 

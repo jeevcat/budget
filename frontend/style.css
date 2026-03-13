@@ -681,3 +681,99 @@ dialog > form > div {
   padding-block: 0.25rem;
   font-size: var(--text-7);
 }
+
+/* Connections / Accounts page */
+.conn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+.conn-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.conn-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.conn-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: var(--muted);
+  flex-wrap: wrap;
+}
+.conn-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.conn-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+.conn-account-row + .conn-account-row {
+  border-top: 1px solid var(--border);
+}
+.conn-account-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.conn-account-meta {
+  color: var(--muted-foreground);
+  font-size: var(--text-7);
+  white-space: nowrap;
+}
+.conn-manual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 600px) {
+  .conn-manual-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.conn-bank-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+.conn-bank-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.6rem;
+}
+.conn-bank-item + .conn-bank-item {
+  border-top: 1px solid var(--border);
+}
+.conn-bank-item > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.conn-bank-item > button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.conn-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+}
