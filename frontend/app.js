@@ -582,8 +582,10 @@ function Ledger({
           </div>
         `
         }
-        ${items.map(
-          (s) => html`
+        ${items
+          .filter((s) => Number(s.spent) !== 0)
+          .map(
+            (s) => html`
             <div
               class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
               key=${s.category_id}
@@ -609,7 +611,30 @@ function Ledger({
               <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
             </div>
           `,
-        )}
+          )}
+
+        ${
+          items.filter((s) => Number(s.spent) === 0).length > 0 &&
+          html`
+          <div class="ledger-zero-spend">
+            ${items
+              .filter((s) => Number(s.spent) === 0)
+              .map(
+                (s) => html`
+                <span
+                  class="ledger-zero-chip${selectedCategoryId === s.category_id ? " ledger-zero-chip-selected" : ""}"
+                  key=${s.category_id}
+                  title="${s.shortName}: ${formatAmount(s.budget_amount, { decimals: 0 })} budgeted, no spend"
+                  onClick=${() => onCategoryClick?.(s.category_id)}
+                >
+                  <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>${s.shortName}
+                  <span class="text-light">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+                </span>
+              `,
+              )}
+          </div>
+        `
+        }
 
         ${
           ledger.unbudgeted.length > 0 &&
@@ -698,8 +723,10 @@ function BudgetSection({
     </div>
 
     <div class="vstack" style="gap:0">
-      ${items.map(
-        (s) => html`
+      ${items
+        .filter((s) => Number(s.spent) !== 0)
+        .map(
+          (s) => html`
           <div
             class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
             key=${s.category_id}
@@ -734,7 +761,30 @@ function BudgetSection({
             <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
           </div>
         `,
-      )}
+        )}
+
+      ${
+        items.filter((s) => Number(s.spent) === 0).length > 0 &&
+        html`
+        <div class="ledger-zero-spend">
+          ${items
+            .filter((s) => Number(s.spent) === 0)
+            .map(
+              (s) => html`
+              <span
+                class="ledger-zero-chip${selectedCategoryId === s.category_id ? " ledger-zero-chip-selected" : ""}"
+                key=${s.category_id}
+                title="${s.shortName}: ${formatAmount(s.budget_amount, { decimals: 0 })} budgeted, no spend"
+                onClick=${() => onCategoryClick?.(s.category_id)}
+              >
+                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>${s.shortName}
+                <span class="text-light">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+              </span>
+            `,
+            )}
+        </div>
+      `
+      }
     </div>
   `;
 }

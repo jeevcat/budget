@@ -444,6 +444,30 @@ dialog > form > div {
   min-width: 3.5rem;
   font-size: var(--text-7);
 }
+.ledger-zero-spend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.4rem 0.35rem 0.15rem;
+}
+.ledger-zero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-size: var(--text-8);
+  background: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ledger-zero-chip:hover {
+  background: var(--border);
+}
+.ledger-zero-chip-selected {
+  outline: 1.5px solid var(--primary);
+  outline-offset: -1.5px;
+}
 .ledger-divider {
   border-top: 1px dashed var(--border);
   margin: 0.35rem 0;
