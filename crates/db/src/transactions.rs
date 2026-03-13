@@ -164,7 +164,8 @@ impl Db {
         let pool = &self.0;
 
         let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
-                            OR LOWER(array_to_string(remittance_information, ' ')) LIKE '%' || LOWER($1) || '%')
+                            OR LOWER(array_to_string(remittance_information, ' ')) LIKE '%' || LOWER($1) || '%'
+                            OR LOWER(COALESCE(llm_title, '')) LIKE '%' || LOWER($1) || '%')
                AND ($2 = '' OR ($2 = '__none' AND category_id IS NULL)
                             OR ($2 != '__none' AND category_id = $2::uuid))
                AND ($3 = '' OR account_id = $3::uuid)
@@ -403,11 +404,30 @@ impl Db {
     pub async fn clear_transaction_category(&self, id: TransactionId) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
-            "UPDATE transactions SET category_id = NULL, category_method = NULL, llm_justification = NULL WHERE id = $1",
+            "UPDATE transactions SET category_id = NULL, category_method = NULL, llm_justification = NULL, llm_title = NULL WHERE id = $1",
         )
         .bind(id)
         .execute(pool)
         .await?;
+        Ok(())
+    }
+
+    /// Set the LLM-generated human-friendly title on a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn update_transaction_llm_title(
+        &self,
+        id: TransactionId,
+        title: &str,
+    ) -> Result<(), DbError> {
+        let pool = &self.0;
+        sqlx::query("UPDATE transactions SET llm_title = $1 WHERE id = $2")
+            .bind(title)
+            .bind(id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 

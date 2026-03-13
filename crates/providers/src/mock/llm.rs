@@ -129,6 +129,7 @@ impl LlmProvider for MockLlmProvider {
             confidence,
             justification: format!("Matched merchant \"{merchant_upper}\" to {category}"),
             proposed_category: None,
+            title: Some(input.merchant_name.to_owned()),
         })
     }
 

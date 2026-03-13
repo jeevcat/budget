@@ -178,6 +178,11 @@ pub async fn handle_categorize_transaction_job(
 
     let result = llm.categorize(&input).await?;
 
+    // Persist title regardless of confidence — useful even when category isn't auto-assigned
+    if let Some(ref title) = result.title {
+        db.update_transaction_llm_title(txn_id, title).await?;
+    }
+
     let justification = Some(result.justification.as_str());
 
     // If the LLM proposed a new category, save it for the suggestion histogram

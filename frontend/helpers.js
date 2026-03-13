@@ -175,6 +175,14 @@ export function cleanMerchant(name) {
   return s;
 }
 
+export function transactionTitle(t) {
+  return (
+    t.llm_title ||
+    t.counterparty_name ||
+    cleanMerchant(t.merchant_name || t.remittance_information?.[0] || "")
+  );
+}
+
 export function formatRemittanceInfo(segments) {
   if (!segments || !segments.length) return null;
   return segments.filter((s) => s?.trim());

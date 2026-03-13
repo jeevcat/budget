@@ -14,6 +14,8 @@ pub struct CategorizeResult {
     pub justification: String,
     /// Optional: a new category the LLM wishes existed (for the suggestion histogram)
     pub proposed_category: Option<String>,
+    /// Short human-friendly title (e.g. "Tim Ho Wan" instead of "BBMSL*Tim Ho Wan Dim Su HK")
+    pub title: Option<String>,
 }
 
 /// Summary of a transaction, used as input for correlation proposals.

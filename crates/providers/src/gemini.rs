@@ -177,6 +177,7 @@ Respond with a JSON object containing:
 - "confidence": number — your confidence from 0.0 to 1.0
 - "justification": string — one brief sentence explaining why this category fits
 - "proposed_category": string or null — only set this if none of the existing categories fit well; suggest a new "Parent:Child" category name
+- "title": string — a concise 2-4 word human-friendly name for this transaction. Strip payment processor prefixes (VISA, SUMUP, BBMSL*), store numbers, location suffixes, and junk. Use the actual business name or purpose (e.g. "Tim Ho Wan" not "BBMSL*Tim Ho Wan Dim Su HK", "MTR Top-up" not "VISA MTR-KIOSK PAYMENT04100", "Rent" for a rent payment to a person).
 
 If you are unsure, use a low confidence score. Do not guess wildly.
 
@@ -199,6 +200,7 @@ JSON response:"#
             confidence: result.confidence.clamp(0.0, 1.0),
             justification: result.justification,
             proposed_category: result.proposed_category.filter(|s| !s.is_empty()),
+            title: result.title.filter(|s| !s.is_empty()),
         })
     }
 
@@ -472,6 +474,8 @@ struct CategorizeResponse {
     justification: String,
     #[serde(default)]
     proposed_category: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]

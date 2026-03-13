@@ -22,6 +22,7 @@ import {
   syncUrlFor,
   timeAgo,
   titleCase,
+  transactionTitle,
 } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -277,6 +278,48 @@ describe("cleanMerchant", () => {
   test("returns null/undefined as-is", () => {
     expect(cleanMerchant(null)).toBeNull();
     expect(cleanMerchant(undefined)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// transactionTitle
+// ---------------------------------------------------------------------------
+
+describe("transactionTitle", () => {
+  test("prefers llm_title when present", () => {
+    expect(
+      transactionTitle({
+        llm_title: "Tim Ho Wan",
+        counterparty_name: "BBMSL",
+        merchant_name: "BBMSL*Tim Ho Wan Dim Su HK",
+      }),
+    ).toBe("Tim Ho Wan");
+  });
+
+  test("falls back to counterparty_name", () => {
+    expect(
+      transactionTitle({
+        counterparty_name: "Dagmar Jost",
+        merchant_name: "SEPA TRANSFER 12345",
+      }),
+    ).toBe("Dagmar Jost");
+  });
+
+  test("falls back to cleanMerchant", () => {
+    expect(transactionTitle({ merchant_name: "VISA CITYBUS" })).toBe("Citybus");
+  });
+
+  test("uses remittance_information as last resort", () => {
+    expect(
+      transactionTitle({
+        merchant_name: "",
+        remittance_information: ["PAYMENT REF 123"],
+      }),
+    ).toBe("Payment Ref 123");
+  });
+
+  test("handles empty transaction", () => {
+    expect(transactionTitle({})).toBeFalsy();
   });
 });
 
