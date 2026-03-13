@@ -188,12 +188,23 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
         })
         .collect();
 
-    let eligible = state.db.get_rule_eligible_transactions().await?;
+    let mut eligible = state.db.get_rule_eligible_transactions().await?;
     tracing::info!(
         rules = compiled_rules.len(),
         eligible = eligible.len(),
         "applying categorization rules"
     );
+
+    let txn_ids: Vec<uuid::Uuid> = eligible.iter().map(|t| *t.id.as_uuid()).collect();
+    let mut amazon_titles = state
+        .db
+        .get_amazon_item_titles_for_transactions(&txn_ids)
+        .await?;
+    for txn in &mut eligible {
+        if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
+            txn.amazon_item_titles = titles;
+        }
+    }
 
     let mut categorized_count: u32 = 0;
 
@@ -263,6 +274,20 @@ async fn preview(
         && let Some(txn) = state.db.get_transaction_by_id(include_id).await?
     {
         transactions.push(txn);
+    }
+
+    // Enrich with Amazon item titles so AmazonItemTitle rules can match
+    if rule.rule_type == RuleType::Categorization {
+        let txn_ids: Vec<uuid::Uuid> = transactions.iter().map(|t| *t.id.as_uuid()).collect();
+        let mut amazon_titles = state
+            .db
+            .get_amazon_item_titles_for_transactions(&txn_ids)
+            .await?;
+        for txn in &mut transactions {
+            if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
+                txn.amazon_item_titles = titles;
+            }
+        }
     }
 
     let mut match_count: u32 = 0;
@@ -380,6 +405,7 @@ mod tests {
             ("counterparty_iban", MatchField::CounterpartyIban),
             ("counterparty_bic", MatchField::CounterpartyBic),
             ("bank_transaction_code", MatchField::BankTransactionCode),
+            ("amazon_item_title", MatchField::AmazonItemTitle),
         ] {
             let json = format!(
                 r#"{{"rule_type":"categorization","conditions":[{{"field":"{name}","pattern":"x"}}],"priority":0}}"#,

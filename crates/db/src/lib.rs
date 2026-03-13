@@ -161,6 +161,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, DbError> {
         balance_after_transaction_currency: row.try_get("balance_after_transaction_currency")?,
         creditor_account_additional_id: row.try_get("creditor_account_additional_id")?,
         debtor_account_additional_id: row.try_get("debtor_account_additional_id")?,
+        amazon_item_titles: Vec::new(),
     })
 }
 

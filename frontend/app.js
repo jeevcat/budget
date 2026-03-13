@@ -165,7 +165,9 @@ function CategorySelect({
       }
     };
     document.addEventListener("mousedown", onDown);
-    const scrollParent = wrapRef.current?.closest("dialog > form > div");
+    const scrollParent =
+      wrapRef.current?.closest(".txn-panel-body") ||
+      wrapRef.current?.closest("dialog > form > div");
     if (scrollParent) scrollParent.style.overflow = "visible";
     return () => {
       document.removeEventListener("mousedown", onDown);
@@ -632,7 +634,8 @@ function ProjectDrillDown({
   const remaining = Number(project.remaining);
 
   return html`
-    <div
+    <nav
+      aria-label="Breadcrumb"
       class="hstack"
       style="gap:0.5rem;align-items:center;margin-bottom:0.75rem;cursor:pointer"
       onClick=${onBack}
@@ -640,8 +643,8 @@ function ProjectDrillDown({
       <span class="text-display">\u2190</span>
       <span class="text-light">All Projects</span>
       <span class="text-light">\u203A</span>
-      <span class="cat-project" style="font-weight:600">${project.name}</span>
-    </div>
+      <span class="cat-project" style="font-weight:600" aria-current="page">${project.name}</span>
+    </nav>
 
     <div class="proj-stat-cards">
       <article class="card proj-stat-card">
@@ -1252,26 +1255,45 @@ function TxnDetail({
   const debounceRef = useRef(null);
   if (!txn) return null;
 
-  const ref = (el) => {
-    if (el && !el.open) {
-      el.addEventListener(
-        "close",
-        () => {
-          setRuleProposals(null);
-          setSelectedProposal(null);
-          setProposalPreview(null);
-          setAmazonEnrichment(null);
-          onClose();
-        },
-        { once: true },
-      );
-      el.showModal();
+  const [open, setOpen] = useState(false);
+  const prevTxnId = useRef(null);
+
+  useEffect(() => {
+    if (txn && txn.id !== prevTxnId.current) {
+      prevTxnId.current = txn.id;
+      setRuleProposals(null);
+      setSelectedProposal(null);
+      setProposalPreview(null);
+      setAmazonEnrichment(null);
+      // Small delay so the panel animates in
+      requestAnimationFrame(() => setOpen(true));
       api
         .get(`/amazon/enrichment/${txn.id}`)
         .then(setAmazonEnrichment)
         .catch(() => setAmazonEnrichment(null));
     }
-  };
+  }, [txn?.id]);
+
+  function closePanel() {
+    setOpen(false);
+    prevTxnId.current = null;
+    setTimeout(() => {
+      setRuleProposals(null);
+      setSelectedProposal(null);
+      setProposalPreview(null);
+      setAmazonEnrichment(null);
+      onClose();
+    }, 250);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e) {
+      if (e.key === "Escape") closePanel();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
   const remittanceSegments = formatRemittanceInfo(txn.remittance_information);
 
   const canGenerateRule = txn.category_id && txn.category_method !== "rule";
@@ -1384,289 +1406,289 @@ function TxnDetail({
   }
 
   return html`
-    <dialog ref=${ref} closedby="any">
-      <form method="dialog">
-        <header>
-          <h3>${cleanMerchant(txn.merchant_name || txn.remittance_information?.[0] || "")}</h3>
-        </header>
-        <div>
-          <dl class="txn-dl">
-            <dt>Date</dt><dd>${formatDateFull(txn.posted_date)}</dd>
-            <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount, { sign: true })}</dd>
+    <div class="txn-panel-backdrop${open ? " open" : ""}" onClick=${closePanel}></div>
+    <aside class="txn-panel${open ? " open" : ""}" role="complementary" aria-label="Transaction detail">
+      <div class="txn-panel-header">
+        <h3>${cleanMerchant(txn.merchant_name || txn.remittance_information?.[0] || "")}</h3>
+        <button class="ghost small" onClick=${closePanel} aria-label="Close">\u2715</button>
+      </div>
+      <div class="txn-panel-body">
+        <dl class="txn-dl">
+          <dt>Date</dt><dd>${formatDateFull(txn.posted_date)}</dd>
+          <dt>Amount</dt><dd class="${amountClass(txn.amount)}">${formatAmount(txn.amount, { sign: true })}</dd>
+          ${
+            txn.original_amount
+              ? html`
+            <dt>Original</dt><dd>${txn.original_amount} ${txn.original_currency}</dd>
+          `
+              : null
+          }
+          <dt>Category</dt>
+          <dd>
+            <${CategorySelect}
+              value=${txn.category_id ?? ""}
+              onChange=${handleCategorize}
+              categories=${categories}
+              catMap=${catMap}
+              placeholder="uncategorized"
+              disabled=${saving}
+              clearable
+            />
             ${
-              txn.original_amount
-                ? html`
-              <dt>Original</dt><dd>${txn.original_amount} ${txn.original_currency}</dd>
-            `
-                : null
-            }
-            <dt>Category</dt>
-            <dd>
-              <${CategorySelect}
-                value=${txn.category_id ?? ""}
-                onChange=${handleCategorize}
-                categories=${categories}
-                catMap=${catMap}
-                placeholder="uncategorized"
-                disabled=${saving}
-                clearable
-              />
-              ${
-                txn.category_id && txn.category_method
-                  ? html`<span class="chip outline small" style="margin-left:0.5rem">${{ manual: "Manual", rule: "Rule", llm: "LLM" }[txn.category_method] ?? txn.category_method}</span>`
-                  : null
-              }
-              ${
-                txn.category_id
-                  ? html`<button type="button" class="small" style="margin-left:0.5rem" onClick=${handleUncategorize} disabled=${saving}>Clear & recategorize</button>`
-                  : null
-              }
-              ${
-                !txn.category_id && txn.suggested_category
-                  ? html`<span class="llm-suggestion" style="margin-left:0.5rem" title="LLM suggestion"><span class="llm-suggestion-icon">✦</span> ${txn.suggested_category}</span>`
-                  : null
-              }
-            </dd>
-            ${
-              txn.llm_justification
-                ? html`<dt></dt><dd class="text-light text-body" style="font-style:italic">✦ ${txn.llm_justification}</dd>`
-                : null
-            }
-            <dt>Account</dt><dd>${accountDisplayName(acctMap[txn.account_id]) || txn.account_id}</dd>
-            ${
-              txn.correlation_type
-                ? html`
-              <dt>Correlation</dt><dd><span class="chip outline">${txn.correlation_type}</span></dd>
-            `
+              txn.category_id && txn.category_method
+                ? html`<span class="chip outline small" style="margin-left:0.5rem">${{ manual: "Manual", rule: "Rule", llm: "LLM" }[txn.category_method] ?? txn.category_method}</span>`
                 : null
             }
             ${
-              txn.merchant_name
-                ? html`
-              <dt>Raw merchant</dt><dd><code>${txn.merchant_name}</code></dd>
-            `
+              txn.category_id
+                ? html`<button type="button" class="small" style="margin-left:0.5rem" onClick=${handleUncategorize} disabled=${saving}>Clear & recategorize</button>`
                 : null
             }
             ${
-              remittanceSegments?.length
-                ? remittanceSegments.map((seg) => {
-                    const colon = seg.indexOf(": ");
-                    if (colon > 0 && colon < 40) {
-                      return html`<dt>${seg.slice(0, colon)}</dt><dd>${seg.slice(colon + 2)}</dd>`;
+              !txn.category_id && txn.suggested_category
+                ? html`<span class="llm-suggestion" style="margin-left:0.5rem" title="LLM suggestion"><span class="llm-suggestion-icon">✦</span> ${txn.suggested_category}</span>`
+                : null
+            }
+          </dd>
+          ${
+            txn.llm_justification
+              ? html`<dt></dt><dd class="text-light text-body" style="font-style:italic">✦ ${txn.llm_justification}</dd>`
+              : null
+          }
+          <dt>Account</dt><dd>${accountDisplayName(acctMap[txn.account_id]) || txn.account_id}</dd>
+          ${
+            txn.correlation_type
+              ? html`
+            <dt>Correlation</dt><dd><span class="chip outline">${txn.correlation_type}</span></dd>
+          `
+              : null
+          }
+          ${
+            txn.merchant_name
+              ? html`
+            <dt>Raw merchant</dt><dd><code>${txn.merchant_name}</code></dd>
+          `
+              : null
+          }
+          ${
+            remittanceSegments?.length
+              ? remittanceSegments.map((seg) => {
+                  const colon = seg.indexOf(": ");
+                  if (colon > 0 && colon < 40) {
+                    return html`<dt>${seg.slice(0, colon)}</dt><dd>${seg.slice(colon + 2)}</dd>`;
+                  }
+                  return html`<dt>Remittance</dt><dd>${seg}</dd>`;
+                })
+              : null
+          }
+          ${
+            txn.counterparty_name
+              ? html`
+            <dt>Counterparty</dt><dd>${txn.counterparty_name}</dd>
+          `
+              : null
+          }
+          ${
+            txn.counterparty_iban
+              ? html`
+            <dt>IBAN</dt><dd><code>${txn.counterparty_iban}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.counterparty_bic
+              ? html`
+            <dt>BIC</dt><dd><code>${txn.counterparty_bic}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.bank_transaction_code
+              ? html`
+            <dt>Bank code</dt><dd>${txn.bank_transaction_code}</dd>
+          `
+              : null
+          }
+          ${
+            txn.merchant_category_code
+              ? html`
+            <dt>MCC</dt><dd><code>${txn.merchant_category_code}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.bank_transaction_code_code
+              ? html`
+            <dt>ISO 20022</dt><dd><code>${txn.bank_transaction_code_code}${txn.bank_transaction_code_sub_code ? `-${txn.bank_transaction_code_sub_code}` : ""}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.reference_number
+              ? html`
+            <dt>Reference</dt><dd><code>${txn.reference_number}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.note
+              ? html`
+            <dt>Note</dt><dd>${txn.note}</dd>
+          `
+              : null
+          }
+          ${
+            txn.exchange_rate
+              ? html`
+            <dt>FX rate</dt><dd>${txn.exchange_rate}${txn.exchange_rate_unit_currency ? ` ${txn.exchange_rate_unit_currency}` : ""}${txn.exchange_rate_type ? ` (${txn.exchange_rate_type})` : ""}</dd>
+          `
+              : null
+          }
+          ${
+            txn.exchange_rate_contract_id
+              ? html`
+            <dt>FX contract</dt><dd><code>${txn.exchange_rate_contract_id}</code></dd>
+          `
+              : null
+          }
+          ${
+            txn.balance_after_transaction != null
+              ? html`
+            <dt>Balance after</dt><dd>${formatAmount(txn.balance_after_transaction)}${txn.balance_after_transaction_currency ? ` ${txn.balance_after_transaction_currency}` : ""}</dd>
+          `
+              : null
+          }
+        </dl>
+
+        ${
+          amazonEnrichment &&
+          html`
+            <div style="margin-top:1rem">
+              <h4 style="margin:0 0 0.5rem">Amazon Order Details</h4>
+              <span class="chip outline small">${amazonEnrichment.confidence} match</span>
+              ${amazonEnrichment.orders.map(
+                (order) => html`
+                  <div class="card" style="margin-top:0.5rem;padding:0.75rem">
+                    <div class="hstack" style="justify-content:space-between;margin-bottom:0.5rem">
+                      <code class="small">${order.order_id}</code>
+                      ${order.order_date ? html`<span class="text-light small">${formatDate(order.order_date)}</span>` : null}
+                    </div>
+                    ${order.items.map(
+                      (item) => html`
+                        <div class="hstack" style="gap:0.5rem;padding:0.25rem 0;align-items:start">
+                          <span style="flex:1">${item.quantity > 1 ? `${item.quantity}\u00d7 ` : ""}${item.title}</span>
+                          ${item.price != null ? html`<span class="mono">${formatAmount(item.price)}</span>` : null}
+                        </div>
+                      `,
+                    )}
+                    ${
+                      order.grand_total != null
+                        ? html`
+                        <div class="hstack" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.5rem">
+                          <span class="text-light">Total</span>
+                          <span class="mono" style="font-weight:600">${formatAmount(order.grand_total)}</span>
+                        </div>
+                      `
+                        : null
                     }
-                    return html`<dt>Remittance</dt><dd>${seg}</dd>`;
-                  })
-                : null
-            }
-            ${
-              txn.counterparty_name
-                ? html`
-              <dt>Counterparty</dt><dd>${txn.counterparty_name}</dd>
-            `
-                : null
-            }
-            ${
-              txn.counterparty_iban
-                ? html`
-              <dt>IBAN</dt><dd><code>${txn.counterparty_iban}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.counterparty_bic
-                ? html`
-              <dt>BIC</dt><dd><code>${txn.counterparty_bic}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.bank_transaction_code
-                ? html`
-              <dt>Bank code</dt><dd>${txn.bank_transaction_code}</dd>
-            `
-                : null
-            }
-            ${
-              txn.merchant_category_code
-                ? html`
-              <dt>MCC</dt><dd><code>${txn.merchant_category_code}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.bank_transaction_code_code
-                ? html`
-              <dt>ISO 20022</dt><dd><code>${txn.bank_transaction_code_code}${txn.bank_transaction_code_sub_code ? `-${txn.bank_transaction_code_sub_code}` : ""}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.reference_number
-                ? html`
-              <dt>Reference</dt><dd><code>${txn.reference_number}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.note
-                ? html`
-              <dt>Note</dt><dd>${txn.note}</dd>
-            `
-                : null
-            }
-            ${
-              txn.exchange_rate
-                ? html`
-              <dt>FX rate</dt><dd>${txn.exchange_rate}${txn.exchange_rate_unit_currency ? ` ${txn.exchange_rate_unit_currency}` : ""}${txn.exchange_rate_type ? ` (${txn.exchange_rate_type})` : ""}</dd>
-            `
-                : null
-            }
-            ${
-              txn.exchange_rate_contract_id
-                ? html`
-              <dt>FX contract</dt><dd><code>${txn.exchange_rate_contract_id}</code></dd>
-            `
-                : null
-            }
-            ${
-              txn.balance_after_transaction != null
-                ? html`
-              <dt>Balance after</dt><dd>${formatAmount(txn.balance_after_transaction)}${txn.balance_after_transaction_currency ? ` ${txn.balance_after_transaction_currency}` : ""}</dd>
-            `
-                : null
-            }
-          </dl>
+                  </div>
+                `,
+              )}
+            </div>
+          `
+        }
 
-          ${
-            amazonEnrichment &&
-            html`
-              <div style="margin-top:1rem">
-                <h4 style="margin:0 0 0.5rem">Amazon Order Details</h4>
-                <span class="chip outline small">${amazonEnrichment.confidence} match</span>
-                ${amazonEnrichment.orders.map(
-                  (order) => html`
-                    <div class="card" style="margin-top:0.5rem;padding:0.75rem">
-                      <div class="hstack" style="justify-content:space-between;margin-bottom:0.5rem">
-                        <code class="small">${order.order_id}</code>
-                        ${order.order_date ? html`<span class="text-light small">${formatDate(order.order_date)}</span>` : null}
-                      </div>
-                      ${order.items.map(
-                        (item) => html`
-                          <div class="hstack" style="gap:0.5rem;padding:0.25rem 0;align-items:start">
-                            <span style="flex:1">${item.quantity > 1 ? `${item.quantity}\u00d7 ` : ""}${item.title}</span>
-                            ${item.price != null ? html`<span class="mono">${formatAmount(item.price)}</span>` : null}
-                          </div>
-                        `,
-                      )}
-                      ${
-                        order.grand_total != null
-                          ? html`
-                          <div class="hstack" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.5rem">
-                            <span class="text-light">Total</span>
-                            <span class="mono" style="font-weight:600">${formatAmount(order.grand_total)}</span>
-                          </div>
-                        `
-                          : null
-                      }
+        ${
+          ruleProposals &&
+          html`
+            <div style="margin-top:1rem">
+              <h4 style="margin:0 0 0.5rem">Rule Proposals</h4>
+              <p class="text-light" style="margin:0 0 0.5rem">
+                Category: <strong>${ruleProposals.category_name}</strong>
+              </p>
+              ${ruleProposals.proposals.map(
+                (p, idx) => html`
+                  <div
+                    key=${idx}
+                    style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.5rem;cursor:pointer;${selectedProposal === idx ? "background:var(--bg-light)" : ""}"
+                    onClick=${() => handleSelectProposal(idx)}
+                  >
+                    <div class="hstack" style="gap:0.5rem;align-items:center">
+                      <span class="chip outline text-caption">${p.match_field.replace(/_/g, " ")}</span>
+                      <code class="text-body">${p.match_pattern}</code>
                     </div>
-                  `,
-                )}
-              </div>
-            `
-          }
-
-          ${
-            ruleProposals &&
-            html`
-              <div style="margin-top:1rem">
-                <h4 style="margin:0 0 0.5rem">Rule Proposals</h4>
-                <p class="text-light" style="margin:0 0 0.5rem">
-                  Category: <strong>${ruleProposals.category_name}</strong>
-                </p>
-                ${ruleProposals.proposals.map(
-                  (p, idx) => html`
-                    <div
-                      key=${idx}
-                      style="border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:0.5rem;cursor:pointer;${selectedProposal === idx ? "background:var(--bg-light)" : ""}"
-                      onClick=${() => handleSelectProposal(idx)}
-                    >
-                      <div class="hstack" style="gap:0.5rem;align-items:center">
-                        <span class="chip outline text-caption">${p.match_field.replace(/_/g, " ")}</span>
-                        <code class="text-body">${p.match_pattern}</code>
-                      </div>
-                      <p class="text-light text-body" style="margin:0.25rem 0 0">${p.explanation}</p>
-                      ${
-                        selectedProposal === idx &&
-                        html`
-                          <div style="margin-top:0.5rem" onClick=${(e) => e.stopPropagation()}>
-                            <input
-                              type="text"
-                              value=${editPattern}
-                              onInput=${(e) => {
-                                const val = e.target.value;
-                                setEditPattern(val);
-                                clearTimeout(debounceRef.current);
-                                debounceRef.current = setTimeout(() => {
-                                  fetchProposalPreview(
-                                    ruleProposals.proposals[selectedProposal]
-                                      .match_field,
-                                    val,
-                                  );
-                                }, 400);
-                              }}
-                              style="width:100%;margin-bottom:0.5rem;font-family:monospace"
-                            />
-                            <div class="hstack gap-sm" style="align-items:center">
-                              <button
-                                type="button"
-                                data-variant="primary"
-                                class="small"
-                                onClick=${handleAcceptRule}
-                                disabled=${creatingRule}
-                              >
-                                ${creatingRule ? "Creating..." : "Create Rule"}
-                              </button>
-                              ${proposalPreviewing && html`<span class="text-light text-body">Checking...</span>`}
-                              ${
-                                proposalPreview &&
-                                html`
-                                <span class="text-light text-body">
-                                  Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}${proposalPreview.sample.length > 0 ? ` — ${proposalPreview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
-                                </span>
-                              `
-                              }
-                            </div>
+                    <p class="text-light text-body" style="margin:0.25rem 0 0">${p.explanation}</p>
+                    ${
+                      selectedProposal === idx &&
+                      html`
+                        <div style="margin-top:0.5rem" onClick=${(e) => e.stopPropagation()}>
+                          <input
+                            type="text"
+                            value=${editPattern}
+                            onInput=${(e) => {
+                              const val = e.target.value;
+                              setEditPattern(val);
+                              clearTimeout(debounceRef.current);
+                              debounceRef.current = setTimeout(() => {
+                                fetchProposalPreview(
+                                  ruleProposals.proposals[selectedProposal]
+                                    .match_field,
+                                  val,
+                                );
+                              }, 400);
+                            }}
+                            style="width:100%;margin-bottom:0.5rem;font-family:monospace"
+                          />
+                          <div class="hstack gap-sm" style="align-items:center">
+                            <button
+                              type="button"
+                              data-variant="primary"
+                              class="small"
+                              onClick=${handleAcceptRule}
+                              disabled=${creatingRule}
+                            >
+                              ${creatingRule ? "Creating..." : "Create Rule"}
+                            </button>
+                            ${proposalPreviewing && html`<span class="text-light text-body">Checking...</span>`}
+                            ${
+                              proposalPreview &&
+                              html`
+                              <span class="text-light text-body">
+                                Matches <strong>${proposalPreview.match_count}</strong> transaction${proposalPreview.match_count !== 1 ? "s" : ""}${proposalPreview.sample.length > 0 ? ` — ${proposalPreview.sample.map((s) => s.merchant_name).join(", ")}` : ""}
+                              </span>
+                            `
+                            }
                           </div>
-                        `
-                      }
-                    </div>
-                  `,
-                )}
-                ${
-                  ruleProposals.proposals.length === 0 &&
-                  html`<p class="text-light">No valid patterns could be generated.</p>`
-                }
-              </div>
-            `
-          }
-        </div>
-        <footer>
-          ${
-            canGenerateRule &&
-            html`
-              <button
-                type="button"
-                onClick=${handleGenerateRule}
-                disabled=${generating}
-              >
-                ${generating ? "Generating..." : "Generate Rule"}
-              </button>
-            `
-          }
-          <button value="close">Close</button>
-        </footer>
-      </form>
-    </dialog>
+                        </div>
+                      `
+                    }
+                  </div>
+                `,
+              )}
+              ${
+                ruleProposals.proposals.length === 0 &&
+                html`<p class="text-light">No valid patterns could be generated.</p>`
+              }
+            </div>
+          `
+        }
+      </div>
+      <div class="txn-panel-footer">
+        ${
+          canGenerateRule &&
+          html`
+            <button
+              type="button"
+              onClick=${handleGenerateRule}
+              disabled=${generating}
+            >
+              ${generating ? "Generating..." : "Generate Rule"}
+            </button>
+          `
+        }
+        <button class="outline" onClick=${closePanel}>Close</button>
+      </div>
+    </aside>
   `;
 }
 
@@ -1981,7 +2003,7 @@ function Transactions() {
     ${
       total > TXN_PAGE_SIZE &&
       html`
-      <div class="hstack" style="justify-content:center;gap:0.75rem;margin-top:1rem">
+      <nav aria-label="Pagination" class="hstack" style="justify-content:center;gap:0.75rem;margin-top:1rem">
         <button disabled=${page === 0} onClick=${() => setPage((p) => p - 1)}>
           \u2190 Prev
         </button>
@@ -1991,7 +2013,7 @@ function Transactions() {
         <button disabled=${page >= totalPages - 1} onClick=${() => setPage((p) => p + 1)}>
           Next \u2192
         </button>
-      </div>
+      </nav>
     `
     }
   `;
@@ -2637,6 +2659,7 @@ function Rules() {
       counterparty_iban: "counterparty IBAN",
       counterparty_bic: "counterparty BIC",
       bank_transaction_code: "bank txn code",
+      amazon_item_title: "Amazon item",
     };
     return labels[field] ?? field;
   }
@@ -2721,6 +2744,7 @@ function Rules() {
                 <option value="counterparty_iban">Counterparty IBAN</option>
                 <option value="counterparty_bic">Counterparty BIC</option>
                 <option value="bank_transaction_code">Bank Transaction Code</option>
+                <option value="amazon_item_title">Amazon Item Title</option>
               </select>
               <input
                 type="text"

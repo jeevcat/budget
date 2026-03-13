@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::Row;
 
@@ -524,6 +524,38 @@ impl Db {
         .await?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Get Amazon item titles for a batch of bank transactions.
+    ///
+    /// Returns a map from bank transaction ID to the list of item titles
+    /// from matched Amazon orders.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn get_amazon_item_titles_for_transactions(
+        &self,
+        bank_txn_ids: &[uuid::Uuid],
+    ) -> Result<HashMap<uuid::Uuid, Vec<String>>, DbError> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+            "SELECT am.bank_transaction_id, ai.title
+             FROM amazon_matches am
+             JOIN amazon_transactions at ON am.amazon_transaction_id = at.id
+             JOIN amazon_transaction_orders ato ON at.id = ato.amazon_transaction_id
+             JOIN amazon_items ai ON ato.order_id = ai.order_id
+             WHERE am.bank_transaction_id = ANY($1)
+             ORDER BY am.bank_transaction_id, ai.title",
+        )
+        .bind(bank_txn_ids)
+        .fetch_all(&self.0)
+        .await?;
+
+        let mut map: HashMap<uuid::Uuid, Vec<String>> = HashMap::new();
+        for (txn_id, title) in rows {
+            map.entry(txn_id).or_default().push(title);
+        }
+        Ok(map)
     }
 
     /// Get aggregate statistics for an Amazon account.

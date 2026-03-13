@@ -39,10 +39,19 @@ pub(crate) async fn categorize_fan_out(
         .collect();
 
     // -- Load rule-eligible transactions (uncategorized + LLM-categorized) ----
-    let eligible = db.get_rule_eligible_transactions().await?;
+    let mut eligible = db.get_rule_eligible_transactions().await?;
     if eligible.is_empty() {
         tracing::info!("no rule-eligible transactions, nothing to do");
         return Ok(());
+    }
+
+    // -- Enrich Amazon transactions with item titles for rule matching ---------
+    let txn_ids: Vec<uuid::Uuid> = eligible.iter().map(|t| *t.id.as_uuid()).collect();
+    let mut amazon_titles = db.get_amazon_item_titles_for_transactions(&txn_ids).await?;
+    for txn in &mut eligible {
+        if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
+            txn.amazon_item_titles = titles;
+        }
     }
 
     let mut by_rule: u32 = 0;
@@ -100,7 +109,7 @@ pub async fn handle_categorize_transaction_job(
 ) -> Result<(), BoxDynError> {
     let txn_id = job.transaction_id;
 
-    let txn = db
+    let mut txn = db
         .get_transaction_by_id(txn_id)
         .await?
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
@@ -109,6 +118,18 @@ pub async fn handle_categorize_transaction_job(
     if txn.categorization.is_categorized() {
         tracing::debug!(txn_id = %txn_id, "already categorized, skipping");
         return Ok(());
+    }
+
+    // Enrich with Amazon item titles for the LLM prompt
+    if let Some(enrichment) = db
+        .get_amazon_enrichment_for_transaction(*txn.id.as_uuid())
+        .await?
+    {
+        txn.amazon_item_titles = enrichment
+            .orders
+            .into_iter()
+            .flat_map(|o| o.items.into_iter().map(|i| i.title))
+            .collect();
     }
 
     let existing_categories = db.list_category_names().await?;
@@ -122,6 +143,7 @@ pub async fn handle_categorize_transaction_job(
         counterparty_name: txn.counterparty_name.as_deref(),
         counterparty_iban: txn.counterparty_iban.as_ref().map(AsRef::as_ref),
         counterparty_bic: txn.counterparty_bic.as_ref().map(AsRef::as_ref),
+        amazon_item_titles: &txn.amazon_item_titles,
     };
 
     let result = llm.categorize(&input).await?;

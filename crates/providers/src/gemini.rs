@@ -141,6 +141,13 @@ impl LlmProvider for GeminiProvider {
             .map(|b| format!("Counterparty BIC: {b}\n"))
             .unwrap_or_default();
 
+        let amazon_line = if input.amazon_item_titles.is_empty() {
+            String::new()
+        } else {
+            let items = input.amazon_item_titles.join(", ");
+            format!("Amazon order items: {items}\n")
+        };
+
         let categories_block = if input.existing_categories.is_empty() {
             "No categories exist yet. Propose a category using \"Parent:Child\" format with \":\" as separator \
              (e.g. \"Food:Groceries\", \"Transportation:Fuel\")."
@@ -174,7 +181,7 @@ If you are unsure, use a low confidence score. Do not guess wildly.
 Transaction:
 Merchant: {merchant_name}
 Amount: {amount}
-{desc_line}{btc_line}{cp_name_line}{cp_iban_line}{cp_bic_line}
+{desc_line}{btc_line}{cp_name_line}{cp_iban_line}{cp_bic_line}{amazon_line}
 JSON response:"#
         );
 
@@ -292,6 +299,7 @@ JSON response:"#,
                     "CounterpartyIban" => MatchField::CounterpartyIban,
                     "CounterpartyBic" => MatchField::CounterpartyBic,
                     "BankTransactionCode" => MatchField::BankTransactionCode,
+                    "AmazonItemTitle" => MatchField::AmazonItemTitle,
                     _ => MatchField::Merchant,
                 };
                 ProposedRule {
@@ -348,6 +356,12 @@ fn build_rule_prompt(context: &RuleContext) -> String {
         .as_deref()
         .map(|b| format!("Bank classification: {b}\n"))
         .unwrap_or_default();
+    let amazon_line = if context.amazon_item_titles.is_empty() {
+        String::new()
+    } else {
+        let items = context.amazon_item_titles.join(", ");
+        format!("Amazon order items: {items}\n")
+    };
 
     format!(
         r#"You propose categorization rules for a personal budgeting tool. A rule has a field to match on and a regex pattern. When a transaction matches the pattern, it is automatically assigned the category.
@@ -361,6 +375,7 @@ Available fields:
 - "CounterpartyIban" — regex against the counterparty IBAN
 - "CounterpartyBic" — regex against the counterparty BIC
 - "BankTransactionCode" — regex against the bank transaction code
+- "AmazonItemTitle" — regex against Amazon order item titles (only for Amazon purchases)
 
 Guidelines:
 - Only propose a rule if the pattern meaningfully identifies this payee or transaction type. Never use broad patterns like ".*", ".+", or patterns that match most transactions.
@@ -372,7 +387,7 @@ Guidelines:
 - It is fine to propose fewer than 3 rules if you cannot find 3 precise ones.
 
 Respond with a JSON array of objects, each containing:
-- "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode"
+- "match_field": one of "Merchant", "Description", "CounterpartyName", "CounterpartyIban", "CounterpartyBic", "BankTransactionCode", "AmazonItemTitle"
 - "match_pattern": string — regex pattern (case-insensitive matching is applied automatically, do not include (?i) flags)
 - "explanation": string — brief explanation of what the rule matches
 
@@ -381,7 +396,7 @@ Merchant: {merchant}
 Description: {remittance_info}
 Amount: {amount}
 Date: {date}
-{cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}Category: {category}
+{cp_name_line}{cp_iban_line}{cp_bic_line}{btc_line}{amazon_line}Category: {category}
 
 Other merchants in this category:
 {siblings_block}
@@ -521,6 +536,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await
             .unwrap();
@@ -552,6 +568,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await
             .unwrap();
@@ -649,6 +666,7 @@ mod tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            amazon_item_titles: vec![],
         };
 
         let results = provider.propose_rules(&context).await.unwrap();
@@ -678,6 +696,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await;
         assert!(matches!(
@@ -706,6 +725,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await;
         assert!(matches!(result, Err(ProviderError::RateLimited)));
@@ -731,6 +751,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await;
         assert!(matches!(result, Err(ProviderError::ApiError { .. })));
@@ -758,6 +779,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
@@ -786,6 +808,7 @@ mod tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await;
         assert!(matches!(result, Err(ProviderError::Other(_))));
@@ -826,6 +849,7 @@ mod live_tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await
             .unwrap();
@@ -857,6 +881,7 @@ mod live_tests {
                 counterparty_name: None,
                 counterparty_iban: None,
                 counterparty_bic: None,
+                amazon_item_titles: &[],
             })
             .await
             .unwrap();
@@ -913,6 +938,7 @@ mod live_tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            amazon_item_titles: vec![],
         };
         let results = provider.propose_rules(&context).await.unwrap();
 

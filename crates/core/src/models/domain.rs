@@ -562,6 +562,9 @@ pub struct Transaction {
     /// Non-IBAN debtor account IDs: JSONB array of `{identification, scheme_name, issuer}`.
     /// Source: Enable Banking `debtor_account_additional_identification`
     pub debtor_account_additional_id: Option<serde_json::Value>,
+    /// Amazon item titles from matched orders (not persisted; enrichment-only).
+    #[serde(skip)]
+    pub amazon_item_titles: Vec<String>,
 }
 
 impl Default for Transaction {
@@ -598,6 +601,7 @@ impl Default for Transaction {
             balance_after_transaction_currency: None,
             creditor_account_additional_id: None,
             debtor_account_additional_id: None,
+            amazon_item_titles: Vec::new(),
         }
     }
 }

@@ -62,6 +62,7 @@ pub struct CategorizeInput<'a> {
     pub counterparty_name: Option<&'a str>,
     pub counterparty_iban: Option<&'a str>,
     pub counterparty_bic: Option<&'a str>,
+    pub amazon_item_titles: &'a [String],
 }
 
 /// Full transaction context for per-transaction rule generation.
@@ -78,6 +79,7 @@ pub struct RuleContext {
     pub counterparty_iban: Option<String>,
     pub counterparty_bic: Option<String>,
     pub bank_transaction_code: Option<String>,
+    pub amazon_item_titles: Vec<String>,
 }
 
 #[trait_variant::make(Send)]

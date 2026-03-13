@@ -346,6 +346,13 @@ async fn generate_rule(
         })
         .collect();
 
+    let amazon_titles = state
+        .db
+        .get_amazon_item_titles_for_transactions(&[*txn.id.as_uuid()])
+        .await?
+        .remove(txn.id.as_uuid())
+        .unwrap_or_default();
+
     let context = RuleContext {
         merchant_name: txn.merchant_name,
         remittance_information: txn.remittance_information,
@@ -358,6 +365,7 @@ async fn generate_rule(
         counterparty_iban: txn.counterparty_iban.map(|v| v.to_string()),
         counterparty_bic: txn.counterparty_bic.map(|v| v.to_string()),
         bank_transaction_code: txn.bank_transaction_code,
+        amazon_item_titles: amazon_titles,
     };
 
     let proposed = state

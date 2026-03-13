@@ -61,7 +61,8 @@ fn compile_condition(condition: &RuleCondition) -> Result<CompiledCondition, Err
         | MatchField::CounterpartyName
         | MatchField::CounterpartyIban
         | MatchField::CounterpartyBic
-        | MatchField::BankTransactionCode => {
+        | MatchField::BankTransactionCode
+        | MatchField::AmazonItemTitle => {
             let regex = RegexBuilder::new(&condition.pattern)
                 .case_insensitive(true)
                 .build()
@@ -160,6 +161,10 @@ fn matches_condition(transaction: &Transaction, condition: &CompiledCondition) -
             .bank_transaction_code
             .as_ref()
             .is_some_and(|v| regex.is_match(v)),
+        (CompiledPattern::Regex(regex), MatchField::AmazonItemTitle) => transaction
+            .amazon_item_titles
+            .iter()
+            .any(|title| regex.is_match(title)),
         (
             CompiledPattern::AmountRange {
                 min,
@@ -775,6 +780,75 @@ mod tests {
 
         let txn_above = make_txn("Any", "desc", dec!(50.01));
         assert_eq!(evaluate_categorization_rules(&txn_above, &compiled), None);
+    }
+
+    #[test]
+    fn amazon_item_title_matching() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            vec![(MatchField::AmazonItemTitle, r"usb.*cable")],
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule(&rule).unwrap()];
+
+        let mut txn = make_txn("AMZN Mktp DE", "desc", dec!(-12.99));
+        txn.amazon_item_titles = vec!["USB-C Cable 2m".to_owned()];
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+    }
+
+    #[test]
+    fn amazon_item_title_empty_never_matches() {
+        let rule = make_rule(
+            RuleType::Categorization,
+            vec![(MatchField::AmazonItemTitle, r"usb.*cable")],
+            Some(CategoryId::new()),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule(&rule).unwrap()];
+
+        let txn = make_txn("AMZN Mktp DE", "desc", dec!(-12.99));
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), None);
+    }
+
+    #[test]
+    fn amazon_item_title_matches_any() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            vec![(MatchField::AmazonItemTitle, r"dog food")],
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule(&rule).unwrap()];
+
+        let mut txn = make_txn("AMZN Mktp DE", "desc", dec!(-45.00));
+        txn.amazon_item_titles = vec![
+            "Phone Case Silicone".to_owned(),
+            "Premium Dog Food 10kg".to_owned(),
+        ];
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
+    }
+
+    #[test]
+    fn amazon_item_title_case_insensitive() {
+        let cat_id = CategoryId::new();
+        let rule = make_rule(
+            RuleType::Categorization,
+            vec![(MatchField::AmazonItemTitle, r"kindle")],
+            Some(cat_id),
+            None,
+            10,
+        );
+        let compiled = vec![compile_rule(&rule).unwrap()];
+
+        let mut txn = make_txn("AMZN Mktp DE", "desc", dec!(-129.99));
+        txn.amazon_item_titles = vec!["KINDLE PAPERWHITE 2024".to_owned()];
+        assert_eq!(evaluate_categorization_rules(&txn, &compiled), Some(cat_id));
     }
 
     #[test]

@@ -219,6 +219,7 @@ mod tests {
             counterparty_name: None,
             counterparty_iban: None,
             counterparty_bic: None,
+            amazon_item_titles: &[],
         }
     }
 
@@ -360,6 +361,7 @@ mod tests {
             counterparty_iban: None,
             counterparty_bic: None,
             bank_transaction_code: None,
+            amazon_item_titles: vec![],
         };
         let rules = provider.propose_rules(&context).await.unwrap();
         assert_eq!(rules.len(), 3);
