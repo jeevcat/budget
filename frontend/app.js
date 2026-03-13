@@ -3811,22 +3811,46 @@ function Jobs() {
                 <tr>
                   <th>Type</th>
                   <th>Status</th>
-                  <th>Run At</th>
-                  <th>Done At</th>
-                  <th>Attempts</th>
-                  <th>Error</th>
+                  <th>Count</th>
+                  <th>Last Run</th>
+                  <th>Last Done</th>
+                  <th>Errors</th>
                 </tr>
               </thead>
               <tbody>
-                ${allJobs.map(
-                  (j) => html`
+                ${Object.values(
+                  allJobs.reduce((groups, j) => {
+                    const key = `${j.job_type}|${j.status}`;
+                    if (!groups[key]) {
+                      groups[key] = {
+                        job_type: j.job_type,
+                        status: j.status,
+                        count: 0,
+                        last_run_at: j.run_at,
+                        last_done_at: j.done_at,
+                        errors: 0,
+                      };
+                    }
+                    const g = groups[key];
+                    g.count++;
+                    if (j.run_at > g.last_run_at) g.last_run_at = j.run_at;
+                    if (
+                      j.done_at &&
+                      (!g.last_done_at || j.done_at > g.last_done_at)
+                    )
+                      g.last_done_at = j.done_at;
+                    if (j.error) g.errors++;
+                    return groups;
+                  }, {}),
+                ).map(
+                  (g) => html`
                     <tr>
-                      <td class="mono">${shortType(j.job_type)}</td>
-                      <td>${statusChip(j.status)}</td>
-                      <td class="text-light">${timeAgo(j.run_at)}</td>
-                      <td class="text-light">${j.done_at ? timeAgo(j.done_at) : "\u2014"}</td>
-                      <td class="mono">${j.attempts}</td>
-                      <td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=${j.error || ""}>${j.error || "\u2014"}</td>
+                      <td class="mono">${shortType(g.job_type)}</td>
+                      <td>${statusChip(g.status)}</td>
+                      <td class="mono">${g.count}</td>
+                      <td class="text-light">${timeAgo(g.last_run_at)}</td>
+                      <td class="text-light">${g.last_done_at ? timeAgo(g.last_done_at) : "\u2014"}</td>
+                      <td class="mono">${g.errors || "\u2014"}</td>
                     </tr>
                   `,
                 )}
