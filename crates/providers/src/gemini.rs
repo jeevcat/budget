@@ -58,6 +58,8 @@ impl GeminiProvider {
             },
         };
 
+        tracing::debug!(prompt = %prompt, "gemini request");
+
         let response = self
             .http
             .post(&url)
