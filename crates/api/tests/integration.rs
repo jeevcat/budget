@@ -48,6 +48,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         secret_key: SecretKey::new(TEST_SECRET).expect("valid test secret"),
         sync_storage: JobStorage::new(&pool),
         categorize_storage: JobStorage::new(&pool),
+        categorize_txn_storage: JobStorage::new(&pool),
         correlate_storage: JobStorage::new(&pool),
         pipeline_storage: PipelineStorage::new(&pool),
         amazon_sync_storage: JobStorage::new(&pool),

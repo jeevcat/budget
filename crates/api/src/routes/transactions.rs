@@ -8,7 +8,7 @@ use budget_core::models::{
     Categorization, CategoryId, CategoryMethod, RuleType, Transaction, TransactionId,
 };
 use budget_core::rules::compile_rule;
-use budget_jobs::CategorizeJob;
+use budget_jobs::CategorizeTransactionJob;
 use budget_providers::RuleContext;
 
 use crate::routes::AppError;
@@ -240,8 +240,8 @@ async fn uncategorize(
     tracing::info!(txn_id = %id, "clearing category and re-enqueuing for categorization");
     state.db.clear_transaction_category(id).await?;
     state
-        .categorize_storage
-        .push(CategorizeJob)
+        .categorize_txn_storage
+        .push(CategorizeTransactionJob { transaction_id: id })
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::NO_CONTENT)

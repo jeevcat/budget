@@ -109,7 +109,7 @@
 
             llmModel = lib.mkOption {
               type = lib.types.str;
-              default = "gemini-2.5-flash-lite";
+              default = "gemini-3.1-flash-lite-preview";
               description = "LLM model name for category suggestions.";
             };
 

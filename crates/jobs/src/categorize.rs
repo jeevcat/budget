@@ -94,10 +94,10 @@ pub(crate) async fn categorize_fan_out(
     Ok(())
 }
 
-/// Categorize a single transaction via LLM.
+/// Categorize a single transaction: try deterministic rules first, then LLM.
 ///
 /// Loads the transaction by ID, checks it is still uncategorized (race-safe
-/// bail-out), then calls the LLM to propose a category.
+/// bail-out), evaluates categorization rules, and falls back to the LLM.
 ///
 /// # Errors
 ///
@@ -108,6 +108,7 @@ pub async fn handle_categorize_transaction_job(
     llm: Data<LlmClient>,
 ) -> Result<(), BoxDynError> {
     let txn_id = job.transaction_id;
+    tracing::info!(txn_id = %txn_id, "categorize transaction job started");
 
     let mut txn = db
         .get_transaction_by_id(txn_id)
@@ -120,7 +121,7 @@ pub async fn handle_categorize_transaction_job(
         return Ok(());
     }
 
-    // Enrich with Amazon item titles for the LLM prompt
+    // Enrich with Amazon item titles
     if let Some(enrichment) = db
         .get_amazon_enrichment_for_transaction(*txn.id.as_uuid())
         .await?
@@ -132,6 +133,27 @@ pub async fn handle_categorize_transaction_job(
             .collect();
     }
 
+    // Try deterministic rules before LLM
+    let raw_rules = db.list_rules_by_type(RuleType::Categorization).await?;
+    let compiled_rules: Vec<CompiledRule> = raw_rules
+        .iter()
+        .filter_map(|rule| match compile_rule(rule) {
+            Ok(compiled) => Some(compiled),
+            Err(e) => {
+                tracing::warn!(rule_id = %rule.id, error = %e, "skipping rule with invalid pattern");
+                None
+            }
+        })
+        .collect();
+
+    if let Some(category_id) = evaluate_categorization_rules(&txn, &compiled_rules) {
+        db.update_transaction_category(txn_id, category_id, CategoryMethod::Rule, None)
+            .await?;
+        tracing::info!(txn_id = %txn_id, "categorized by rule");
+        return Ok(());
+    }
+
+    // Fall back to LLM
     let existing_categories = db.list_category_names().await?;
 
     let input = budget_providers::CategorizeInput {
@@ -151,7 +173,7 @@ pub async fn handle_categorize_transaction_job(
         merchant = %txn.merchant_name,
         amount = %txn.amount,
         amazon_items = ?txn.amazon_item_titles,
-        "sending transaction to LLM"
+        "no rule matched, sending to LLM"
     );
 
     let result = llm.categorize(&input).await?;

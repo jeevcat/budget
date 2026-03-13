@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret_key: config.secret_key,
         sync_storage: JobStorage::new(&apalis_pool),
         categorize_storage: JobStorage::new(&apalis_pool),
+        categorize_txn_storage: JobStorage::new(&apalis_pool),
         correlate_storage: JobStorage::new(&apalis_pool),
         pipeline_storage: PipelineStorage::new(&apalis_pool),
         apalis_pool: apalis_pool.clone(),
@@ -200,7 +201,7 @@ async fn health() -> Json<serde_json::Value> {
 
 /// Set up tracing with stderr output and an optional log file.
 fn init_tracing(config: &budget_core::Config) {
-    let default_filter = "budget=debug,tower_http=debug,info";
+    let default_filter = "budget=debug,budget_jobs=debug,budget_providers=debug,budget_db=debug,budget_core=debug,api=debug,tower_http=debug,info";
     let stderr_layer = tracing_subscriber::fmt::layer().with_filter(
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter)),
     );

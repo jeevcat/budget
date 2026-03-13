@@ -4,8 +4,8 @@ use std::sync::Arc;
 use budget_core::models::SecretKey;
 use budget_db::Db;
 use budget_jobs::{
-    AmazonSyncJob, ApalisPool, CategorizeJob, CorrelateJob, JobStorage, LlmClient, PipelineStorage,
-    SyncJob,
+    AmazonSyncJob, ApalisPool, CategorizeJob, CategorizeTransactionJob, CorrelateJob, JobStorage,
+    LlmClient, PipelineStorage, SyncJob,
 };
 use budget_providers::EnableBankingAuth;
 
@@ -23,8 +23,10 @@ pub struct AppState {
     pub secret_key: SecretKey,
     /// Job queue storage for bank account sync jobs.
     pub sync_storage: JobStorage<SyncJob>,
-    /// Job queue storage for transaction categorization jobs.
+    /// Job queue storage for transaction categorization fan-out jobs.
     pub categorize_storage: JobStorage<CategorizeJob>,
+    /// Job queue storage for single-transaction categorization jobs.
+    pub categorize_txn_storage: JobStorage<CategorizeTransactionJob>,
     /// Job queue storage for transaction correlation jobs.
     pub correlate_storage: JobStorage<CorrelateJob>,
     /// Storage for enqueuing full-sync pipeline workflows.
