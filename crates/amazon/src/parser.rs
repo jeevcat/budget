@@ -164,15 +164,13 @@ pub fn parse_next_data(html: &str) -> Result<TransactionsPageData> {
     })?;
 
     let page_props = next_data.props.page_props;
-    let visible = page_props
-        .state
-        .transaction_response_state
-        .visible_transaction_response;
+    let txn_state = page_props.state.transaction_response_state;
+    let visible = txn_state.visible_transaction_response;
 
     info!(
         raw_transaction_count = visible.transaction_list.len(),
-        has_more = visible.has_more,
-        has_page_key = visible.last_evaluated_page_key.is_some(),
+        has_more = txn_state.has_more,
+        has_page_key = txn_state.last_evaluated_page_key.is_some(),
         "parsed __NEXT_DATA__ structure"
     );
 
@@ -206,15 +204,15 @@ pub fn parse_next_data(html: &str) -> Result<TransactionsPageData> {
     info!(
         token_len = page_props.token.len(),
         transaction_count = transactions.len(),
-        has_more = visible.has_more,
+        has_more = txn_state.has_more,
         "parsed transactions from __NEXT_DATA__"
     );
 
     Ok(TransactionsPageData {
         token: page_props.token,
         transactions,
-        has_more: visible.has_more,
-        page_key: visible.last_evaluated_page_key,
+        has_more: txn_state.has_more,
+        page_key: txn_state.last_evaluated_page_key,
     })
 }
 
