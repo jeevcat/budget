@@ -30,22 +30,12 @@ pub fn router() -> Router<AppState> {
         .route("/enrichment/{transaction_id}", get(get_enrichment))
 }
 
-fn require_amazon_config(state: &AppState) -> Result<&AmazonConfig, AppError> {
-    state.amazon_config.as_ref().ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_IMPLEMENTED,
-            "Amazon enrichment not configured (set amazon_base_url in config)".to_owned(),
-        )
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 struct AmazonStatus {
-    configured: bool,
     cookies_valid: Option<bool>,
     cookies_expiry: Option<String>,
     cookies_days_remaining: Option<i64>,
@@ -81,9 +71,8 @@ async fn upload_cookies(
     State(state): State<AppState>,
     Json(payload): Json<CookiesPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let config = require_amazon_config(&state)?;
-
-    let store = CookieStore::from_cookies(payload.cookies, config.cookies_path.clone());
+    let store =
+        CookieStore::from_cookies(payload.cookies, state.amazon_config.cookies_path.clone());
 
     if store.is_expired() {
         return Err(AppError(
@@ -113,18 +102,8 @@ async fn upload_cookies(
 ///
 /// Returns `AppError` on database failure.
 async fn status(State(app): State<AppState>) -> Result<Json<AmazonStatus>, AppError> {
-    let Some(config) = &app.amazon_config else {
-        return Ok(Json(AmazonStatus {
-            configured: false,
-            cookies_valid: None,
-            cookies_expiry: None,
-            cookies_days_remaining: None,
-            stats: None,
-        }));
-    };
-
     let (cookies_valid, cookies_expiry, cookies_days_remaining) =
-        match CookieStore::load(&config.cookies_path) {
+        match CookieStore::load(&app.amazon_config.cookies_path) {
             Ok(store) => {
                 let valid = !store.is_expired();
                 let expiry = store.earliest_expiry();
@@ -137,7 +116,6 @@ async fn status(State(app): State<AppState>) -> Result<Json<AmazonStatus>, AppEr
     let stats = app.db.amazon_enrichment_stats().await.ok();
 
     Ok(Json(AmazonStatus {
-        configured: true,
         cookies_valid,
         cookies_expiry,
         cookies_days_remaining,
@@ -154,11 +132,8 @@ async fn status(State(app): State<AppState>) -> Result<Json<AmazonStatus>, AppEr
 ///
 /// Returns `AppError` if Amazon is not configured or the job fails.
 async fn trigger_sync(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
-    let config = require_amazon_config(&state)?;
-
     let enrich_config = budget_jobs::enrich::AmazonEnrichConfig {
-        base_url: config.base_url.clone(),
-        cookies_path: config.cookies_path.clone(),
+        cookies_path: state.amazon_config.cookies_path.clone(),
     };
 
     let result = budget_jobs::enrich::run_amazon_enrich(&state.db, &enrich_config)
@@ -231,6 +206,5 @@ async fn get_enrichment(
 /// Amazon configuration extracted from the app config.
 #[derive(Clone)]
 pub struct AmazonConfig {
-    pub base_url: String,
     pub cookies_path: PathBuf,
 }

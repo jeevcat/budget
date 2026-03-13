@@ -50,21 +50,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = budget_jobs::init_llm_provider(&config);
 
-    let amazon_config = config.amazon_base_url.as_ref().map(|base_url| {
-        let cookies_path = config.amazon_cookies_path.as_ref().map_or_else(
-            || {
-                budget_core::config_path().map_or_else(
-                    |_| std::path::PathBuf::from("amazon-cookies.json"),
-                    |p| p.with_file_name("amazon-cookies.json"),
-                )
-            },
-            std::path::PathBuf::from,
-        );
-        api::routes::amazon::AmazonConfig {
-            base_url: base_url.clone(),
-            cookies_path,
-        }
-    });
+    let amazon_cookies_path = config.amazon_cookies_path.as_ref().map_or_else(
+        || {
+            budget_core::config_path().map_or_else(
+                |_| std::path::PathBuf::from("amazon-cookies.json"),
+                |p| p.with_file_name("amazon-cookies.json"),
+            )
+        },
+        std::path::PathBuf::from,
+    );
+    let amazon_config = api::routes::amazon::AmazonConfig {
+        cookies_path: amazon_cookies_path,
+    };
 
     let state = AppState {
         db: db.clone(),

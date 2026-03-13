@@ -42,7 +42,14 @@ pub fn router() -> Router<AppState> {
 ///
 /// Returns `AppError` on database failure.
 async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>, AppError> {
-    let jobs = budget_jobs::queries::list_jobs(&state.apalis_pool).await?;
+    let jobs = budget_jobs::queries::list_jobs(&state.apalis_pool)
+        .await
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+        })?;
     Ok(Json(jobs))
 }
 
@@ -52,7 +59,14 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
 ///
 /// Returns `AppError` on database failure.
 async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCount>>, AppError> {
-    let counts = budget_jobs::queries::queue_counts(&state.apalis_pool).await?;
+    let counts = budget_jobs::queries::queue_counts(&state.apalis_pool)
+        .await
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+        })?;
     Ok(Json(counts))
 }
 
@@ -64,7 +78,14 @@ async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCou
 async fn schedule_status(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountScheduleStatus>>, AppError> {
-    let status = budget_jobs::schedule_queries::get_all_schedule_status(&state.apalis_pool).await?;
+    let status = budget_jobs::schedule_queries::get_all_schedule_status(&state.apalis_pool)
+        .await
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+        })?;
     Ok(Json(status))
 }
 

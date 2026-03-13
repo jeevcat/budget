@@ -51,6 +51,7 @@ macro_rules! define_id {
 
         // sqlx: delegate to the inner Uuid (which has Type/Encode/Decode
         // via the sqlx "uuid" feature).
+        #[cfg(feature = "sqlx")]
         impl sqlx::Type<sqlx::Postgres> for $name {
             fn type_info() -> sqlx::postgres::PgTypeInfo {
                 <Uuid as sqlx::Type<sqlx::Postgres>>::type_info()
@@ -61,12 +62,14 @@ macro_rules! define_id {
             }
         }
 
+        #[cfg(feature = "sqlx")]
         impl sqlx::postgres::PgHasArrayType for $name {
             fn array_type_info() -> sqlx::postgres::PgTypeInfo {
                 <Uuid as sqlx::postgres::PgHasArrayType>::array_type_info()
             }
         }
 
+        #[cfg(feature = "sqlx")]
         impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $name {
             fn decode(
                 value: sqlx::postgres::PgValueRef<'r>,
@@ -75,6 +78,7 @@ macro_rules! define_id {
             }
         }
 
+        #[cfg(feature = "sqlx")]
         impl sqlx::Encode<'_, sqlx::Postgres> for $name {
             fn encode_by_ref(
                 &self,

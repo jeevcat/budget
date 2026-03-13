@@ -6,7 +6,7 @@ use budget_core::models::{
     AccountId, CategoryId, CategoryMethod, CorrelationType, Transaction, TransactionId,
 };
 
-use crate::{Db, TXN_COLUMNS, row_to_transaction};
+use crate::{Db, DbError, TXN_COLUMNS, row_to_transaction};
 
 impl Db {
     /// Insert or update a transaction using provider-level deduplication.
@@ -17,12 +17,12 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn upsert_transaction(
         &self,
         txn: &Transaction,
         provider_transaction_id: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO transactions
@@ -107,12 +107,12 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn count_existing_provider_ids(
         &self,
         account_id: AccountId,
         ids: &[&str],
-    ) -> Result<i64, sqlx::Error> {
+    ) -> Result<i64, DbError> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM transactions
              WHERE account_id = $1 AND provider_transaction_id = ANY($2)",
@@ -128,8 +128,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_transactions(&self) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -151,7 +151,7 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if either query fails.
+    /// Returns `DbError` if either query fails.
     pub async fn list_transactions_paginated(
         &self,
         limit: i64,
@@ -160,7 +160,7 @@ impl Db {
         category_id: &str,
         account_id: &str,
         category_method: &str,
-    ) -> Result<(Vec<Transaction>, i64), sqlx::Error> {
+    ) -> Result<(Vec<Transaction>, i64), DbError> {
         let pool = &self.0;
 
         let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
@@ -211,11 +211,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn list_transactions_by_category_ids(
         &self,
         category_ids: &[CategoryId],
-    ) -> Result<Vec<Transaction>, sqlx::Error> {
+    ) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let ids: Vec<CategoryId> = category_ids.to_vec();
         let rows = sqlx::query(&format!(
@@ -237,11 +237,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn list_transactions_since(
         &self,
         since: NaiveDate,
-    ) -> Result<Vec<Transaction>, sqlx::Error> {
+    ) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -261,11 +261,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_transaction_by_id(
         &self,
         id: TransactionId,
-    ) -> Result<Option<Transaction>, sqlx::Error> {
+    ) -> Result<Option<Transaction>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -286,8 +286,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_rule_eligible_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_rule_eligible_transactions(&self) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -303,8 +303,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_uncategorized_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_uncategorized_transactions(&self) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -323,8 +323,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_uncorrelated_transactions(&self) -> Result<Vec<Transaction>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_uncorrelated_transactions(&self) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -344,13 +344,13 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_correlation_candidates(
         &self,
         opposite_amount: Decimal,
         exclude_id: TransactionId,
         reference_date: NaiveDate,
-    ) -> Result<Vec<Transaction>, sqlx::Error> {
+    ) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             &format!("SELECT {TXN_COLUMNS}
@@ -374,14 +374,14 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn update_transaction_category(
         &self,
         id: TransactionId,
         category_id: CategoryId,
         method: CategoryMethod,
         justification: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "UPDATE transactions SET category_id = $1, category_method = $2, llm_justification = $3 WHERE id = $4",
@@ -399,8 +399,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn clear_transaction_category(&self, id: TransactionId) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn clear_transaction_category(&self, id: TransactionId) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "UPDATE transactions SET category_id = NULL, category_method = NULL, llm_justification = NULL WHERE id = $1",
@@ -415,13 +415,13 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn update_transaction_correlation(
         &self,
         id: TransactionId,
         correlation_id: TransactionId,
         correlation_type: CorrelationType,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "UPDATE transactions SET correlation_id = $1, correlation_type = $2 WHERE id = $3",
@@ -438,13 +438,13 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn update_transaction_suggested_category(
         &self,
         id: TransactionId,
         suggested_category: &str,
         justification: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "UPDATE transactions SET suggested_category = $1, llm_justification = $2 WHERE id = $3",
@@ -466,13 +466,13 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query or transaction management fails.
+    /// Returns `DbError` if the query or transaction management fails.
     pub async fn link_correlation_pair(
         &self,
         id_a: TransactionId,
         id_b: TransactionId,
         correlation_type: CorrelationType,
-    ) -> Result<bool, sqlx::Error> {
+    ) -> Result<bool, DbError> {
         let pool = &self.0;
         let mut tx = pool.begin().await?;
 
@@ -516,12 +516,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn set_skip_correlation(
-        &self,
-        id: TransactionId,
-        skip: bool,
-    ) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn set_skip_correlation(&self, id: TransactionId, skip: bool) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query("UPDATE transactions SET skip_correlation = $1 WHERE id = $2")
             .bind(skip)
@@ -538,8 +534,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_suggestion_histogram(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_suggestion_histogram(&self) -> Result<Vec<(String, i64)>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT suggested_category, COUNT(*) as cnt
@@ -566,10 +562,10 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_categorized_merchant_groups(
         &self,
-    ) -> Result<Vec<(CategoryId, String, i64)>, sqlx::Error> {
+    ) -> Result<Vec<(CategoryId, String, i64)>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT category_id, merchant_name, COUNT(*) as cnt
@@ -595,11 +591,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_sibling_merchants(
         &self,
         category_id: CategoryId,
-    ) -> Result<Vec<String>, sqlx::Error> {
+    ) -> Result<Vec<String>, DbError> {
         let pool = &self.0;
         let rows =
             sqlx::query("SELECT DISTINCT merchant_name FROM transactions WHERE category_id = $1")
@@ -607,7 +603,7 @@ impl Db {
                 .fetch_all(pool)
                 .await?;
         rows.iter()
-            .map(|row| row.try_get("merchant_name"))
+            .map(|row| Ok(row.try_get("merchant_name")?))
             .collect()
     }
 
@@ -615,11 +611,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn list_transactions_by_account(
         &self,
         account_id: AccountId,
-    ) -> Result<Vec<Transaction>, sqlx::Error> {
+    ) -> Result<Vec<Transaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(&format!(
             "SELECT {TXN_COLUMNS}
@@ -637,11 +633,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_latest_transaction_date(
         &self,
         account_id: AccountId,
-    ) -> Result<Option<NaiveDate>, sqlx::Error> {
+    ) -> Result<Option<NaiveDate>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT MAX(posted_date) as max_date FROM transactions WHERE account_id = $1",

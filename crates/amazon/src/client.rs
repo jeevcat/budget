@@ -9,22 +9,22 @@ use crate::parser::{convert_raw_transaction, parse_invoice_html, parse_next_data
 use crate::types::{AmazonOrder, AmazonTransaction, PaginationResponse, TransactionsPageData};
 
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const BASE_URL: &str = "https://www.amazon.de";
 
 /// HTTP client for Amazon's payments portal and invoice pages.
 pub struct AmazonClient {
     client: Client,
     cookies: CookieStore,
-    base_url: String,
     token: Option<String>,
 }
 
 impl AmazonClient {
-    /// Create a new Amazon client with the given cookies and base URL.
+    /// Create a new Amazon client with the given cookies.
     ///
     /// # Errors
     ///
     /// Returns an error if the HTTP client cannot be built.
-    pub fn new(cookies: CookieStore, base_url: String) -> Result<Self> {
+    pub fn new(cookies: CookieStore) -> Result<Self> {
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))
@@ -33,7 +33,6 @@ impl AmazonClient {
         Ok(Self {
             client,
             cookies,
-            base_url,
             token: None,
         })
     }
@@ -45,7 +44,7 @@ impl AmazonClient {
     /// Returns an error if the request fails, cookies are expired, or the
     /// page cannot be parsed.
     pub async fn fetch_transactions_page(&mut self) -> Result<TransactionsPageData> {
-        let url = format!("{}/cpe/yourpayments/transactions", self.base_url);
+        let url = format!("{BASE_URL}/cpe/yourpayments/transactions");
         debug!(url = %url, "fetching transactions page");
 
         let resp = self
@@ -88,10 +87,8 @@ impl AmazonClient {
     ) -> Result<(Vec<AmazonTransaction>, Option<String>)> {
         let token = self.token.as_deref().ok_or(AmazonError::JwtExpired)?;
 
-        let url = format!(
-            "{}/payments-portal/data/iris/live/v1/data/manage/get-transactions",
-            self.base_url
-        );
+        let url =
+            format!("{BASE_URL}/payments-portal/data/iris/live/v1/data/manage/get-transactions");
 
         let trace_id: String = (0..20)
             .map(|_| {
@@ -153,7 +150,7 @@ impl AmazonClient {
             .header("Sec-Fetch-Site", "same-origin")
             .header(
                 "Referer",
-                format!("{}/cpe/yourpayments/transactions", self.base_url),
+                format!("{BASE_URL}/cpe/yourpayments/transactions"),
             )
             .json(&body)
             .send()
@@ -249,10 +246,7 @@ impl AmazonClient {
     /// Returns an error if the request fails, cookies are expired, or the
     /// invoice page cannot be parsed.
     pub async fn fetch_order_details(&self, order_id: &str) -> Result<AmazonOrder> {
-        let url = format!(
-            "{}/gp/css/summary/print.html?orderID={}",
-            self.base_url, order_id
-        );
+        let url = format!("{BASE_URL}/gp/css/summary/print.html?orderID={order_id}");
         debug!(url = %url, order_id = %order_id, "fetching invoice");
 
         let resp = self
@@ -288,7 +282,7 @@ impl AmazonClient {
     ///
     /// Returns an error if the network request fails.
     pub async fn check_cookies(&self) -> Result<bool> {
-        let url = format!("{}/cpe/yourpayments/transactions", self.base_url);
+        let url = format!("{BASE_URL}/cpe/yourpayments/transactions");
 
         let resp = self
             .client

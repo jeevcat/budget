@@ -2,10 +2,12 @@ mod accounts;
 mod amazon;
 mod categories;
 mod connections;
+mod error;
 mod rules;
 mod transactions;
 
 pub use amazon::{AmazonEnrichment, AmazonEnrichmentStats};
+pub use error::DbError;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -23,36 +25,36 @@ use budget_core::models::{
 // Private parse helpers
 // ---------------------------------------------------------------------------
 
-fn parse_enum<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<T, sqlx::Error>
+fn parse_enum<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<T, DbError>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
     let s: String = row.try_get(col)?;
-    s.parse::<T>().map_err(|e| sqlx::Error::ColumnDecode {
+    Ok(s.parse::<T>().map_err(|e| sqlx::Error::ColumnDecode {
         index: col.to_owned(),
         source: Box::new(e),
-    })
+    })?)
 }
 
-fn parse_enum_opt<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<Option<T>, sqlx::Error>
+fn parse_enum_opt<T: std::str::FromStr>(row: &PgRow, col: &str) -> Result<Option<T>, DbError>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
     let s: Option<String> = row.try_get(col)?;
-    s.map(|v| {
+    Ok(s.map(|v| {
         v.parse::<T>().map_err(|e| sqlx::Error::ColumnDecode {
             index: col.to_owned(),
             source: Box::new(e),
         })
     })
-    .transpose()
+    .transpose()?)
 }
 
 // ---------------------------------------------------------------------------
 // Row-to-domain mappers
 // ---------------------------------------------------------------------------
 
-fn row_to_account(row: &PgRow) -> Result<Account, sqlx::Error> {
+fn row_to_account(row: &PgRow) -> Result<Account, DbError> {
     Ok(Account {
         id: row.try_get("id")?,
         provider_account_id: row.try_get("provider_account_id")?,
@@ -65,7 +67,7 @@ fn row_to_account(row: &PgRow) -> Result<Account, sqlx::Error> {
     })
 }
 
-fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
+fn row_to_connection(row: &PgRow) -> Result<Connection, DbError> {
     Ok(Connection {
         id: row.try_get("id")?,
         provider: row.try_get("provider")?,
@@ -76,7 +78,7 @@ fn row_to_connection(row: &PgRow) -> Result<Connection, sqlx::Error> {
     })
 }
 
-fn row_to_category(row: &PgRow) -> Result<Category, sqlx::Error> {
+fn row_to_category(row: &PgRow) -> Result<Category, DbError> {
     let budget_mode = parse_enum_opt::<BudgetMode>(row, "budget_mode")?;
     let budget_type = parse_enum_opt::<BudgetType>(row, "budget_type")?;
     let budget_amount: Option<Decimal> = row.try_get("budget_amount")?;
@@ -110,7 +112,7 @@ const TXN_COLUMNS: &str = "id, account_id, category_id, amount, original_amount,
                     balance_after_transaction, balance_after_transaction_currency,
                     creditor_account_additional_id, debtor_account_additional_id";
 
-fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
+fn row_to_transaction(row: &PgRow) -> Result<Transaction, DbError> {
     let correlation_id: Option<TransactionId> = row.try_get("correlation_id")?;
     let correlation_type = parse_enum_opt::<CorrelationType>(row, "correlation_type")?;
     let correlation = match (correlation_id, correlation_type) {
@@ -162,7 +164,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, sqlx::Error> {
     })
 }
 
-fn row_to_rule(row: &PgRow) -> Result<Rule, sqlx::Error> {
+fn row_to_rule(row: &PgRow) -> Result<Rule, DbError> {
     let conditions_json: String = row.try_get("conditions")?;
     let conditions: Vec<RuleCondition> =
         serde_json::from_str(&conditions_json).map_err(|e| sqlx::Error::ColumnDecode {
@@ -196,8 +198,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the connection fails.
-    pub async fn connect(url: &str) -> Result<Self, sqlx::Error> {
+    /// Returns `DbError` if the connection fails.
+    pub async fn connect(url: &str) -> Result<Self, DbError> {
         Ok(Self(PgPool::connect(url).await?))
     }
 
@@ -218,8 +220,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if any migration fails.
-    pub async fn run_migrations(&self) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if any migration fails.
+    pub async fn run_migrations(&self) -> Result<(), DbError> {
         let mut migrator = sqlx::migrate!("../../migrations");
         migrator.set_ignore_missing(true);
         migrator.run(&self.0).await?;

@@ -276,6 +276,7 @@ impl std::str::FromStr for CategoryName {
 
 // sqlx support — delegates to the inner String (TEXT column)
 
+#[cfg(feature = "sqlx")]
 impl sqlx::Type<sqlx::Postgres> for CategoryName {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
         <String as sqlx::Type<sqlx::Postgres>>::type_info()
@@ -286,6 +287,7 @@ impl sqlx::Type<sqlx::Postgres> for CategoryName {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl sqlx::Encode<'_, sqlx::Postgres> for CategoryName {
     fn encode_by_ref(
         &self,
@@ -295,6 +297,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for CategoryName {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CategoryName {
     /// Decode from Postgres TEXT without validation — the DB may contain legacy
     /// colon-names that will be cleaned up by migration.

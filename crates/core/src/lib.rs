@@ -32,7 +32,6 @@ pub struct Config {
     pub host: Option<Host>,
     pub log_path: Option<String>,
     pub frontend_dir: Option<String>,
-    pub amazon_base_url: Option<String>,
     pub amazon_cookies_path: Option<String>,
 }
 
@@ -54,7 +53,6 @@ impl Default for Config {
             host: None,
             log_path: None,
             frontend_dir: None,
-            amazon_base_url: None,
             amazon_cookies_path: None,
         }
     }

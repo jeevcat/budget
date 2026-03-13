@@ -10,6 +10,7 @@ pub mod transactions;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use budget_db::DbError;
 
 /// Unified error type for route handlers.
 ///
@@ -24,17 +25,17 @@ impl IntoResponse for AppError {
     }
 }
 
-impl From<sqlx::Error> for AppError {
-    fn from(e: sqlx::Error) -> Self {
-        if let sqlx::Error::Database(ref db_err) = e
-            && db_err.is_unique_violation()
-        {
-            return Self(StatusCode::CONFLICT, "already exists".to_owned());
+impl From<DbError> for AppError {
+    fn from(e: DbError) -> Self {
+        match e {
+            DbError::UniqueViolation => Self(StatusCode::CONFLICT, "already exists".to_owned()),
+            other => {
+                tracing::error!(error = %other, "database error");
+                Self(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "database error".to_owned(),
+                )
+            }
         }
-        tracing::error!(error = %e, "database error");
-        Self(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "database error".to_owned(),
-        )
     }
 }

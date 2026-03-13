@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use sqlx::Row;
 
-use crate::Db;
+use crate::{Db, DbError};
 
 /// Amazon enrichment data for a bank transaction.
 pub struct AmazonEnrichment {
@@ -27,11 +27,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn upsert_amazon_transaction(
         &self,
         txn: &budget_amazon::AmazonTransaction,
-    ) -> Result<uuid::Uuid, sqlx::Error> {
+    ) -> Result<uuid::Uuid, DbError> {
         let pool = &self.0;
 
         let id: uuid::Uuid = sqlx::query_scalar(
@@ -76,11 +76,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn upsert_amazon_order(
         &self,
         order: &budget_amazon::AmazonOrder,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
 
         sqlx::query(
@@ -134,8 +134,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_unfetched_order_ids(&self) -> Result<Vec<String>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_unfetched_order_ids(&self) -> Result<Vec<String>, DbError> {
         let pool = &self.0;
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT ato.order_id
@@ -154,8 +154,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_amazon_dedup_keys(&self) -> Result<HashSet<String>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_amazon_dedup_keys(&self) -> Result<HashSet<String>, DbError> {
         let pool = &self.0;
         let rows: Vec<(String,)> = sqlx::query_as("SELECT dedup_key FROM amazon_transactions")
             .fetch_all(pool)
@@ -170,10 +170,10 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_amazon_matchable_bank_transactions(
         &self,
-    ) -> Result<Vec<budget_amazon::BankCandidate>, sqlx::Error> {
+    ) -> Result<Vec<budget_amazon::BankCandidate>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT t.id, t.amount, t.posted_date, t.merchant_name
@@ -201,10 +201,10 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_unmatched_amazon_transactions(
         &self,
-    ) -> Result<Vec<budget_amazon::AmazonTransaction>, sqlx::Error> {
+    ) -> Result<Vec<budget_amazon::AmazonTransaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT at.transaction_date, at.amount, at.currency, at.statement_descriptor,
@@ -249,11 +249,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn insert_amazon_matches(
         &self,
         matches: &[budget_amazon::types::MatchResult],
-    ) -> Result<usize, sqlx::Error> {
+    ) -> Result<usize, DbError> {
         let pool = &self.0;
         let mut count = 0;
 
@@ -289,11 +289,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_amazon_enrichment_for_transaction(
         &self,
         bank_txn_id: uuid::Uuid,
-    ) -> Result<Option<AmazonEnrichment>, sqlx::Error> {
+    ) -> Result<Option<AmazonEnrichment>, DbError> {
         let pool = &self.0;
 
         let match_row = sqlx::query(
@@ -358,7 +358,7 @@ impl Db {
                         image_url: row.try_get("image_url")?,
                     })
                 })
-                .collect::<Result<Vec<_>, sqlx::Error>>()?;
+                .collect::<Result<Vec<_>, DbError>>()?;
 
             orders.push(budget_amazon::AmazonOrder {
                 order_id: order_id.clone(),
@@ -397,8 +397,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_matched_bank_transaction_ids(&self) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_matched_bank_transaction_ids(&self) -> Result<Vec<uuid::Uuid>, DbError> {
         let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
             "SELECT DISTINCT bank_transaction_id FROM amazon_matches ORDER BY bank_transaction_id",
         )
@@ -412,8 +412,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn amazon_enrichment_stats(&self) -> Result<AmazonEnrichmentStats, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn amazon_enrichment_stats(&self) -> Result<AmazonEnrichmentStats, DbError> {
         let pool = &self.0;
 
         let total_txns: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM amazon_transactions")

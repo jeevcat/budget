@@ -5,8 +5,9 @@ edition = "2024"
 
 [dependencies]
 budget-amazon = { workspace = true }
-budget-core = { workspace = true }
+budget-core = { workspace = true, features = ["sqlx"] }
 chrono = { workspace = true }
+thiserror = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

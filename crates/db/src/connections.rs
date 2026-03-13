@@ -3,15 +3,15 @@ use sqlx::Row;
 
 use budget_core::models::{Connection, ConnectionId, ConnectionStatus};
 
-use crate::{Db, row_to_connection};
+use crate::{Db, DbError, row_to_connection};
 
 impl Db {
     /// Insert a new connection.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn insert_connection(&self, connection: &Connection) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn insert_connection(&self, connection: &Connection) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO connections (id, provider, provider_session_id, institution_name, valid_until, status)
@@ -32,8 +32,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_connections(&self) -> Result<Vec<Connection>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_connections(&self) -> Result<Vec<Connection>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, provider, provider_session_id, institution_name, valid_until, status
@@ -50,11 +50,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_connection(
-        &self,
-        id: ConnectionId,
-    ) -> Result<Option<Connection>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_connection(&self, id: ConnectionId) -> Result<Option<Connection>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, provider, provider_session_id, institution_name, valid_until, status
@@ -70,12 +67,12 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn update_connection_status(
         &self,
         id: ConnectionId,
         status: ConnectionStatus,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "UPDATE connections SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
@@ -91,8 +88,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn delete_connection(&self, id: ConnectionId) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn delete_connection(&self, id: ConnectionId) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query("DELETE FROM connections WHERE id = $1")
             .bind(id)
@@ -109,13 +106,13 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn insert_state_token(
         &self,
         token: &str,
         user_data: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query("INSERT INTO state_tokens (token, user_data, expires_at) VALUES ($1, $2, $3)")
             .bind(token)
@@ -134,8 +131,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn consume_state_token(&self, token: &str) -> Result<Option<String>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn consume_state_token(&self, token: &str) -> Result<Option<String>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "UPDATE state_tokens SET used = 1
@@ -155,8 +152,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn prune_expired_state_tokens(&self) -> Result<u64, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn prune_expired_state_tokens(&self) -> Result<u64, DbError> {
         let pool = &self.0;
         let result = sqlx::query("DELETE FROM state_tokens WHERE expires_at <= CURRENT_TIMESTAMP")
             .execute(pool)

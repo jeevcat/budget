@@ -4,15 +4,15 @@ use sqlx::Row;
 
 use budget_core::models::{BudgetConfig, Category, CategoryId};
 
-use crate::{Db, row_to_category};
+use crate::{Db, DbError, row_to_category};
 
 impl Db {
     /// Insert a new category.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails (e.g. duplicate primary key).
-    pub async fn insert_category(&self, category: &Category) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails (e.g. duplicate primary key).
+    pub async fn insert_category(&self, category: &Category) -> Result<(), DbError> {
         let pool = &self.0;
         let (start, end) = match &category.budget {
             BudgetConfig::Project {
@@ -43,8 +43,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn update_category(&self, category: &Category) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn update_category(&self, category: &Category) -> Result<(), DbError> {
         let pool = &self.0;
         let (start, end) = match &category.budget {
             BudgetConfig::Project {
@@ -76,8 +76,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_categories(&self) -> Result<Vec<Category>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_categories(&self) -> Result<Vec<Category>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date FROM categories ORDER BY name",
@@ -91,10 +91,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn category_transaction_counts(
-        &self,
-    ) -> Result<HashMap<CategoryId, i64>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn category_transaction_counts(&self) -> Result<HashMap<CategoryId, i64>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT category_id, COUNT(*) as cnt FROM transactions WHERE category_id IS NOT NULL GROUP BY category_id",
@@ -116,8 +114,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_category(&self, id: CategoryId) -> Result<Option<Category>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_category(&self, id: CategoryId) -> Result<Option<Category>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, name, parent_id, budget_mode, budget_type, budget_amount, project_start_date, project_end_date
@@ -133,15 +131,15 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn category_has_children(&self, id: CategoryId) -> Result<bool, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn category_has_children(&self, id: CategoryId) -> Result<bool, DbError> {
         let pool = &self.0;
         let row =
             sqlx::query("SELECT EXISTS(SELECT 1 FROM categories WHERE parent_id = $1) as has")
                 .bind(id)
                 .fetch_one(pool)
                 .await?;
-        row.try_get::<bool, _>("has")
+        Ok(row.try_get::<bool, _>("has")?)
     }
 
     /// Find a category by name, supporting both storage conventions.
@@ -155,8 +153,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if a database query fails.
-    pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, sqlx::Error> {
+    /// Returns `DbError` if a database query fails.
+    pub async fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, DbError> {
         let pool = &self.0;
 
         // 1. Exact match on stored name
@@ -217,8 +215,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_category_names(&self) -> Result<Vec<String>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_category_names(&self) -> Result<Vec<String>, DbError> {
         let categories = self.list_categories().await?;
         let qualified = budget_core::models::build_qualified_name_map(&categories);
         let mut names: Vec<String> = qualified.into_values().collect();
@@ -233,8 +231,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if any query fails.
-    pub async fn delete_category(&self, id: CategoryId) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if any query fails.
+    pub async fn delete_category(&self, id: CategoryId) -> Result<(), DbError> {
         let pool = &self.0;
         let mut tx = pool.begin().await?;
 

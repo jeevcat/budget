@@ -1,14 +1,14 @@
 use budget_core::models::{Rule, RuleId, RuleType};
 
-use crate::{Db, row_to_rule};
+use crate::{Db, DbError, row_to_rule};
 
 impl Db {
     /// Insert a new rule.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn insert_rule(&self, rule: &Rule) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn insert_rule(&self, rule: &Rule) -> Result<(), DbError> {
         let pool = &self.0;
         let conditions_json = serde_json::to_string(&rule.conditions)
             .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -31,8 +31,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_rules(&self) -> Result<Vec<Rule>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_rules(&self) -> Result<Vec<Rule>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -49,8 +49,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_rules_by_type(&self, rule_type: RuleType) -> Result<Vec<Rule>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_rules_by_type(&self, rule_type: RuleType) -> Result<Vec<Rule>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -70,8 +70,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_rule(&self, id: RuleId) -> Result<Option<Rule>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_rule(&self, id: RuleId) -> Result<Option<Rule>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -87,8 +87,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn update_rule(&self, rule: &Rule) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn update_rule(&self, rule: &Rule) -> Result<(), DbError> {
         let pool = &self.0;
         let conditions_json = serde_json::to_string(&rule.conditions)
             .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -112,8 +112,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn delete_rule(&self, id: RuleId) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn delete_rule(&self, id: RuleId) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query("DELETE FROM rules WHERE id = $1")
             .bind(id)

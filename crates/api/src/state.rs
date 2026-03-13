@@ -39,6 +39,6 @@ pub struct AppState {
     /// Public base URL (e.g. `https://budget.example.com`). Derived from
     /// `server_port` when not explicitly configured.
     pub host: String,
-    /// Amazon enrichment configuration (None if not configured).
-    pub amazon_config: Option<AmazonConfig>,
+    /// Amazon enrichment configuration.
+    pub amazon_config: AmazonConfig,
 }

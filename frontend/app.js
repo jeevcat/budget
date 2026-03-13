@@ -3644,86 +3644,80 @@ function AmazonPanel() {
     <div style="margin-top:2rem">
       <h3 style="margin-bottom:0.75rem">Amazon Enrichment</h3>
 
-      ${
-        !status.configured
-          ? html`<p class="text-light">Not configured. Set <code>amazon_base_url</code> in your config file.</p>`
-          : html`
-          <div class="vstack gap-3">
-            <div class="hstack gap-3" style="align-items:start">
-              <div>
-                <span class="text-light">Cookies:</span>${" "}
-                ${
-                  status.cookies_valid === true
-                    ? html`<span class="chip success">Valid</span>`
-                    : status.cookies_valid === false
-                      ? html`<span class="chip danger">Expired</span>`
-                      : html`<span class="chip">Not loaded</span>`
-                }
-                ${
-                  status.cookies_expiry
-                    ? html`<span class="text-light small" style="margin-left:0.5rem">expires ${formatDate(status.cookies_expiry)}${status.cookies_days_remaining != null ? ` (${status.cookies_days_remaining}d)` : ""}</span>`
-                    : null
-                }
-              </div>
-              <button
-                data-variant="primary"
-                class="small"
-                onClick=${triggerSync}
-                disabled=${syncing || !status.cookies_valid}
-              >
-                ${syncing ? "Syncing\u2026" : "Sync Now"}
-              </button>
-            </div>
-
+      <div class="vstack gap-3">
+        <div class="hstack gap-3" style="align-items:start">
+          <div>
+            <span class="text-light">Cookies:</span>${" "}
             ${
-              status.stats
-                ? html`
-                <div class="hstack gap-3" style="flex-wrap:wrap">
-                  <span class="text-light">${status.stats.total_transactions} transactions</span>
-                  <span class="text-light">${status.stats.matched_transactions} matched</span>
-                  <span class="text-light">${status.stats.total_orders} orders</span>
-                  <span class="text-light">${status.stats.total_items} items</span>
-                </div>
-              `
+              status.cookies_valid === true
+                ? html`<span class="chip success">Valid</span>`
+                : status.cookies_valid === false
+                  ? html`<span class="chip danger">Expired</span>`
+                  : html`<span class="chip">Not loaded</span>`
+            }
+            ${
+              status.cookies_expiry
+                ? html`<span class="text-light small" style="margin-left:0.5rem">expires ${formatDate(status.cookies_expiry)}${status.cookies_days_remaining != null ? ` (${status.cookies_days_remaining}d)` : ""}</span>`
                 : null
             }
-
-            ${
-              syncResult
-                ? html`
-                <div class="hstack gap-3" style="flex-wrap:wrap">
-                  <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
-                  <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
-                  <span class="chip outline small">+${syncResult.matches_created} matches</span>
-                </div>
-              `
-                : null
-            }
-
-            <details>
-              <summary>Update Cookies</summary>
-              <div style="margin-top:0.5rem">
-                <textarea
-                  placeholder="Paste cookie JSON array here..."
-                  rows="4"
-                  style="width:100%;font-family:monospace;font-size:0.85rem"
-                  value=${cookieText}
-                  onInput=${(e) => setCookieText(e.target.value)}
-                ></textarea>
-                <button
-                  class="small"
-                  data-variant="primary"
-                  style="margin-top:0.5rem"
-                  onClick=${uploadCookies}
-                  disabled=${uploading || !cookieText.trim()}
-                >
-                  ${uploading ? "Saving\u2026" : "Save Cookies"}
-                </button>
-              </div>
-            </details>
           </div>
-        `
-      }
+          <button
+            data-variant="primary"
+            class="small"
+            onClick=${triggerSync}
+            disabled=${syncing || !status.cookies_valid}
+          >
+            ${syncing ? "Syncing\u2026" : "Sync Now"}
+          </button>
+        </div>
+
+        ${
+          status.stats
+            ? html`
+            <div class="hstack gap-3" style="flex-wrap:wrap">
+              <span class="text-light">${status.stats.total_transactions} transactions</span>
+              <span class="text-light">${status.stats.matched_transactions} matched</span>
+              <span class="text-light">${status.stats.total_orders} orders</span>
+              <span class="text-light">${status.stats.total_items} items</span>
+            </div>
+          `
+            : null
+        }
+
+        ${
+          syncResult
+            ? html`
+            <div class="hstack gap-3" style="flex-wrap:wrap">
+              <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
+              <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
+              <span class="chip outline small">+${syncResult.matches_created} matches</span>
+            </div>
+          `
+            : null
+        }
+
+        <details>
+          <summary>Update Cookies</summary>
+          <div style="margin-top:0.5rem">
+            <textarea
+              placeholder="Paste cookie JSON array here..."
+              rows="4"
+              style="width:100%;font-family:monospace;font-size:0.85rem"
+              value=${cookieText}
+              onInput=${(e) => setCookieText(e.target.value)}
+            ></textarea>
+            <button
+              class="small"
+              data-variant="primary"
+              style="margin-top:0.5rem"
+              onClick=${uploadCookies}
+              disabled=${uploading || !cookieText.trim()}
+            >
+              ${uploading ? "Saving\u2026" : "Save Cookies"}
+            </button>
+          </div>
+        </details>
+      </div>
     </div>
   `;
 }

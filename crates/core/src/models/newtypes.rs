@@ -13,6 +13,7 @@ use crate::error::Error;
 // Shared sqlx boilerplate — delegates to String (TEXT column)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "sqlx")]
 macro_rules! impl_sqlx_text {
     ($ty:ident) => {
         impl sqlx::Type<sqlx::Postgres> for $ty {
@@ -106,6 +107,7 @@ impl std::str::FromStr for CurrencyCode {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(CurrencyCode);
 
 // ---------------------------------------------------------------------------
@@ -174,6 +176,7 @@ impl std::str::FromStr for Iban {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(Iban);
 
 // ---------------------------------------------------------------------------
@@ -233,6 +236,7 @@ impl std::str::FromStr for Bic {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(Bic);
 
 // ---------------------------------------------------------------------------
@@ -289,6 +293,7 @@ impl std::str::FromStr for MerchantCategoryCode {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(MerchantCategoryCode);
 
 // ---------------------------------------------------------------------------
@@ -350,6 +355,7 @@ impl std::str::FromStr for DomainCode {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(DomainCode);
 
 // ---------------------------------------------------------------------------
@@ -414,6 +420,7 @@ impl std::str::FromStr for SubFamilyCode {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_text!(SubFamilyCode);
 
 // ---------------------------------------------------------------------------
@@ -524,6 +531,7 @@ impl std::str::FromStr for ReferenceNumberSchema {
 // Shared sqlx boilerplate — delegates to an integer column
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "sqlx")]
 macro_rules! impl_sqlx_int {
     ($ty:ident, $inner:ty) => {
         impl sqlx::Type<sqlx::Postgres> for $ty {
@@ -601,6 +609,7 @@ impl<'de> Deserialize<'de> for Priority {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl_sqlx_int!(Priority, i32);
 
 // ---------------------------------------------------------------------------

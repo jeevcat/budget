@@ -55,7 +55,9 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         llm: LlmClient::new(MockLlmProvider::new()),
         expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
         host: "http://localhost:3000".to_owned(),
-        amazon_config: None,
+        amazon_config: api::routes::amazon::AmazonConfig {
+            cookies_path: std::path::PathBuf::from("test-amazon-cookies.json"),
+        },
     };
 
     let api_routes = Router::new()

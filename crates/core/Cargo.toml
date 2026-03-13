@@ -3,6 +3,9 @@ name = "budget-core"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+sqlx = ["dep:sqlx"]
+
 [dependencies]
 chrono = { workspace = true }
 confy = { workspace = true }
@@ -10,7 +13,7 @@ regex = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, optional = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

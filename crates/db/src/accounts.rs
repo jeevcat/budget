@@ -1,14 +1,14 @@
 use budget_core::models::{Account, AccountId};
 
-use crate::{Db, row_to_account};
+use crate::{Db, DbError, row_to_account};
 
 impl Db {
     /// Insert or update an account by primary key.
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn upsert_account(&self, account: &Account) -> Result<(), sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn upsert_account(&self, account: &Account) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query(
             "INSERT INTO accounts (id, provider_account_id, name, institution, account_type, currency, connection_id)
@@ -38,8 +38,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_accounts(&self) -> Result<Vec<Account>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_accounts(&self) -> Result<Vec<Account>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id FROM accounts",
@@ -53,8 +53,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn list_connected_accounts(&self) -> Result<Vec<Account>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn list_connected_accounts(&self) -> Result<Vec<Account>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id \
@@ -71,8 +71,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
-    pub async fn get_account(&self, id: AccountId) -> Result<Option<Account>, sqlx::Error> {
+    /// Returns `DbError` if the query fails.
+    pub async fn get_account(&self, id: AccountId) -> Result<Option<Account>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id FROM accounts WHERE id = $1",
@@ -89,11 +89,11 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn get_account_by_provider_id(
         &self,
         provider_account_id: &str,
-    ) -> Result<Option<Account>, sqlx::Error> {
+    ) -> Result<Option<Account>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, provider_account_id, name, nickname, institution, account_type, currency, connection_id
@@ -109,12 +109,12 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns `sqlx::Error` if the query fails.
+    /// Returns `DbError` if the query fails.
     pub async fn update_account_nickname(
         &self,
         id: AccountId,
         nickname: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbError> {
         let pool = &self.0;
         sqlx::query("UPDATE accounts SET nickname = $1 WHERE id = $2")
             .bind(nickname)

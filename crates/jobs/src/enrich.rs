@@ -12,7 +12,6 @@ use budget_db::Db;
 /// Configuration for the Amazon enrichment client.
 #[derive(Clone)]
 pub struct AmazonEnrichConfig {
-    pub base_url: String,
     pub cookies_path: PathBuf,
 }
 
@@ -43,7 +42,7 @@ pub async fn run_amazon_enrich(
         return Err("Amazon cookies expired".into());
     }
 
-    let mut client = AmazonClient::new(cookies, config.base_url.clone()).map_err(|e| {
+    let mut client = AmazonClient::new(cookies).map_err(|e| {
         error!("failed to create Amazon client: {e}");
         e
     })?;
