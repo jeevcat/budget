@@ -565,37 +565,28 @@ pub async fn run_workers(
 
     tracing::info!("job queue initialized");
 
+    // Log which worker exits so we can diagnose unexpected shutdowns.
+    // Each worker.run() should run forever; if any returns, the whole pool stops.
+    macro_rules! log_worker_exit {
+        ($res:expr, $name:expr) => {
+            match $res {
+                Ok(()) => tracing::error!(worker = $name, "worker exited unexpectedly (Ok)"),
+                Err(e) => tracing::error!(worker = $name, %e, "worker exited with error"),
+            }
+        };
+    }
+
     tokio::select! {
-        res = sync_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "sync worker error"); }
-        }
-        res = categorize_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "categorize worker error"); }
-        }
-        res = categorize_txn_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "categorize-txn worker error"); }
-        }
-        res = correlate_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "correlate worker error"); }
-        }
-        res = correlate_txn_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "correlate-txn worker error"); }
-        }
-        res = amazon_sync_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "amazon-sync worker error"); }
-        }
-        res = amazon_order_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "amazon-order worker error"); }
-        }
-        res = amazon_match_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "amazon-match worker error"); }
-        }
-        res = noop_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "noop worker error"); }
-        }
-        res = pipeline_worker.run() => {
-            if let Err(e) = res { tracing::error!(%e, "pipeline worker error"); }
-        }
+        res = sync_worker.run() => { log_worker_exit!(res, "sync"); }
+        res = categorize_worker.run() => { log_worker_exit!(res, "categorize"); }
+        res = categorize_txn_worker.run() => { log_worker_exit!(res, "categorize-txn"); }
+        res = correlate_worker.run() => { log_worker_exit!(res, "correlate"); }
+        res = correlate_txn_worker.run() => { log_worker_exit!(res, "correlate-txn"); }
+        res = amazon_sync_worker.run() => { log_worker_exit!(res, "amazon-sync"); }
+        res = amazon_order_worker.run() => { log_worker_exit!(res, "amazon-order"); }
+        res = amazon_match_worker.run() => { log_worker_exit!(res, "amazon-match"); }
+        res = noop_worker.run() => { log_worker_exit!(res, "noop"); }
+        res = pipeline_worker.run() => { log_worker_exit!(res, "pipeline"); }
     }
 
     Ok(())
