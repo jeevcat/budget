@@ -146,6 +146,14 @@ pub async fn handle_categorize_transaction_job(
         amazon_item_titles: &txn.amazon_item_titles,
     };
 
+    tracing::info!(
+        txn_id = %txn_id,
+        merchant = %txn.merchant_name,
+        amount = %txn.amount,
+        amazon_items = ?txn.amazon_item_titles,
+        "sending transaction to LLM"
+    );
+
     let result = llm.categorize(&input).await?;
 
     let justification = Some(result.justification.as_str());

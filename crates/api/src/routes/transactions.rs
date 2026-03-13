@@ -237,6 +237,7 @@ async fn uncategorize(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,
 ) -> Result<StatusCode, AppError> {
+    tracing::info!(txn_id = %id, "clearing category and re-enqueuing for categorization");
     state.db.clear_transaction_category(id).await?;
     state
         .categorize_storage
