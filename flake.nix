@@ -5,6 +5,8 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
+    bun2nix.url = "github:nix-community/bun2nix";
+    bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -13,6 +15,7 @@
       nixpkgs,
       crane,
       flake-utils,
+      bun2nix,
     }:
     let
       nixosModule =
@@ -173,19 +176,43 @@
           };
           craneLib = crane.mkLib pkgs;
           lib = pkgs.lib;
+          bun2nixPkg = bun2nix.packages.${system}.default;
 
           # Deps source: only Cargo files, so deps cache isn't invalidated by
           # migration or frontend changes
           depsSrc = craneLib.cleanCargoSource ./.;
 
-          # Full source: includes migrations (for sqlx::migrate! macro) and frontend
+          # Full source: includes migrations (for sqlx::migrate! macro)
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               (craneLib.fileset.commonCargoSources ./.)
               ./migrations
-              ./frontend
             ];
+          };
+
+          frontendDist = pkgs.stdenv.mkDerivation {
+            pname = "budget-frontend";
+            version = "0.1.0";
+            src = lib.fileset.toSource {
+              root = ./.;
+              fileset = lib.fileset.unions [
+                ./frontend
+                ./package.json
+                ./bun.lock
+              ];
+            };
+            nativeBuildInputs = [ bun2nixPkg.hook ];
+            bunDeps = bun2nixPkg.fetchBunDeps {
+              bunNix = ./bun.nix;
+            };
+            doCheck = false;
+            buildPhase = ''
+              bun build frontend/index.html --outdir frontend/dist --minify
+            '';
+            installPhase = ''
+              cp -r frontend/dist $out
+            '';
           };
 
           commonArgs = {
@@ -212,7 +239,7 @@
 
               postInstall = ''
                 mkdir -p $out/share/budget
-                cp -r frontend $out/share/budget/frontend
+                cp -r --no-preserve=mode ${frontendDist} $out/share/budget/frontend
               '';
             }
           );
@@ -235,6 +262,7 @@
             craneLib.devShell {
               inputsFrom = [ budget ];
               packages = [
+                pkgs.bun
                 pkgs.jdk21_headless
                 androidSdk
               ];

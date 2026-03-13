@@ -10,6 +10,9 @@
         "htm": "^3.1.1",
         "preact": "^10.25.4",
       },
+      "devDependencies": {
+        "bun2nix": "^2.0.8",
+      },
     },
   },
   "packages": {
@@ -17,8 +20,14 @@
 
     "@someshkar/oat-chips": ["@someshkar/oat-chips@1.0.1", "", { "peerDependencies": { "@knadh/oat": ">=0.1.0" } }, "sha512-CSX1deVlTX7Kgh7Kd8nJw0oATi7hQEnBx4aLvKE9wsLzM2kIvj8IKkQTw3yt8gIzb/Q0Hng4Kkg724xZCVaZEg=="],
 
+    "bun2nix": ["bun2nix@2.0.8", "", { "dependencies": { "sade": "^1.8.1" }, "bin": { "bun2nix": "index.ts" } }, "sha512-pwq35hA81X1Kjsi5Xo69Aii9aY3zZHhWXwqF1QRz/uB35KzKbwJZ16WrhadiG9/T6bjOsRrPZtzuAyqmlXopLw=="],
+
     "htm": ["htm@3.1.1", "", {}, "sha512-983Vyg8NwUE7JkZ6NmOqpCZ+sh1bKv2iYTlUkzlWmA5JD2acKoxd4KVxbMmxX/85mtfdnDmTFoNKcg5DGAvxNQ=="],
 
+    "mri": ["mri@1.2.0", "", {}, "sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA=="],
+
     "preact": ["preact@10.29.0", "", {}, "sha512-wSAGyk2bYR1c7t3SZ3jHcM6xy0lcBcDel6lODcs9ME6Th++Dx2KU+6D3HD8wMMKGA8Wpw7OMd3/4RGzYRpzwRg=="],
+
+    "sade": ["sade@1.8.1", "", { "dependencies": { "mri": "^1.1.0" } }, "sha512-xal3CZX1Xlo/k4ApwCFrHVACi9fBqJ7V+mwhBsuf/1IOKbBy098Fex+Wa/5QMubw09pSZ/u8EY8PWgevJsXp1A=="],
   }
 }
