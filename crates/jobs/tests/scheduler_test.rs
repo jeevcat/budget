@@ -427,11 +427,26 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .await
         .expect("insert");
 
+    // Also create a CSV-only account (no connection)
+    let csv_account = Account {
+        id: AccountId::new(),
+        provider_account_id: "csv-only".to_owned(),
+        name: "CSV Import".to_owned(),
+        nickname: None,
+        institution: "Manual".to_owned(),
+        account_type: AccountType::Checking,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        connection_id: None,
+    };
+    db.upsert_account(&csv_account)
+        .await
+        .expect("seed csv account");
+
     let statuses = schedule_queries::get_all_schedule_status(&apalis_pool)
         .await
         .expect("query");
 
-    assert_eq!(statuses.len(), 2);
+    assert_eq!(statuses.len(), 3);
 
     let checking = statuses
         .iter()
@@ -439,6 +454,7 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .expect("checking");
     assert_eq!(checking.last_run_status, Some(RunStatus::Succeeded));
     assert!(checking.last_error.is_none());
+    assert!(checking.syncable);
 
     let savings = statuses
         .iter()
@@ -446,4 +462,12 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .expect("savings");
     assert_eq!(savings.last_run_status, Some(RunStatus::Failed));
     assert_eq!(savings.last_error.as_deref(), Some("connection failed"));
+    assert!(savings.syncable);
+
+    let csv = statuses
+        .iter()
+        .find(|s| s.account_name == "CSV Import")
+        .expect("csv");
+    assert!(!csv.syncable);
+    assert!(csv.last_run_status.is_none());
 }

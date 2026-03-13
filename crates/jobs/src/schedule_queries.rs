@@ -95,6 +95,8 @@ pub struct ScheduleRun {
 pub struct AccountScheduleStatus {
     pub account_id: Uuid,
     pub account_name: String,
+    /// Whether this account has a bank connection and can be API-synced.
+    pub syncable: bool,
     pub last_run_at: Option<DateTime<Utc>>,
     pub last_run_status: Option<RunStatus>,
     pub last_error: Option<String>,
@@ -203,6 +205,7 @@ pub async fn get_all_schedule_status(
 ) -> Result<Vec<AccountScheduleStatus>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT a.id AS account_id, COALESCE(a.nickname, a.name) AS account_name, \
+                a.connection_id IS NOT NULL AS syncable, \
                 sr.started_at AS last_run_at, sr.status AS last_run_status, \
                 sr.error_message AS last_error, sr.next_run_at, sr.trigger_reason \
          FROM accounts a \
@@ -224,6 +227,7 @@ pub async fn get_all_schedule_status(
             Ok(AccountScheduleStatus {
                 account_id: r.try_get("account_id")?,
                 account_name: r.try_get("account_name")?,
+                syncable: r.try_get::<Option<bool>, _>("syncable")?.unwrap_or(false),
                 last_run_at: r.try_get("last_run_at")?,
                 last_run_status: status_str
                     .as_deref()

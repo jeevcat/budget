@@ -3631,12 +3631,14 @@ function Jobs() {
     addTriggering("sync-all");
     try {
       await Promise.all(
-        schedule.map((s) => {
-          addTriggering(`sync-${s.account_id}`);
-          return api
-            .post(`/jobs/pipeline/${s.account_id}`)
-            .finally(() => removeTriggering(`sync-${s.account_id}`));
-        }),
+        schedule
+          .filter((s) => s.syncable)
+          .map((s) => {
+            addTriggering(`sync-${s.account_id}`);
+            return api
+              .post(`/jobs/pipeline/${s.account_id}`)
+              .finally(() => removeTriggering(`sync-${s.account_id}`));
+          }),
       );
       load();
       ot.toast("Sync queued for all accounts", "", { variant: "success" });
@@ -3708,13 +3710,17 @@ function Jobs() {
                   <span class="sync-row-next text-light">
                     ${s.next_run_at ? html`${timeAgo(s.next_run_at)}${nextReason}` : "\u2014"}
                   </span>
-                  <button
+                  ${
+                    s.syncable
+                      ? html`<button
                     class="small outline"
                     onClick=${() => trigger(`/jobs/pipeline/${s.account_id}`, `sync-${s.account_id}`, `Sync queued for ${s.account_name}`)}
                     disabled=${busy}
                   >
                     ${busy ? "..." : "Sync"}
-                  </button>
+                  </button>`
+                      : html`<span class="chip outline">CSV</span>`
+                  }
                 </div>
               `;
             })}
@@ -3748,6 +3754,40 @@ function Jobs() {
     `;
   }
 
+  const [allJobs, setAllJobs] = useState(null);
+  const [jobsOpen, setJobsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!jobsOpen) {
+      setAllJobs(null);
+      return;
+    }
+    api
+      .get("/jobs")
+      .then(setAllJobs)
+      .catch(() => {});
+    const iv = setInterval(() => {
+      api
+        .get("/jobs")
+        .then(setAllJobs)
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [jobsOpen]);
+
+  function shortType(t) {
+    return t.includes("::") ? t.split("::").pop() : t;
+  }
+
+  function statusChip(s) {
+    if (s === "Done") return html`<span class="chip success">Done</span>`;
+    if (s === "Failed" || s === "Killed")
+      return html`<span class="chip danger">${s}</span>`;
+    if (s === "Running") return html`<span class="chip outline">Running</span>`;
+    if (s === "Pending") return html`<span class="chip outline">Pending</span>`;
+    return html`<span class="chip outline">${s}</span>`;
+  }
+
   if (!counts) return html`<p class="text-light">Loading...</p>`;
 
   return html`
@@ -3756,6 +3796,44 @@ function Jobs() {
     <div class="queue-cards">
       ${QUEUE_CARDS.map(renderQueueCard)}
     </div>
+
+    <details onToggle=${(e) => setJobsOpen(e.target.open)}>
+      <summary>All Jobs (debug)</summary>
+      ${
+        allJobs
+          ? html`
+          <div class="table" style="margin-top:0.5rem">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Run At</th>
+                  <th>Done At</th>
+                  <th>Attempts</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${allJobs.map(
+                  (j) => html`
+                    <tr>
+                      <td class="mono">${shortType(j.job_type)}</td>
+                      <td>${statusChip(j.status)}</td>
+                      <td class="text-light">${timeAgo(j.run_at)}</td>
+                      <td class="text-light">${j.done_at ? timeAgo(j.done_at) : "\u2014"}</td>
+                      <td class="mono">${j.attempts}</td>
+                      <td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=${j.error || ""}>${j.error || "\u2014"}</td>
+                    </tr>
+                  `,
+                )}
+              </tbody>
+            </table>
+          </div>
+        `
+          : html`<p class="text-light">Loading...</p>`
+      }
+    </details>
   `;
 }
 
