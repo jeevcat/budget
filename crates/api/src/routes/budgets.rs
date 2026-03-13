@@ -530,7 +530,6 @@ fn compute_projects(
 fn build_ledgers(
     statuses: &[StatusEntry],
     classified: &DashboardContext,
-    month: &BudgetMonth,
     categories: &[Category],
 ) -> (LedgerSummary, LedgerSummary) {
     let monthly_entries: Vec<&StatusEntry> = statuses
@@ -542,13 +541,7 @@ fn build_ledgers(
         .filter(|e| e.status.budget_mode == BudgetMode::Annual)
         .collect();
 
-    // Project-in-month spending counts toward monthly outflows
-    let project_month_spent: Decimal = classified
-        .project
-        .iter()
-        .filter(|t| is_in_budget_month(t.posted_date, month))
-        .fold(Decimal::ZERO, |acc, t| acc + t.amount);
-    let monthly_budgeted_spent = negate_sum(&classified.monthly) - project_month_spent;
+    let monthly_budgeted_spent = negate_sum(&classified.monthly);
     let monthly_ledger = build_ledger(
         &monthly_entries,
         monthly_budgeted_spent,
@@ -658,7 +651,7 @@ async fn status(
         reference_date,
     );
 
-    let (monthly_ledger, annual_ledger) = build_ledgers(&statuses, &classified, month, &categories);
+    let (monthly_ledger, annual_ledger) = build_ledgers(&statuses, &classified, &categories);
     let project_summary = compute_project_group_summary(&projects);
 
     Ok(Json(StatusResponse {
