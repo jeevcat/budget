@@ -33,7 +33,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = budget_core::load_config()?;
     init_tracing(&config);
-    tracing::info!(port = config.server_port, db = %config.database_url, "starting budget server");
+    tracing::info!(
+        port = config.server_port,
+        db = %config.database_url,
+        version = option_env!("BUDGET_GIT_REV").unwrap_or("dev"),
+        "starting budget server"
+    );
     if config.secret_key.as_ref().is_empty() {
         tracing::warn!("no secret_key configured — all API requests will be rejected");
     }
@@ -187,7 +192,10 @@ async fn run_migrations(
 
 /// Health check endpoint (unauthenticated).
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok"}))
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": option_env!("BUDGET_GIT_REV").unwrap_or("dev"),
+    }))
 }
 
 /// Set up tracing with stderr output and an optional log file.

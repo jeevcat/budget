@@ -236,6 +236,7 @@
               inherit src cargoArtifacts;
               # Tests require a live PostgreSQL instance (sqlx::test)
               doCheck = false;
+              env.BUDGET_GIT_REV = self.shortRev or self.dirtyShortRev or "unknown";
 
               postInstall = ''
                 mkdir -p $out/share/budget
