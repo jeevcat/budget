@@ -365,6 +365,28 @@ function BudgetBar({ pace, fillPct, markPct }) {
   `;
 }
 
+function NetSummary({ ledger }) {
+  if (!ledger) return null;
+  const net = Number(ledger.net);
+  const netColor = net < 0 ? "var(--danger)" : "var(--success)";
+  return html`
+    <div class="net-summary">
+      <div class="net-summary-side">
+        <span class="net-summary-label text-light">In</span>
+        <span class="net-summary-value" style="color:var(--success)">${formatAmount(ledger.total_in, { decimals: 0 })}</span>
+      </div>
+      <div class="net-summary-center">
+        <span class="net-summary-label text-light">Net</span>
+        <span class="net-summary-net" style="color:${netColor}">${formatAmount(net, { decimals: 0, sign: true })}</span>
+      </div>
+      <div class="net-summary-side">
+        <span class="net-summary-label text-light">Out</span>
+        <span class="net-summary-value" style="color:var(--danger)">${formatAmount(ledger.total_out, { decimals: 0 })}</span>
+      </div>
+    </div>
+  `;
+}
+
 function Ledger({
   items,
   ledger,
@@ -502,15 +524,6 @@ function Ledger({
         <span>Net</span>
         <span class="ledger-amount" style="color:${Number(ledger.net) < 0 ? "var(--danger)" : "var(--success)"}">${formatAmount(ledger.net, { decimals: 0, sign: true })}</span>
       </div>
-      ${
-        ledger.saved != null &&
-        html`
-        <div class="ledger-net ledger-net-secondary" style="border-top:none;padding-top:0.15rem">
-          <span class="text-light">Saved from salary</span>
-          <span class="ledger-amount" style="color:${Number(ledger.saved) < 0 ? "var(--danger)" : "var(--success)"}">${formatAmount(ledger.saved, { decimals: 0, sign: true })}</span>
-        </div>
-      `
-      }
     </div>
   `;
 }
@@ -1058,6 +1071,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
             >\u203A</button>
           </div>
         </div>
+        <${NetSummary} ledger=${monthlyLedger} />
         ${
           monthlyLedger
             ? html`<${Ledger}
@@ -1077,6 +1091,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
             ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
           </div>
         </div>
+        <${NetSummary} ledger=${annualLedger} />
         ${
           annualLedger
             ? html`<${Ledger}
