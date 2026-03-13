@@ -114,7 +114,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) ->
 
 /// Clear the auth cookie.
 async fn logout() -> Response {
-    let cookie = format!("{COOKIE_NAME}=; `HttpOnly`; SameSite=Strict; Path=/; Max-Age=0");
+    let cookie = format!("{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     (
         [(SET_COOKIE, cookie)],
         Json(serde_json::json!({"ok": true})),

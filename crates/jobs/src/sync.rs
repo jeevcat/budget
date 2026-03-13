@@ -89,7 +89,7 @@ pub fn to_domain(account_id: AccountId, ptxn: &budget_providers::Transaction) ->
         reference_number_schema: ptxn
             .reference_number_schema
             .as_deref()
-            .map(|s| s.parse::<ReferenceNumberSchema>().expect("infallible")),
+            .and_then(|s| try_parse::<ReferenceNumberSchema, _>(s, "reference_number_schema")),
         note: ptxn.note.clone(),
         balance_after_transaction: ptxn.balance_after_transaction,
         balance_after_transaction_currency: ptxn
