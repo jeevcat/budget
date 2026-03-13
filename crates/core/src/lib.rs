@@ -40,7 +40,7 @@ impl Default for Config {
         Self {
             database_url: DatabaseUrl::new("postgresql://budget@localhost:5432/budget")
                 .expect("valid default database URL"),
-            llm_model: "gemini-2.5-flash-lite".to_owned(),
+            llm_model: "gemini-3.1-flash-lite-preview".to_owned(),
             gemini_api_key: None,
             budget_currency: CurrencyCode::new("USD").expect("valid default currency"),
             expected_salary_count: NonZeroU32::new(1).expect("1 is non-zero"),
