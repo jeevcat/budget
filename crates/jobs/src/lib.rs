@@ -565,29 +565,61 @@ pub async fn run_workers(
 
     tracing::info!("job queue initialized");
 
-    // Log which worker exits so we can diagnose unexpected shutdowns.
-    // Each worker.run() should run forever; if any returns, the whole pool stops.
-    macro_rules! log_worker_exit {
-        ($res:expr, $name:expr) => {
-            match $res {
-                Ok(()) => tracing::error!(worker = $name, "worker exited unexpectedly (Ok)"),
-                Err(e) => tracing::error!(worker = $name, %e, "worker exited with error"),
-            }
+    // Spawn each worker as a named task so one worker exiting doesn't kill the rest.
+    let mut set = tokio::task::JoinSet::new();
+
+    macro_rules! spawn_worker {
+        ($set:expr, $name:expr, $worker:expr) => {
+            $set.spawn(async move {
+                let name = $name;
+                let res = $worker.run().await;
+                match &res {
+                    Ok(()) => tracing::error!(worker = name, "worker exited unexpectedly (Ok)"),
+                    Err(e) => tracing::error!(worker = name, %e, "worker exited with error"),
+                }
+                res.map_err(|e| format!("worker {name} failed: {e}"))
+            });
         };
     }
 
-    tokio::select! {
-        res = sync_worker.run() => { log_worker_exit!(res, "sync"); }
-        res = categorize_worker.run() => { log_worker_exit!(res, "categorize"); }
-        res = categorize_txn_worker.run() => { log_worker_exit!(res, "categorize-txn"); }
-        res = correlate_worker.run() => { log_worker_exit!(res, "correlate"); }
-        res = correlate_txn_worker.run() => { log_worker_exit!(res, "correlate-txn"); }
-        res = amazon_sync_worker.run() => { log_worker_exit!(res, "amazon-sync"); }
-        res = amazon_order_worker.run() => { log_worker_exit!(res, "amazon-order"); }
-        res = amazon_match_worker.run() => { log_worker_exit!(res, "amazon-match"); }
-        res = noop_worker.run() => { log_worker_exit!(res, "noop"); }
-        res = pipeline_worker.run() => { log_worker_exit!(res, "pipeline"); }
+    spawn_worker!(set, "pipeline", pipeline_worker);
+    spawn_worker!(set, "sync", sync_worker);
+    spawn_worker!(set, "categorize", categorize_worker);
+    spawn_worker!(set, "categorize-txn", categorize_txn_worker);
+    spawn_worker!(set, "correlate", correlate_worker);
+    spawn_worker!(set, "correlate-txn", correlate_txn_worker);
+    spawn_worker!(set, "amazon-sync", amazon_sync_worker);
+    spawn_worker!(set, "amazon-order", amazon_order_worker);
+    spawn_worker!(set, "amazon-match", amazon_match_worker);
+    spawn_worker!(set, "noop", noop_worker);
+
+    await_all_workers(set).await
+}
+
+/// Wait for all spawned workers to exit. Logs each exit and returns the first error.
+async fn await_all_workers(
+    mut set: tokio::task::JoinSet<Result<(), String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut first_error: Option<String> = None;
+    while let Some(result) = set.join_next().await {
+        match result {
+            Ok(Err(e)) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+            Err(join_err) => {
+                tracing::error!(%join_err, "worker task panicked");
+                if first_error.is_none() {
+                    first_error = Some(format!("worker panicked: {join_err}"));
+                }
+            }
+            Ok(Ok(())) => {}
+        }
     }
 
-    Ok(())
+    match first_error {
+        Some(e) => Err(e.into()),
+        None => Ok(()),
+    }
 }
