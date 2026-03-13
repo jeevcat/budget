@@ -8,7 +8,9 @@ use super::enums::{
     AccountType, BudgetMode, BudgetType, CategoryMethod, ConnectionStatus, CorrelationType,
     MatchField, PaceIndicator, RuleType,
 };
-use super::id::{AccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId};
+use super::id::{
+    AccountId, AmazonAccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId,
+};
 use super::newtypes::{
     Bic, CurrencyCode, DomainCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
     ReferenceNumberSchema, SubFamilyCode,
@@ -722,6 +724,12 @@ pub struct BudgetStatus {
     /// Positive = over pace, negative = under pace.
     pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmazonAccount {
+    pub id: AmazonAccountId,
+    pub label: String,
 }
 
 #[cfg(test)]

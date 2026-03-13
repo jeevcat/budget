@@ -3589,30 +3589,113 @@ function Connections() {
 // ---------------------------------------------------------------------------
 
 function AmazonPanel() {
-  const [status, setStatus] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [statuses, setStatuses] = useState({});
+  const [newLabel, setNewLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  function loadAccounts() {
+    api
+      .get("/amazon/accounts")
+      .then((accts) => {
+        setAccounts(accts);
+        for (const a of accts) {
+          api
+            .get(`/amazon/accounts/${a.id}/status`)
+            .then((s) => setStatuses((prev) => ({ ...prev, [a.id]: s })))
+            .catch(() => {});
+        }
+      })
+      .catch(() => setAccounts([]));
+  }
+
+  useEffect(loadAccounts, []);
+
+  async function addAccount() {
+    if (!newLabel.trim()) return;
+    setCreating(true);
+    try {
+      await api.post("/amazon/accounts", { label: newLabel.trim() });
+      setNewLabel("");
+      loadAccounts();
+      ot.toast("Account created", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Failed to create account", { variant: "danger" });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function deleteAccount(id, label) {
+    if (
+      !confirm(
+        `Delete Amazon account "${label}"? This removes all its transactions and matches.`,
+      )
+    )
+      return;
+    try {
+      await api.del(`/amazon/accounts/${id}`);
+      loadAccounts();
+      ot.toast("Account deleted", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Failed to delete account", { variant: "danger" });
+    }
+  }
+
+  return html`
+    <div style="margin-top:2rem">
+      <h3 style="margin-bottom:0.75rem">Amazon Enrichment</h3>
+
+      <div class="vstack gap-3">
+        ${accounts.map(
+          (account) => html`
+            <${AmazonAccountCard}
+              key=${account.id}
+              account=${account}
+              status=${statuses[account.id]}
+              onReload=${loadAccounts}
+              onDelete=${() => deleteAccount(account.id, account.label)}
+            />
+          `,
+        )}
+
+        <div class="hstack gap-2">
+          <input
+            type="text"
+            placeholder="New account label..."
+            value=${newLabel}
+            onInput=${(e) => setNewLabel(e.target.value)}
+            onKeyDown=${(e) => e.key === "Enter" && addAccount()}
+            style="flex:1"
+          />
+          <button
+            class="small"
+            data-variant="primary"
+            onClick=${addAccount}
+            disabled=${creating || !newLabel.trim()}
+          >
+            ${creating ? "Adding\u2026" : "Add Account"}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function AmazonAccountCard({ account, status, onReload, onDelete }) {
   const [cookieText, setCookieText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
 
-  function loadStatus() {
-    api
-      .get("/amazon/status")
-      .then(setStatus)
-      .catch(() => setStatus(null));
-  }
-
-  useEffect(loadStatus, []);
-
   async function uploadCookies() {
     setUploading(true);
     try {
       const trimmed = cookieText.trim();
-      // Send as pre-parsed JSON array if it looks like JSON, otherwise as raw text
       const cookies = trimmed.startsWith("[") ? JSON.parse(trimmed) : trimmed;
-      await api.post("/amazon/cookies", { cookies });
+      await api.post(`/amazon/accounts/${account.id}/cookies`, { cookies });
       setCookieText("");
-      loadStatus();
+      onReload();
       ot.toast("Cookies saved", "", { variant: "success" });
     } catch (e) {
       ot.toast(e.message, "Cookie upload failed", { variant: "danger" });
@@ -3625,9 +3708,9 @@ function AmazonPanel() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const result = await api.post("/amazon/sync");
+      const result = await api.post(`/amazon/accounts/${account.id}/sync`);
       setSyncResult(result);
-      loadStatus();
+      onReload();
       ot.toast(
         `Fetched ${result.transactions_fetched} transactions, ${result.orders_fetched} orders, ${result.matches_created} matches`,
         "Amazon sync complete",
@@ -3640,85 +3723,91 @@ function AmazonPanel() {
     }
   }
 
-  if (!status) return null;
-
   return html`
-    <div style="margin-top:2rem">
-      <h3 style="margin-bottom:0.75rem">Amazon Enrichment</h3>
-
-      <div class="vstack gap-3">
-        <div class="hstack gap-3" style="align-items:start">
-          <div>
-            <span class="text-light">Cookies:</span>${" "}
+    <div class="card" style="padding:1rem">
+      <div class="hstack gap-3" style="align-items:start;justify-content:space-between">
+        <div class="vstack gap-2" style="flex:1">
+          <div class="hstack gap-2" style="align-items:center">
+            <strong>${account.label}</strong>
             ${
-              status.cookies_valid === true
+              status?.cookies_valid === true
                 ? html`<span class="chip success">Valid</span>`
-                : status.cookies_valid === false
+                : status?.cookies_valid === false
                   ? html`<span class="chip danger">Expired</span>`
-                  : html`<span class="chip">Not loaded</span>`
+                  : html`<span class="chip">No cookies</span>`
             }
             ${
-              status.cookies_expiry
-                ? html`<span class="text-light small" style="margin-left:0.5rem">expires ${formatDate(status.cookies_expiry)}${status.cookies_days_remaining != null ? ` (${status.cookies_days_remaining}d)` : ""}</span>`
+              status?.cookies_expiry
+                ? html`<span class="text-light small">expires ${formatDate(status.cookies_expiry)}${status.cookies_days_remaining != null ? ` (${status.cookies_days_remaining}d)` : ""}</span>`
                 : null
             }
           </div>
+
+          ${
+            status?.stats
+              ? html`
+              <div class="hstack gap-3" style="flex-wrap:wrap">
+                <span class="text-light">${status.stats.total_transactions} transactions</span>
+                <span class="text-light">${status.stats.matched_transactions} matched</span>
+                <span class="text-light">${status.stats.total_orders} orders</span>
+                <span class="text-light">${status.stats.total_items} items</span>
+              </div>
+            `
+              : null
+          }
+
+          ${
+            syncResult
+              ? html`
+              <div class="hstack gap-3" style="flex-wrap:wrap">
+                <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
+                <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
+                <span class="chip outline small">+${syncResult.matches_created} matches</span>
+              </div>
+            `
+              : null
+          }
+
+          <details>
+            <summary>Update Cookies</summary>
+            <div style="margin-top:0.5rem">
+              <textarea
+                placeholder="Paste cookies here (JSON array or Netscape cookies.txt)..."
+                rows="4"
+                style="width:100%;font-family:monospace;font-size:0.85rem"
+                value=${cookieText}
+                onInput=${(e) => setCookieText(e.target.value)}
+              ></textarea>
+              <button
+                class="small"
+                data-variant="primary"
+                style="margin-top:0.5rem"
+                onClick=${uploadCookies}
+                disabled=${uploading || !cookieText.trim()}
+              >
+                ${uploading ? "Saving\u2026" : "Save Cookies"}
+              </button>
+            </div>
+          </details>
+        </div>
+
+        <div class="hstack gap-2">
           <button
             data-variant="primary"
             class="small"
             onClick=${triggerSync}
-            disabled=${syncing || !status.cookies_valid}
+            disabled=${syncing || !status?.cookies_valid}
           >
             ${syncing ? "Syncing\u2026" : "Sync Now"}
           </button>
+          <button
+            data-variant="danger"
+            class="small"
+            onClick=${onDelete}
+          >
+            Delete
+          </button>
         </div>
-
-        ${
-          status.stats
-            ? html`
-            <div class="hstack gap-3" style="flex-wrap:wrap">
-              <span class="text-light">${status.stats.total_transactions} transactions</span>
-              <span class="text-light">${status.stats.matched_transactions} matched</span>
-              <span class="text-light">${status.stats.total_orders} orders</span>
-              <span class="text-light">${status.stats.total_items} items</span>
-            </div>
-          `
-            : null
-        }
-
-        ${
-          syncResult
-            ? html`
-            <div class="hstack gap-3" style="flex-wrap:wrap">
-              <span class="chip outline small">+${syncResult.transactions_fetched} txns</span>
-              <span class="chip outline small">+${syncResult.orders_fetched} orders</span>
-              <span class="chip outline small">+${syncResult.matches_created} matches</span>
-            </div>
-          `
-            : null
-        }
-
-        <details>
-          <summary>Update Cookies</summary>
-          <div style="margin-top:0.5rem">
-            <textarea
-              placeholder="Paste cookies here (JSON array or Netscape cookies.txt)..."
-              rows="4"
-              style="width:100%;font-family:monospace;font-size:0.85rem"
-              value=${cookieText}
-              onInput=${(e) => setCookieText(e.target.value)}
-            ></textarea>
-            <button
-              class="small"
-              data-variant="primary"
-              style="margin-top:0.5rem"
-              onClick=${uploadCookies}
-              disabled=${uploading || !cookieText.trim()}
-            >
-              ${uploading ? "Saving\u2026" : "Save Cookies"}
-            </button>
-          </div>
-        </details>
       </div>
     </div>
   `;

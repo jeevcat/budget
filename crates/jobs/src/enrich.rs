@@ -7,11 +7,13 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use budget_amazon::{AmazonClient, CookieStore};
+use budget_core::models::AmazonAccountId;
 use budget_db::Db;
 
 /// Configuration for the Amazon enrichment client.
 #[derive(Clone)]
 pub struct AmazonEnrichConfig {
+    pub account_id: AmazonAccountId,
     pub cookies_path: PathBuf,
 }
 
@@ -30,49 +32,52 @@ pub async fn run_amazon_enrich(
     db: &Db,
     config: &AmazonEnrichConfig,
 ) -> Result<EnrichResult, Box<dyn std::error::Error + Send + Sync>> {
-    info!("starting Amazon enrichment job");
+    let account_id = config.account_id;
+    info!(%account_id, "starting Amazon enrichment job");
 
     let cookies = CookieStore::load(&config.cookies_path).map_err(|e| {
-        error!(path = %config.cookies_path.display(), "failed to load Amazon cookies: {e}");
+        error!(path = %config.cookies_path.display(), %account_id, "failed to load Amazon cookies: {e}");
         e
     })?;
 
     if cookies.is_expired() {
-        warn!("Amazon cookies are expired — re-login required");
+        warn!(%account_id, "Amazon cookies are expired — re-login required");
         return Err("Amazon cookies expired".into());
     }
 
     let mut client = AmazonClient::new(cookies).map_err(|e| {
-        error!("failed to create Amazon client: {e}");
+        error!(%account_id, "failed to create Amazon client: {e}");
         e
     })?;
 
     // Get known dedup keys for incremental sync
-    let known_keys = db.get_amazon_dedup_keys().await?;
-    debug!(known = known_keys.len(), "loaded known Amazon dedup keys");
+    let known_keys = db.get_amazon_dedup_keys(account_id).await?;
+    debug!(%account_id, known = known_keys.len(), "loaded known Amazon dedup keys");
 
     // Fetch new transactions, stopping when we hit a known one
     let transactions = client
         .fetch_all_transactions(|key| known_keys.contains(key))
         .await
         .map_err(|e| {
-            error!("failed to fetch Amazon transactions: {e}");
+            error!(%account_id, "failed to fetch Amazon transactions: {e}");
             e
         })?;
 
     info!(
+        %account_id,
         count = transactions.len(),
         "fetched new Amazon transactions"
     );
 
     // Upsert transactions to DB
     for txn in &transactions {
-        db.upsert_amazon_transaction(txn).await?;
+        db.upsert_amazon_transaction(account_id, txn).await?;
     }
 
     // Fetch order details for any unfetched order IDs
-    let unfetched_orders = db.get_unfetched_order_ids().await?;
+    let unfetched_orders = db.get_unfetched_order_ids(account_id).await?;
     info!(
+        %account_id,
         count = unfetched_orders.len(),
         "fetching order details for unfetched orders"
     );
@@ -87,16 +92,16 @@ pub async fn run_amazon_enrich(
             Ok(order) => {
                 db.upsert_amazon_order(&order).await?;
                 orders_fetched += 1;
-                debug!(order_id = %order_id, items = order.items.len(), "fetched order details");
+                debug!(%account_id, order_id = %order_id, items = order.items.len(), "fetched order details");
             }
             Err(e) => {
-                warn!(order_id = %order_id, "failed to fetch order details: {e}");
+                warn!(%account_id, order_id = %order_id, "failed to fetch order details: {e}");
             }
         }
     }
 
     // Match Amazon transactions to bank transactions
-    let unmatched_amazon = db.get_unmatched_amazon_transactions().await?;
+    let unmatched_amazon = db.get_unmatched_amazon_transactions(account_id).await?;
     let bank_candidates = db.get_amazon_matchable_bank_transactions().await?;
 
     let matches = budget_amazon::find_matches(&unmatched_amazon, &bank_candidates);
@@ -104,7 +109,7 @@ pub async fn run_amazon_enrich(
 
     if !matches.is_empty() {
         db.insert_amazon_matches(&matches).await?;
-        info!(count = matches_count, "inserted Amazon matches");
+        info!(%account_id, count = matches_count, "inserted Amazon matches");
     }
 
     let result = EnrichResult {
@@ -113,7 +118,7 @@ pub async fn run_amazon_enrich(
         matches_created: matches_count,
     };
 
-    info!(?result, "Amazon enrichment job completed");
+    info!(%account_id, ?result, "Amazon enrichment job completed");
     Ok(result)
 }
 

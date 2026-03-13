@@ -50,17 +50,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fallback(budget_jobs::BankClient::new(MockBankProvider::new()));
     let llm = budget_jobs::init_llm_provider(&config);
 
-    let amazon_cookies_path = config.amazon_cookies_path.as_ref().map_or_else(
+    let amazon_cookies_dir = config.amazon_cookies_dir.as_ref().map_or_else(
         || {
             budget_core::config_path().map_or_else(
-                |_| std::path::PathBuf::from("amazon-cookies.json"),
-                |p| p.with_file_name("amazon-cookies.json"),
+                |_| std::path::PathBuf::from("amazon-cookies"),
+                |p| p.with_file_name("amazon-cookies"),
             )
         },
         std::path::PathBuf::from,
     );
+    if let Err(e) = std::fs::create_dir_all(&amazon_cookies_dir) {
+        tracing::warn!(path = %amazon_cookies_dir.display(), error = %e, "failed to create Amazon cookies directory");
+    }
     let amazon_config = api::routes::amazon::AmazonConfig {
-        cookies_path: amazon_cookies_path,
+        cookies_dir: amazon_cookies_dir,
     };
 
     let state = AppState {

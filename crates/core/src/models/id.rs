@@ -96,6 +96,7 @@ define_id!(CategoryId);
 define_id!(RuleId);
 define_id!(BudgetMonthId);
 define_id!(ConnectionId);
+define_id!(AmazonAccountId);
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_amazon::{AmazonCookie, CookieStore};
+use budget_core::models::{AmazonAccount, AmazonAccountId};
 use budget_db::AmazonEnrichmentStats;
 
 use crate::routes::AppError;
@@ -16,26 +17,46 @@ use crate::state::AppState;
 /// Build the Amazon sub-router.
 ///
 /// Mounts:
-/// - `POST /cookies` -- upload cookie JSON, validate, save to disk
-/// - `GET /status` -- configuration status, cookie validity, match stats
-/// - `POST /sync` -- trigger Amazon enrichment job
-/// - `GET /matches` -- list matched bank transactions with Amazon details
+/// - `GET /accounts` -- list Amazon accounts
+/// - `POST /accounts` -- create account
+/// - `DELETE /accounts/{id}` -- delete account
+/// - `PATCH /accounts/{id}` -- update account label
+/// - `POST /accounts/{id}/cookies` -- upload cookies for account
+/// - `GET /accounts/{id}/status` -- cookie status + stats for account
+/// - `POST /accounts/{id}/sync` -- trigger sync for account
 /// - `GET /enrichment/{transaction_id}` -- Amazon enrichment for a bank transaction
+/// - `GET /matches` -- list matched bank transactions with Amazon details
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/cookies", post(upload_cookies))
-        .route("/status", get(status))
-        .route("/sync", post(trigger_sync))
-        .route("/matches", get(list_matches))
+        .route("/accounts", get(list_accounts).post(create_account))
+        .route(
+            "/accounts/{id}",
+            axum::routing::delete(delete_account).patch(update_account),
+        )
+        .route("/accounts/{id}/cookies", post(upload_cookies))
+        .route("/accounts/{id}/status", get(account_status))
+        .route("/accounts/{id}/sync", post(trigger_sync))
         .route("/enrichment/{transaction_id}", get(get_enrichment))
+        .route("/matches", get(list_matches))
 }
 
 // ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct CreateAccountRequest {
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateAccountRequest {
+    label: String,
+}
+
 #[derive(Serialize)]
-struct AmazonStatus {
+struct AccountStatus {
+    account: AmazonAccount,
     cookies_valid: Option<bool>,
     cookies_expiry: Option<String>,
     cookies_days_remaining: Option<i64>,
@@ -64,25 +85,105 @@ enum CookiesInput {
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Helpers
 // ---------------------------------------------------------------------------
 
-/// Upload Amazon cookies.
-///
-/// Accepts a JSON body with `cookies` as either:
-/// - a JSON array of cookie objects
-/// - a raw string in JSON or Netscape cookies.txt format
-///
-/// Validates that auth tokens are present and not expired, then saves to disk.
-///
-/// # Errors
-///
-/// Returns `AppError` if Amazon is not configured, cookies are invalid, or
-/// the file cannot be written.
+/// Resolve the cookies file path for a given account.
+fn cookies_path_for(dir: &Path, account_id: AmazonAccountId) -> PathBuf {
+    dir.join(format!("{account_id}.json"))
+}
+
+// ---------------------------------------------------------------------------
+// Account CRUD handlers
+// ---------------------------------------------------------------------------
+
+/// List all Amazon accounts.
+async fn list_accounts(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AmazonAccount>>, AppError> {
+    let accounts = state.db.list_amazon_accounts().await?;
+    Ok(Json(accounts))
+}
+
+/// Create a new Amazon account.
+async fn create_account(
+    State(state): State<AppState>,
+    Json(body): Json<CreateAccountRequest>,
+) -> Result<(StatusCode, Json<AmazonAccount>), AppError> {
+    let account = AmazonAccount {
+        id: AmazonAccountId::new(),
+        label: body.label,
+    };
+    state.db.insert_amazon_account(&account).await?;
+    Ok((StatusCode::CREATED, Json(account)))
+}
+
+/// Delete an Amazon account and all its data.
+async fn delete_account(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<AmazonAccountId>,
+) -> Result<StatusCode, AppError> {
+    state.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("amazon account {id} not found"),
+        )
+    })?;
+
+    state.db.delete_amazon_account(id).await?;
+
+    // Remove cookies file if it exists
+    let path = cookies_path_for(&state.amazon_config.cookies_dir, id);
+    let _ = std::fs::remove_file(&path);
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Update an Amazon account's label.
+async fn update_account(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<AmazonAccountId>,
+    Json(body): Json<UpdateAccountRequest>,
+) -> Result<Json<AmazonAccount>, AppError> {
+    state.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("amazon account {id} not found"),
+        )
+    })?;
+
+    state
+        .db
+        .update_amazon_account_label(id, &body.label)
+        .await?;
+
+    let updated = state.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "account disappeared".to_owned(),
+        )
+    })?;
+
+    Ok(Json(updated))
+}
+
+// ---------------------------------------------------------------------------
+// Per-account operations
+// ---------------------------------------------------------------------------
+
+/// Upload Amazon cookies for a specific account.
 async fn upload_cookies(
     State(state): State<AppState>,
+    AxumPath(id): AxumPath<AmazonAccountId>,
     Json(payload): Json<CookiesPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    state.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("amazon account {id} not found"),
+        )
+    })?;
+
     let cookies = match payload.cookies {
         CookiesInput::Parsed(c) => c,
         CookiesInput::Raw(text) => CookieStore::parse_cookies_auto(&text).map_err(|e| {
@@ -93,7 +194,8 @@ async fn upload_cookies(
         })?,
     };
 
-    let store = CookieStore::from_cookies(cookies, state.amazon_config.cookies_path.clone());
+    let path = cookies_path_for(&state.amazon_config.cookies_dir, id);
+    let store = CookieStore::from_cookies(cookies, path);
 
     if store.is_expired() {
         return Err(AppError(
@@ -117,26 +219,33 @@ async fn upload_cookies(
     })))
 }
 
-/// Get Amazon enrichment status.
-///
-/// # Errors
-///
-/// Returns `AppError` on database failure.
-async fn status(State(app): State<AppState>) -> Result<Json<AmazonStatus>, AppError> {
-    let (cookies_valid, cookies_expiry, cookies_days_remaining) =
-        match CookieStore::load(&app.amazon_config.cookies_path) {
-            Ok(store) => {
-                let valid = !store.is_expired();
-                let expiry = store.earliest_expiry();
-                let days = expiry.map(|e| (e - chrono::Utc::now()).num_days());
-                (Some(valid), expiry.map(|e| e.to_rfc3339()), days)
-            }
-            Err(_) => (None, None, None),
-        };
+/// Get Amazon account status: cookie validity and enrichment stats.
+async fn account_status(
+    State(app): State<AppState>,
+    AxumPath(id): AxumPath<AmazonAccountId>,
+) -> Result<Json<AccountStatus>, AppError> {
+    let account = app.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("amazon account {id} not found"),
+        )
+    })?;
 
-    let stats = app.db.amazon_enrichment_stats().await.ok();
+    let path = cookies_path_for(&app.amazon_config.cookies_dir, id);
+    let (cookies_valid, cookies_expiry, cookies_days_remaining) = match CookieStore::load(&path) {
+        Ok(store) => {
+            let valid = !store.is_expired();
+            let expiry = store.earliest_expiry();
+            let days = expiry.map(|e| (e - chrono::Utc::now()).num_days());
+            (Some(valid), expiry.map(|e| e.to_rfc3339()), days)
+        }
+        Err(_) => (None, None, None),
+    };
 
-    Ok(Json(AmazonStatus {
+    let stats = app.db.amazon_enrichment_stats(id).await.ok();
+
+    Ok(Json(AccountStatus {
+        account,
         cookies_valid,
         cookies_expiry,
         cookies_days_remaining,
@@ -144,17 +253,21 @@ async fn status(State(app): State<AppState>) -> Result<Json<AmazonStatus>, AppEr
     }))
 }
 
-/// Trigger an Amazon enrichment sync.
-///
-/// Runs the enrichment job synchronously and returns the result.
-/// Returns 202 Accepted with the enrichment summary.
-///
-/// # Errors
-///
-/// Returns `AppError` if Amazon is not configured or the job fails.
-async fn trigger_sync(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+/// Trigger an Amazon enrichment sync for a specific account.
+async fn trigger_sync(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<AmazonAccountId>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state.db.get_amazon_account(id).await?.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("amazon account {id} not found"),
+        )
+    })?;
+
     let enrich_config = budget_jobs::enrich::AmazonEnrichConfig {
-        cookies_path: state.amazon_config.cookies_path.clone(),
+        account_id: id,
+        cookies_path: cookies_path_for(&state.amazon_config.cookies_dir, id),
     };
 
     let result = budget_jobs::enrich::run_amazon_enrich(&state.db, &enrich_config)
@@ -173,11 +286,11 @@ async fn trigger_sync(State(state): State<AppState>) -> Result<Json<serde_json::
     })))
 }
 
+// ---------------------------------------------------------------------------
+// Account-agnostic handlers
+// ---------------------------------------------------------------------------
+
 /// List bank transactions that have been matched to Amazon transactions.
-///
-/// # Errors
-///
-/// Returns `AppError` on database failure.
 async fn list_matches(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<MatchedTransaction>>, AppError> {
@@ -198,13 +311,9 @@ async fn list_matches(
 }
 
 /// Get Amazon enrichment details for a specific bank transaction.
-///
-/// # Errors
-///
-/// Returns `AppError` if the transaction has no Amazon match or on database failure.
 async fn get_enrichment(
     State(state): State<AppState>,
-    Path(transaction_id): Path<Uuid>,
+    AxumPath(transaction_id): AxumPath<Uuid>,
 ) -> Result<Json<MatchedTransaction>, AppError> {
     let enrichment = state
         .db
@@ -227,5 +336,5 @@ async fn get_enrichment(
 /// Amazon configuration extracted from the app config.
 #[derive(Clone)]
 pub struct AmazonConfig {
-    pub cookies_path: PathBuf,
+    pub cookies_dir: PathBuf,
 }

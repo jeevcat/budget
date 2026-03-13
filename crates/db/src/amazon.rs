@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use sqlx::Row;
 
+use budget_core::models::AmazonAccountId;
+
 use crate::{Db, DbError};
 
 /// Amazon enrichment data for a bank transaction.
@@ -21,6 +23,107 @@ pub struct AmazonEnrichmentStats {
 }
 
 impl Db {
+    // -----------------------------------------------------------------------
+    // Amazon account CRUD
+    // -----------------------------------------------------------------------
+
+    /// Insert a new Amazon account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn insert_amazon_account(
+        &self,
+        account: &budget_core::models::AmazonAccount,
+    ) -> Result<(), DbError> {
+        sqlx::query("INSERT INTO amazon_accounts (id, label) VALUES ($1, $2)")
+            .bind(account.id)
+            .bind(&account.label)
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+
+    /// List all Amazon accounts, ordered by creation time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn list_amazon_accounts(
+        &self,
+    ) -> Result<Vec<budget_core::models::AmazonAccount>, DbError> {
+        let rows = sqlx::query("SELECT id, label FROM amazon_accounts ORDER BY created_at")
+            .fetch_all(&self.0)
+            .await?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(budget_core::models::AmazonAccount {
+                    id: row.try_get("id")?,
+                    label: row.try_get("label")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Get a single Amazon account by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn get_amazon_account(
+        &self,
+        id: AmazonAccountId,
+    ) -> Result<Option<budget_core::models::AmazonAccount>, DbError> {
+        let row = sqlx::query("SELECT id, label FROM amazon_accounts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.0)
+            .await?;
+
+        row.map(|r| {
+            Ok(budget_core::models::AmazonAccount {
+                id: r.try_get("id")?,
+                label: r.try_get("label")?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Delete an Amazon account. Cascades through transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn delete_amazon_account(&self, id: AmazonAccountId) -> Result<(), DbError> {
+        sqlx::query("DELETE FROM amazon_accounts WHERE id = $1")
+            .bind(id)
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+
+    /// Update an Amazon account's label.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn update_amazon_account_label(
+        &self,
+        id: AmazonAccountId,
+        label: &str,
+    ) -> Result<(), DbError> {
+        sqlx::query("UPDATE amazon_accounts SET label = $2 WHERE id = $1")
+            .bind(id)
+            .bind(label)
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Amazon transactions (now scoped to account)
+    // -----------------------------------------------------------------------
+
     /// Insert or update an Amazon transaction, returning its database ID.
     ///
     /// Also inserts order ID associations into `amazon_transaction_orders`.
@@ -30,19 +133,21 @@ impl Db {
     /// Returns `DbError` if the query fails.
     pub async fn upsert_amazon_transaction(
         &self,
+        account_id: AmazonAccountId,
         txn: &budget_amazon::AmazonTransaction,
     ) -> Result<uuid::Uuid, DbError> {
         let pool = &self.0;
 
         let id: uuid::Uuid = sqlx::query_scalar(
-            "INSERT INTO amazon_transactions (transaction_date, amount, currency, statement_descriptor, status, payment_method, dedup_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (dedup_key) DO UPDATE SET
+            "INSERT INTO amazon_transactions (amazon_account_id, transaction_date, amount, currency, statement_descriptor, status, payment_method, dedup_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (amazon_account_id, dedup_key) DO UPDATE SET
                  transaction_date = excluded.transaction_date,
                  amount = excluded.amount,
                  status = excluded.status
              RETURNING id",
         )
+        .bind(account_id)
         .bind(txn.date)
         .bind(txn.amount)
         .bind(&txn.currency)
@@ -130,36 +235,47 @@ impl Db {
         Ok(())
     }
 
-    /// Get order IDs referenced by transactions but not yet fetched.
+    /// Get order IDs referenced by an account's transactions but not yet fetched.
     ///
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn get_unfetched_order_ids(&self) -> Result<Vec<String>, DbError> {
+    pub async fn get_unfetched_order_ids(
+        &self,
+        account_id: AmazonAccountId,
+    ) -> Result<Vec<String>, DbError> {
         let pool = &self.0;
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT ato.order_id
              FROM amazon_transaction_orders ato
+             JOIN amazon_transactions at ON ato.amazon_transaction_id = at.id
              LEFT JOIN amazon_orders ao ON ato.order_id = ao.order_id
-             WHERE ao.order_id IS NULL",
+             WHERE ao.order_id IS NULL AND at.amazon_account_id = $1",
         )
+        .bind(account_id)
         .fetch_all(pool)
         .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Get dedup keys for all known Amazon transactions.
+    /// Get dedup keys for an account's Amazon transactions.
     ///
     /// Used by the incremental sync to know when to stop fetching.
     ///
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn get_amazon_dedup_keys(&self) -> Result<HashSet<String>, DbError> {
+    pub async fn get_amazon_dedup_keys(
+        &self,
+        account_id: AmazonAccountId,
+    ) -> Result<HashSet<String>, DbError> {
         let pool = &self.0;
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT dedup_key FROM amazon_transactions")
-            .fetch_all(pool)
-            .await?;
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT dedup_key FROM amazon_transactions WHERE amazon_account_id = $1",
+        )
+        .bind(account_id)
+        .fetch_all(pool)
+        .await?;
         Ok(rows.into_iter().map(|(k,)| k).collect())
     }
 
@@ -197,13 +313,14 @@ impl Db {
             .collect()
     }
 
-    /// Get unmatched Amazon transactions (those without an entry in `amazon_matches`).
+    /// Get unmatched Amazon transactions for a specific account.
     ///
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
     pub async fn get_unmatched_amazon_transactions(
         &self,
+        account_id: AmazonAccountId,
     ) -> Result<Vec<budget_amazon::AmazonTransaction>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
@@ -213,9 +330,10 @@ impl Db {
              FROM amazon_transactions at
              LEFT JOIN amazon_matches am ON at.id = am.amazon_transaction_id
              LEFT JOIN amazon_transaction_orders ato ON at.id = ato.amazon_transaction_id
-             WHERE am.id IS NULL
+             WHERE am.id IS NULL AND at.amazon_account_id = $1
              GROUP BY at.id",
         )
+        .bind(account_id)
         .fetch_all(pool)
         .await?;
 
@@ -408,30 +526,54 @@ impl Db {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Get aggregate statistics for Amazon enrichment.
+    /// Get aggregate statistics for an Amazon account.
     ///
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn amazon_enrichment_stats(&self) -> Result<AmazonEnrichmentStats, DbError> {
+    pub async fn amazon_enrichment_stats(
+        &self,
+        account_id: AmazonAccountId,
+    ) -> Result<AmazonEnrichmentStats, DbError> {
         let pool = &self.0;
 
-        let total_txns: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM amazon_transactions")
-            .fetch_one(pool)
-            .await?;
-
-        let matched: (i64,) =
-            sqlx::query_as("SELECT COUNT(DISTINCT amazon_transaction_id) FROM amazon_matches")
+        let total_txns: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM amazon_transactions WHERE amazon_account_id = $1")
+                .bind(account_id)
                 .fetch_one(pool)
                 .await?;
 
-        let total_orders: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM amazon_orders")
-            .fetch_one(pool)
-            .await?;
+        let matched: (i64,) = sqlx::query_as(
+            "SELECT COUNT(DISTINCT am.amazon_transaction_id)
+             FROM amazon_matches am
+             JOIN amazon_transactions at ON am.amazon_transaction_id = at.id
+             WHERE at.amazon_account_id = $1",
+        )
+        .bind(account_id)
+        .fetch_one(pool)
+        .await?;
 
-        let total_items: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM amazon_items")
-            .fetch_one(pool)
-            .await?;
+        let total_orders: (i64,) = sqlx::query_as(
+            "SELECT COUNT(DISTINCT ao.order_id)
+             FROM amazon_orders ao
+             JOIN amazon_transaction_orders ato ON ao.order_id = ato.order_id
+             JOIN amazon_transactions at ON ato.amazon_transaction_id = at.id
+             WHERE at.amazon_account_id = $1",
+        )
+        .bind(account_id)
+        .fetch_one(pool)
+        .await?;
+
+        let total_items: (i64,) = sqlx::query_as(
+            "SELECT COUNT(ai.id)
+             FROM amazon_items ai
+             JOIN amazon_transaction_orders ato ON ai.order_id = ato.order_id
+             JOIN amazon_transactions at ON ato.amazon_transaction_id = at.id
+             WHERE at.amazon_account_id = $1",
+        )
+        .bind(account_id)
+        .fetch_one(pool)
+        .await?;
 
         Ok(AmazonEnrichmentStats {
             total_transactions: total_txns.0,
