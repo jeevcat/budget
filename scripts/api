@@ -15,10 +15,12 @@ fi
 
 METHOD="GET"
 BODY=""
+CONTENT_TYPE="application/json"
+EXTRA_CURL_ARGS=()
 
 usage() {
   cat >&2 <<EOF
-Usage: scripts/api [-X METHOD] [-d BODY] PATH
+Usage: scripts/api [-X METHOD] [-H HEADER] [-d BODY] [--data-binary @FILE] PATH
 
 Examples:
   scripts/api /health
@@ -26,6 +28,7 @@ Examples:
   scripts/api -X POST /rules/apply
   scripts/api -X POST -d '{"key":"value"}' /some/endpoint
   scripts/api -X PUT -d @file.json /some/endpoint
+  scripts/api -X POST -H 'Content-Type: text/csv' --data-binary @data.csv /import
 EOF
   exit 1
 }
@@ -33,7 +36,16 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -X) METHOD="$2"; shift 2 ;;
+    -H) # Allow overriding Content-Type or adding headers
+        if [[ "$2" == Content-Type:* ]]; then
+          CONTENT_TYPE="${2#Content-Type: }"
+          CONTENT_TYPE="${CONTENT_TYPE# }"
+        else
+          EXTRA_CURL_ARGS+=(-H "$2")
+        fi
+        shift 2 ;;
     -d) BODY="$2"; shift 2 ;;
+    --data-binary) EXTRA_CURL_ARGS+=(--data-binary "$2"); shift 2 ;;
     -h|--help) usage ;;
     /*) PATH_ARG="$1"; shift ;;
     *) echo "error: path must start with /" >&2; usage ;;
@@ -48,11 +60,11 @@ CURL_ARGS=(
   -s
   -X "$METHOD"
   -H "Authorization: Bearer $TOKEN"
-  -H "Content-Type: application/json"
+  -H "Content-Type: ${CONTENT_TYPE}"
 )
 
 if [ -n "$BODY" ]; then
   CURL_ARGS+=(-d "$BODY")
 fi
 
-curl "${CURL_ARGS[@]}" "${BASE}${PATH_ARG}"
+curl "${CURL_ARGS[@]}" "${EXTRA_CURL_ARGS[@]+"${EXTRA_CURL_ARGS[@]}"}" "${BASE}${PATH_ARG}"

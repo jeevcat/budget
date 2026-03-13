@@ -112,13 +112,9 @@ fn row_to_transaction(row: &AmexRow, row_num: usize) -> Result<Transaction, Amex
     let posted_date = parse_german_date(&row.datum, row_num)?;
     let amount = parse_german_amount(&row.betrag, row_num)?;
 
-    // Amex CSV reports spending as positive and refunds as negative.
-    // Our domain expects spending as negative (money leaving the account).
-    let amount = if amount > Decimal::ZERO {
-        -amount
-    } else {
-        amount
-    };
+    // Amex CSV: positive = charge, negative = credit (payment/refund).
+    // Our domain: negative = money out, positive = money in.
+    let amount = -amount;
 
     let fx = parse_fx_details(&row.weitere_details);
 
@@ -252,20 +248,20 @@ HONG KONG",,,HONG KONG,'AT260700036000010312575',"#,
             r#"03/03/2026,ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK,SAMUEL JEEVES,-31000,"-7857,08",,ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK,,,,,'10000000010228999645130',"#,
         ]);
         let txns = parse_amex_csv(&input).unwrap();
-        // Already negative (payment received), should stay negative
-        assert_eq!(txns[0].amount, dec!(-7857.08));
+        // Negative CSV amount (payment received) → positive in our domain
+        assert_eq!(txns[0].amount, dec!(7857.08));
     }
 
     // --- Edge case 3: Negative amount (refund) ---
     #[test]
-    fn negative_refund_not_double_negated() {
+    fn refund_becomes_positive() {
         let input = csv(&[
             r#"04/03/2026,HM.COM                  HAMBURG,HARRIET J JEEVES,-31018,"-76,01",,HM.COM                  HAMBURG,"RUNGEDAMM 38
 HAMBURG",,21035,GERMANY,'AT260630052000010294564',"#,
         ]);
         let txns = parse_amex_csv(&input).unwrap();
-        // Negative refund stays negative (not double-negated)
-        assert_eq!(txns[0].amount, dec!(-76.01));
+        // Negative CSV amount (refund) → positive in our domain
+        assert_eq!(txns[0].amount, dec!(76.01));
     }
 
     // --- Edge case 4: Japanese Yen (no decimals) ---
@@ -462,15 +458,15 @@ GINZA",,104-0061,JAPAN,'AT260630052000010321915',"#,
         assert_eq!(txns[0].original_amount, Some(dec!(75956)));
     }
 
-    // --- Refund stays as-is (large negative payment) ---
+    // --- Payment becomes positive ---
     #[test]
-    fn large_negative_payment() {
+    fn payment_becomes_positive() {
         let input = csv(&[
             r#"03/03/2026,ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK,SAMUEL JEEVES,-31000,"-7857,08",,ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK,,,,,'10000000010228999645130',"#,
         ]);
         let txns = parse_amex_csv(&input).unwrap();
-        // Already negative — should stay negative
-        assert_eq!(txns[0].amount, dec!(-7857.08));
+        // Negative CSV amount (payment received) → positive in our domain
+        assert_eq!(txns[0].amount, dec!(7857.08));
     }
 
     // --- Kategorie in remittance info ---
