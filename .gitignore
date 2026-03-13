@@ -8,3 +8,4 @@
 *.pem
 node_modules/
 frontend/dist/
+result
