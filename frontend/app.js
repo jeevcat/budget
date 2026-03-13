@@ -3818,7 +3818,7 @@ const QUEUE_CARDS = [
     key: "sync",
     title: "Sync",
     desc: "Fetch new transactions from connected bank and Amazon accounts",
-    types: ["SyncJob", "Vec<u8>"],
+    types: ["SyncJob", "Pipeline"],
   },
   {
     key: "categorize",
@@ -4055,6 +4055,7 @@ function Jobs() {
   }, [jobsOpen]);
 
   function shortType(t) {
+    if (t === "alloc::vec::Vec<u8>") return "Pipeline";
     return t.includes("::") ? t.split("::").pop() : t;
   }
 
