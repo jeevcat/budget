@@ -446,7 +446,10 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .await
         .expect("query");
 
-    assert_eq!(statuses.len(), 3);
+    // CSV-only account is excluded — only connected accounts appear
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.iter().all(|s| s.syncable));
+    assert!(!statuses.iter().any(|s| s.account_name == "CSV Import"));
 
     let checking = statuses
         .iter()
@@ -454,7 +457,6 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .expect("checking");
     assert_eq!(checking.last_run_status, Some(RunStatus::Succeeded));
     assert!(checking.last_error.is_none());
-    assert!(checking.syncable);
 
     let savings = statuses
         .iter()
@@ -462,12 +464,4 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         .expect("savings");
     assert_eq!(savings.last_run_status, Some(RunStatus::Failed));
     assert_eq!(savings.last_error.as_deref(), Some("connection failed"));
-    assert!(savings.syncable);
-
-    let csv = statuses
-        .iter()
-        .find(|s| s.account_name == "CSV Import")
-        .expect("csv");
-    assert!(!csv.syncable);
-    assert!(csv.last_run_status.is_none());
 }

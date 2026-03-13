@@ -3634,14 +3634,12 @@ function Jobs() {
     addTriggering("sync-all");
     try {
       await Promise.all(
-        schedule
-          .filter((s) => s.syncable)
-          .map((s) => {
-            addTriggering(`sync-${s.account_id}`);
-            return api
-              .post(`/jobs/pipeline/${s.account_id}`)
-              .finally(() => removeTriggering(`sync-${s.account_id}`));
-          }),
+        schedule.map((s) => {
+          addTriggering(`sync-${s.account_id}`);
+          return api
+            .post(`/jobs/pipeline/${s.account_id}`)
+            .finally(() => removeTriggering(`sync-${s.account_id}`));
+        }),
       );
       load();
       ot.toast("Sync queued for all accounts", "", { variant: "success" });
@@ -3713,17 +3711,13 @@ function Jobs() {
                   <span class="sync-row-next text-light">
                     ${s.next_run_at ? html`${timeAgo(s.next_run_at)}${nextReason}` : "\u2014"}
                   </span>
-                  ${
-                    s.syncable
-                      ? html`<button
+                  <button
                     class="small outline"
                     onClick=${() => trigger(`/jobs/pipeline/${s.account_id}`, `sync-${s.account_id}`, `Sync queued for ${s.account_name}`)}
                     disabled=${busy}
                   >
                     ${busy ? "..." : "Sync"}
-                  </button>`
-                      : html`<span class="chip outline">CSV</span>`
-                  }
+                  </button>
                 </div>
               `;
             })}
