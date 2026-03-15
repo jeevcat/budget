@@ -1,4 +1,4 @@
-use budget_core::models::{Rule, RuleId, RuleType};
+use budget_core::models::{RuleId, RuleType};
 
 use crate::{Db, DbError, row_to_rule};
 
@@ -8,7 +8,7 @@ impl Db {
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn insert_rule(&self, rule: &Rule) -> Result<(), DbError> {
+    pub async fn insert_rule(&self, rule: &budget_core::models::Rule) -> Result<(), DbError> {
         let pool = &self.0;
         let conditions_json = serde_json::to_string(&rule.conditions)
             .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -17,10 +17,10 @@ impl Db {
              VALUES ($1, $2, $3::jsonb, $4, $5, $6)",
         )
         .bind(rule.id)
-        .bind(rule.rule_type.to_string())
+        .bind(rule.target.rule_type().to_string())
         .bind(&conditions_json)
-        .bind(rule.target_category_id)
-        .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
+        .bind(rule.target.category_id())
+        .bind(rule.target.correlation_type().map(|ct| ct.to_string()))
         .bind(rule.priority)
         .execute(pool)
         .await?;
@@ -32,7 +32,7 @@ impl Db {
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn list_rules(&self) -> Result<Vec<Rule>, DbError> {
+    pub async fn list_rules(&self) -> Result<Vec<budget_core::models::Rule>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -50,7 +50,10 @@ impl Db {
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn list_rules_by_type(&self, rule_type: RuleType) -> Result<Vec<Rule>, DbError> {
+    pub async fn list_rules_by_type(
+        &self,
+        rule_type: RuleType,
+    ) -> Result<Vec<budget_core::models::Rule>, DbError> {
         let pool = &self.0;
         let rows = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -71,7 +74,7 @@ impl Db {
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn get_rule(&self, id: RuleId) -> Result<Option<Rule>, DbError> {
+    pub async fn get_rule(&self, id: RuleId) -> Result<Option<budget_core::models::Rule>, DbError> {
         let pool = &self.0;
         let row = sqlx::query(
             "SELECT id, rule_type, conditions::text as conditions, target_category_id, target_correlation_type, priority
@@ -88,7 +91,7 @@ impl Db {
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn update_rule(&self, rule: &Rule) -> Result<(), DbError> {
+    pub async fn update_rule(&self, rule: &budget_core::models::Rule) -> Result<(), DbError> {
         let pool = &self.0;
         let conditions_json = serde_json::to_string(&rule.conditions)
             .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -97,10 +100,10 @@ impl Db {
                     target_category_id = $3, target_correlation_type = $4, priority = $5
              WHERE id = $6",
         )
-        .bind(rule.rule_type.to_string())
+        .bind(rule.target.rule_type().to_string())
         .bind(&conditions_json)
-        .bind(rule.target_category_id)
-        .bind(rule.target_correlation_type.map(|ct| ct.to_string()))
+        .bind(rule.target.category_id())
+        .bind(rule.target.correlation_type().map(|ct| ct.to_string()))
         .bind(rule.priority)
         .bind(rule.id)
         .execute(pool)

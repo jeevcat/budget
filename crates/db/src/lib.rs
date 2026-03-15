@@ -17,7 +17,7 @@ use sqlx::{PgPool, Row};
 use budget_core::models::{
     Account, AccountType, BudgetConfig, BudgetMode, BudgetType, Categorization, Category,
     CategoryId, CategoryMethod, Connection, ConnectionStatus, Correlation, CorrelationType,
-    ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleType, Transaction,
+    ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleTarget, Transaction,
     TransactionId,
 };
 
@@ -174,12 +174,26 @@ fn row_to_rule(row: &PgRow) -> Result<Rule, DbError> {
             source: Box::new(e),
         })?;
 
+    let target_category_id: Option<CategoryId> = row.try_get("target_category_id")?;
+    let target_correlation_type =
+        parse_enum_opt::<CorrelationType>(row, "target_correlation_type")?;
+
+    let target = match (target_category_id, target_correlation_type) {
+        (Some(id), _) => RuleTarget::Categorization(id),
+        (_, Some(ct)) => RuleTarget::Correlation(ct),
+        (None, None) => {
+            return Err(sqlx::Error::ColumnDecode {
+                index: "target_category_id/target_correlation_type".to_owned(),
+                source: "rule has no target".into(),
+            }
+            .into());
+        }
+    };
+
     Ok(Rule {
         id: row.try_get("id")?,
-        rule_type: parse_enum::<RuleType>(row, "rule_type")?,
+        target,
         conditions,
-        target_category_id: row.try_get("target_category_id")?,
-        target_correlation_type: parse_enum_opt::<CorrelationType>(row, "target_correlation_type")?,
         priority: row.try_get("priority")?,
     })
 }
@@ -241,8 +255,8 @@ mod tests {
 
     use budget_core::models::{
         Account, AccountId, AccountType, Category, CategoryId, CategoryMethod, CategoryName,
-        CorrelationType, CurrencyCode, MatchField, Priority, Rule, RuleCondition, RuleId, RuleType,
-        Transaction, TransactionId,
+        CorrelationType, CurrencyCode, MatchField, Priority, Rule, RuleCondition, RuleId,
+        RuleTarget, RuleType, Transaction, TransactionId,
     };
 
     // -----------------------------------------------------------------------
@@ -286,16 +300,14 @@ mod tests {
         }
     }
 
-    fn make_rule(rule_type: RuleType, priority: i32) -> Rule {
+    fn make_rule(target: RuleTarget, priority: i32) -> Rule {
         Rule {
             id: RuleId::new(),
-            rule_type,
             conditions: vec![RuleCondition {
                 field: MatchField::Merchant,
                 pattern: "Coffee.*".into(),
             }],
-            target_category_id: None,
-            target_correlation_type: None,
+            target,
             priority: Priority::new(priority).unwrap(),
         }
     }
@@ -843,8 +855,7 @@ mod tests {
         let cat = make_category("Food");
         db.insert_category(&cat).await.unwrap();
 
-        let mut rule = make_rule(RuleType::Categorization, 10);
-        rule.target_category_id = Some(cat.id);
+        let rule = make_rule(RuleTarget::Categorization(cat.id), 10);
 
         db.insert_rule(&rule).await.unwrap();
 
@@ -853,12 +864,12 @@ mod tests {
 
         let fetched = &all[0];
         assert_eq!(fetched.id, rule.id);
-        assert_eq!(fetched.rule_type, RuleType::Categorization);
+        assert_eq!(fetched.target.rule_type(), RuleType::Categorization);
         assert_eq!(fetched.conditions.len(), 1);
         assert_eq!(fetched.conditions[0].field, MatchField::Merchant);
         assert_eq!(fetched.conditions[0].pattern, "Coffee.*");
-        assert_eq!(fetched.target_category_id, Some(cat.id));
-        assert!(fetched.target_correlation_type.is_none());
+        assert_eq!(fetched.target.category_id(), Some(cat.id));
+        assert!(fetched.target.correlation_type().is_none());
         assert_eq!(fetched.priority, Priority::new(10).unwrap());
     }
 
@@ -866,10 +877,12 @@ mod tests {
     async fn test_list_rules_by_type_filters_and_orders_by_priority_desc(pool: PgPool) {
         let db = wrap(pool);
 
-        let cat_rule_low = make_rule(RuleType::Categorization, 1);
-        let cat_rule_high = make_rule(RuleType::Categorization, 100);
-        let mut corr_rule = make_rule(RuleType::Correlation, 50);
-        corr_rule.target_correlation_type = Some(CorrelationType::Transfer);
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        let cat_rule_low = make_rule(RuleTarget::Categorization(cat.id), 1);
+        let cat_rule_high = make_rule(RuleTarget::Categorization(cat.id), 100);
+        let corr_rule = make_rule(RuleTarget::Correlation(CorrelationType::Transfer), 50);
 
         db.insert_rule(&cat_rule_low).await.unwrap();
         db.insert_rule(&cat_rule_high).await.unwrap();
@@ -886,7 +899,7 @@ mod tests {
         let corr_rules = db.list_rules_by_type(RuleType::Correlation).await.unwrap();
         assert_eq!(corr_rules.len(), 1);
         assert_eq!(
-            corr_rules[0].target_correlation_type,
+            corr_rules[0].target.correlation_type(),
             Some(CorrelationType::Transfer)
         );
     }
@@ -894,7 +907,11 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn test_get_rule_by_id(pool: PgPool) {
         let db = wrap(pool);
-        let rule = make_rule(RuleType::Categorization, 5);
+
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        let rule = make_rule(RuleTarget::Categorization(cat.id), 5);
         db.insert_rule(&rule).await.unwrap();
 
         let fetched = db.get_rule(rule.id).await.unwrap().unwrap();
@@ -909,14 +926,14 @@ mod tests {
         let cat = make_category("Travel");
         db.insert_category(&cat).await.unwrap();
 
-        let mut rule = make_rule(RuleType::Categorization, 5);
+        let mut rule = make_rule(RuleTarget::Categorization(cat.id), 5);
         db.insert_rule(&rule).await.unwrap();
 
         rule.conditions = vec![RuleCondition {
             field: MatchField::Description,
             pattern: "Hotel.*".into(),
         }];
-        rule.target_category_id = Some(cat.id);
+        rule.target = RuleTarget::Categorization(cat.id);
         rule.priority = Priority::new(20).unwrap();
 
         db.update_rule(&rule).await.unwrap();
@@ -925,14 +942,17 @@ mod tests {
         assert_eq!(fetched.conditions.len(), 1);
         assert_eq!(fetched.conditions[0].field, MatchField::Description);
         assert_eq!(fetched.conditions[0].pattern, "Hotel.*");
-        assert_eq!(fetched.target_category_id, Some(cat.id));
+        assert_eq!(fetched.target.category_id(), Some(cat.id));
         assert_eq!(fetched.priority, Priority::new(20).unwrap());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
     async fn test_delete_rule(pool: PgPool) {
         let db = wrap(pool);
-        let rule = make_rule(RuleType::Categorization, 1);
+        let cat = make_category("Food");
+        db.insert_category(&cat).await.unwrap();
+
+        let rule = make_rule(RuleTarget::Categorization(cat.id), 1);
         db.insert_rule(&rule).await.unwrap();
 
         db.delete_rule(rule.id).await.unwrap();
@@ -1306,7 +1326,7 @@ mod tests {
         let rules = db.list_rules().await.unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].id.to_string(), rule_id);
-        assert_eq!(rules[0].target_category_id.unwrap().to_string(), cat_id);
+        assert_eq!(rules[0].target.category_id().unwrap().to_string(), cat_id);
     }
 
     #[sqlx::test(migrations = "../../migrations")]

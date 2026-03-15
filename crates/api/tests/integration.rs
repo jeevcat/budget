@@ -14,7 +14,7 @@ use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    CurrencyCode, Priority, Rule, RuleCondition, SecretKey, Transaction,
+    CurrencyCode, Priority, Rule, RuleCondition, RuleTarget, SecretKey, Transaction,
 };
 use budget_db::Db;
 
@@ -912,13 +912,11 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
     // Create a rule matching "LIDL"
     let rule = Rule {
         id: budget_core::models::RuleId::new(),
-        rule_type: budget_core::models::RuleType::Categorization,
+        target: RuleTarget::Categorization(category.id),
         conditions: vec![RuleCondition {
             field: budget_core::models::MatchField::Merchant,
             pattern: "LIDL".to_owned(),
         }],
-        target_category_id: Some(category.id),
-        target_correlation_type: None,
         priority: Priority::new(10).unwrap(),
     };
     db.insert_rule(&rule).await.expect("rule");
@@ -991,13 +989,11 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
     // Rule matches "STARBUCKS"
     let rule = Rule {
         id: budget_core::models::RuleId::new(),
-        rule_type: budget_core::models::RuleType::Categorization,
+        target: RuleTarget::Categorization(category_a.id),
         conditions: vec![RuleCondition {
             field: budget_core::models::MatchField::Merchant,
             pattern: "STARBUCKS".to_owned(),
         }],
-        target_category_id: Some(category_a.id),
-        target_correlation_type: None,
         priority: Priority::new(10).unwrap(),
     };
     db.insert_rule(&rule).await.expect("rule");
@@ -1212,7 +1208,7 @@ async fn rules_create_correlation_rule(pool: PgPool) {
 
     let created: Rule = serde_json::from_slice(&body).expect("parse");
     assert_eq!(
-        created.rule_type,
+        created.target.rule_type(),
         budget_core::models::RuleType::Correlation
     );
     assert_eq!(created.conditions.len(), 1);
@@ -1221,7 +1217,7 @@ async fn rules_create_correlation_rule(pool: PgPool) {
         budget_core::models::MatchField::AmountRange
     );
     assert_eq!(
-        created.target_correlation_type,
+        created.target.correlation_type(),
         Some(budget_core::models::CorrelationType::Reimbursement)
     );
 }

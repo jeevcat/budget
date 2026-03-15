@@ -3,7 +3,7 @@ use rust_decimal::Decimal;
 
 use crate::error::Error;
 use crate::models::{
-    CategoryId, CorrelationType, MatchField, Rule, RuleCondition, RuleType, Transaction,
+    CategoryId, CorrelationType, MatchField, Rule, RuleCondition, RuleTarget, Transaction,
     TransactionId,
 };
 
@@ -88,17 +88,15 @@ pub fn evaluate_categorization_rules(
 ) -> Option<CategoryId> {
     rules
         .iter()
-        .filter(|compiled| compiled.rule.rule_type == RuleType::Categorization)
+        .filter(|compiled| matches!(compiled.rule.target, RuleTarget::Categorization(_)))
         .find(|compiled| matches_rule(transaction, compiled))
-        .and_then(|compiled| compiled.rule.target_category_id)
+        .and_then(|compiled| compiled.rule.target.category_id())
 }
 
 /// Evaluate correlation rules against a transaction and candidate partners.
 ///
 /// For each correlation rule, searches candidates for a match. Returns the
 /// first matched candidate's ID and the rule's target correlation type.
-///
-/// Rules without a `target_correlation_type` are skipped.
 #[must_use]
 pub fn evaluate_correlation_rules(
     _transaction: &Transaction,
@@ -106,16 +104,10 @@ pub fn evaluate_correlation_rules(
     rules: &[CompiledRule],
 ) -> Option<(TransactionId, CorrelationType)> {
     for compiled in rules {
-        if compiled.rule.rule_type != RuleType::Correlation {
-            continue;
-        }
-
-        let Some(correlation_type) = compiled.rule.target_correlation_type else {
+        let RuleTarget::Correlation(correlation_type) = compiled.rule.target else {
             continue;
         };
 
-        // The rule pattern is evaluated against the transaction itself to confirm
-        // it applies, but for correlation we search candidates that also match.
         for candidate in candidates {
             if matches_rule(candidate, compiled) {
                 return Some((candidate.id, correlation_type));
@@ -299,16 +291,10 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).expect("valid test date")
     }
 
-    fn make_rule(
-        rule_type: RuleType,
-        conditions: Vec<(MatchField, &str)>,
-        target_category_id: Option<CategoryId>,
-        target_correlation_type: Option<CorrelationType>,
-        priority: i32,
-    ) -> Rule {
+    fn make_rule(target: RuleTarget, conditions: Vec<(MatchField, &str)>, priority: i32) -> Rule {
         Rule {
             id: RuleId::new(),
-            rule_type,
+            target,
             conditions: conditions
                 .into_iter()
                 .map(|(field, pattern)| RuleCondition {
@@ -316,8 +302,6 @@ mod tests {
                     pattern: pattern.to_owned(),
                 })
                 .collect(),
-            target_category_id,
-            target_correlation_type,
             priority: Priority::new(priority).unwrap(),
         }
     }
@@ -335,10 +319,8 @@ mod tests {
     #[test]
     fn compile_valid_regex_rule() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::Merchant, r"^starbucks")],
-            Some(CategoryId::new()),
-            None,
             10,
         );
 
@@ -354,10 +336,8 @@ mod tests {
     #[test]
     fn compile_invalid_regex_returns_error() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::Merchant, r"[invalid(")],
-            Some(CategoryId::new()),
-            None,
             10,
         );
 
@@ -368,10 +348,8 @@ mod tests {
     #[test]
     fn compile_amount_range_rule() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::AmountRange, "100.00..500.00")],
-            Some(CategoryId::new()),
-            None,
             5,
         );
 
@@ -398,10 +376,8 @@ mod tests {
     #[test]
     fn invalid_amount_range_returns_error() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::AmountRange, "not_a_range")],
-            Some(CategoryId::new()),
-            None,
             5,
         );
 
@@ -415,18 +391,14 @@ mod tests {
         let cat_food = CategoryId::new();
 
         let rule_high = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_coffee),
             vec![(MatchField::Merchant, r"starbucks")],
-            Some(cat_coffee),
-            None,
             100,
         );
 
         let rule_low = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_food),
             vec![(MatchField::Merchant, r"star")],
-            Some(cat_food),
-            None,
             10,
         );
 
@@ -444,10 +416,8 @@ mod tests {
     #[test]
     fn categorization_no_match_returns_none() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::Merchant, r"walmart")],
-            Some(CategoryId::new()),
-            None,
             10,
         );
 
@@ -463,10 +433,8 @@ mod tests {
     fn amount_range_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmountRange, "50.00..200.00")],
-            Some(cat_id),
-            None,
             10,
         );
 
@@ -500,10 +468,8 @@ mod tests {
     #[test]
     fn correlation_rule_evaluation() {
         let rule = make_rule(
-            RuleType::Correlation,
+            RuleTarget::Correlation(CorrelationType::Transfer),
             vec![(MatchField::Merchant, r"venmo")],
-            None,
-            Some(CorrelationType::Transfer),
             10,
         );
 
@@ -520,10 +486,8 @@ mod tests {
     #[test]
     fn correlation_skips_rules_without_correlation_type() {
         let rule = make_rule(
-            RuleType::Correlation,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::Merchant, r"venmo")],
-            None,
-            None,
             10,
         );
 
@@ -539,10 +503,8 @@ mod tests {
     #[test]
     fn correlation_no_match_returns_none() {
         let rule = make_rule(
-            RuleType::Correlation,
+            RuleTarget::Correlation(CorrelationType::Transfer),
             vec![(MatchField::Merchant, r"venmo")],
-            None,
-            Some(CorrelationType::Transfer),
             10,
         );
 
@@ -559,10 +521,8 @@ mod tests {
     fn regex_is_case_insensitive() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::Merchant, r"starbucks")],
-            Some(cat_id),
-            None,
             10,
         );
 
@@ -576,10 +536,8 @@ mod tests {
     fn description_field_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::Description, r"grocery")],
-            Some(cat_id),
-            None,
             10,
         );
 
@@ -592,10 +550,8 @@ mod tests {
     #[test]
     fn categorization_rules_skip_correlation_type() {
         let rule = make_rule(
-            RuleType::Correlation,
+            RuleTarget::Correlation(CorrelationType::Transfer),
             vec![(MatchField::Merchant, r"anything")],
-            Some(CategoryId::new()),
-            Some(CorrelationType::Transfer),
             10,
         );
 
@@ -609,10 +565,8 @@ mod tests {
     fn counterparty_name_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::CounterpartyName, r"landlord")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -625,10 +579,8 @@ mod tests {
     #[test]
     fn counterparty_name_none_never_matches() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::CounterpartyName, r"landlord")],
-            Some(CategoryId::new()),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -641,10 +593,8 @@ mod tests {
     fn counterparty_iban_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::CounterpartyIban, r"^FI\d+")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -661,10 +611,8 @@ mod tests {
     fn counterparty_bic_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::CounterpartyBic, r"NDEAFIHH")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -678,10 +626,8 @@ mod tests {
     fn bank_transaction_code_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::BankTransactionCode, r"PMNT-ICDT-STDO")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -698,10 +644,8 @@ mod tests {
     fn amount_greater_than() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmountRange, ">100")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -720,10 +664,8 @@ mod tests {
     fn amount_greater_than_or_equal() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmountRange, ">=100")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -742,10 +684,8 @@ mod tests {
     fn amount_less_than() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmountRange, "<50")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -764,10 +704,8 @@ mod tests {
     fn amount_less_than_or_equal() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmountRange, "<=50")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -786,10 +724,8 @@ mod tests {
     fn amazon_item_title_matching() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmazonItemTitle, r"usb.*cable")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -802,10 +738,8 @@ mod tests {
     #[test]
     fn amazon_item_title_empty_never_matches() {
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(CategoryId::new()),
             vec![(MatchField::AmazonItemTitle, r"usb.*cable")],
-            Some(CategoryId::new()),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -818,10 +752,8 @@ mod tests {
     fn amazon_item_title_matches_any() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmazonItemTitle, r"dog food")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -838,10 +770,8 @@ mod tests {
     fn amazon_item_title_case_insensitive() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![(MatchField::AmazonItemTitle, r"kindle")],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];
@@ -855,13 +785,11 @@ mod tests {
     fn multi_condition_and_semantics() {
         let cat_id = CategoryId::new();
         let rule = make_rule(
-            RuleType::Categorization,
+            RuleTarget::Categorization(cat_id),
             vec![
                 (MatchField::Merchant, r"starbucks"),
                 (MatchField::AmountRange, "<-5"),
             ],
-            Some(cat_id),
-            None,
             10,
         );
         let compiled = vec![compile_rule(&rule).unwrap()];

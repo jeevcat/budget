@@ -615,14 +615,85 @@ pub struct RuleCondition {
     pub pattern: String,
 }
 
+/// What a rule does when it matches a transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleTarget {
+    Categorization(CategoryId),
+    Correlation(CorrelationType),
+}
+
+impl RuleTarget {
+    #[must_use]
+    pub fn rule_type(&self) -> RuleType {
+        match self {
+            Self::Categorization(_) => RuleType::Categorization,
+            Self::Correlation(_) => RuleType::Correlation,
+        }
+    }
+
+    #[must_use]
+    pub fn category_id(&self) -> Option<CategoryId> {
+        match self {
+            Self::Categorization(id) => Some(*id),
+            Self::Correlation(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn correlation_type(&self) -> Option<CorrelationType> {
+        match self {
+            Self::Correlation(ct) => Some(*ct),
+            Self::Categorization(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub id: RuleId,
-    pub rule_type: RuleType,
+    #[serde(flatten, with = "rule_target_serde")]
+    pub target: RuleTarget,
     pub conditions: Vec<RuleCondition>,
-    pub target_category_id: Option<CategoryId>,
-    pub target_correlation_type: Option<CorrelationType>,
     pub priority: Priority,
+}
+
+mod rule_target_serde {
+    use super::{CategoryId, CorrelationType, RuleTarget, RuleType};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Flat {
+        rule_type: RuleType,
+        target_category_id: Option<CategoryId>,
+        target_correlation_type: Option<CorrelationType>,
+    }
+
+    pub fn serialize<S: Serializer>(target: &RuleTarget, ser: S) -> Result<S::Ok, S::Error> {
+        let flat = Flat {
+            rule_type: target.rule_type(),
+            target_category_id: target.category_id(),
+            target_correlation_type: target.correlation_type(),
+        };
+        flat.serialize(ser)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<RuleTarget, D::Error> {
+        let flat = Flat::deserialize(de)?;
+        match (
+            flat.rule_type,
+            flat.target_category_id,
+            flat.target_correlation_type,
+        ) {
+            (RuleType::Categorization, Some(id), _) => Ok(RuleTarget::Categorization(id)),
+            (RuleType::Correlation, _, Some(ct)) => Ok(RuleTarget::Correlation(ct)),
+            (RuleType::Categorization, None, _) => Err(serde::de::Error::custom(
+                "categorization rule requires target_category_id",
+            )),
+            (RuleType::Correlation, _, None) => Err(serde::de::Error::custom(
+                "correlation rule requires target_correlation_type",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

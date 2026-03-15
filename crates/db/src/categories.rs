@@ -226,8 +226,9 @@ impl Db {
 
     /// Delete a category by its ID, clearing all foreign-key references first.
     ///
-    /// Nullifies `category_id` on transactions, `target_category_id` on rules,
-    /// and `parent_id` on child categories before removing the row.
+    /// Nullifies `category_id` on transactions and `parent_id` on child
+    /// categories, and deletes rules targeting this category, before
+    /// removing the row.
     ///
     /// # Errors
     ///
@@ -240,7 +241,7 @@ impl Db {
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE rules SET target_category_id = NULL WHERE target_category_id = $1")
+        sqlx::query("DELETE FROM rules WHERE target_category_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;

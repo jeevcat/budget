@@ -339,7 +339,7 @@ async fn generate_rule(
         .await?;
     let existing_rule_patterns: Vec<String> = existing_rules
         .iter()
-        .filter(|r| r.target_category_id == Some(category_id))
+        .filter(|r| r.target.category_id() == Some(category_id))
         .flat_map(|r| {
             r.conditions
                 .iter()
@@ -395,13 +395,11 @@ fn validate_proposals(
         .filter(|p| {
             let test_rule = budget_core::models::Rule {
                 id: budget_core::models::RuleId::new(),
-                rule_type: RuleType::Categorization,
+                target: budget_core::models::RuleTarget::Categorization(category_id),
                 conditions: vec![budget_core::models::RuleCondition {
                     field: p.match_field,
                     pattern: p.match_pattern.clone(),
                 }],
-                target_category_id: Some(category_id),
-                target_correlation_type: None,
                 priority: budget_core::models::Priority::default(),
             };
             compile_rule(&test_rule).is_ok()

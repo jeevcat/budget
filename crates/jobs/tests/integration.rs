@@ -13,7 +13,7 @@ use sqlx::PgPool;
 use budget_core::models::{
     Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
     Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField,
-    Priority, Rule, RuleCondition, RuleId, RuleType, Transaction,
+    Priority, Rule, RuleCondition, RuleId, RuleTarget, Transaction,
 };
 use budget_db::Db;
 use budget_jobs::{
@@ -432,13 +432,11 @@ async fn categorize_rule_based_assignment(pool: PgPool) {
     // Insert a categorization rule that matches "WHOLE FOODS"
     let rule = Rule {
         id: RuleId::new(),
-        rule_type: RuleType::Categorization,
+        target: RuleTarget::Categorization(groceries_cat.id),
         conditions: vec![RuleCondition {
             field: MatchField::Merchant,
             pattern: "WHOLE FOODS".to_owned(),
         }],
-        target_category_id: Some(groceries_cat.id),
-        target_correlation_type: None,
         priority: Priority::new(100).unwrap(),
     };
     db.insert_rule(&rule)
@@ -665,13 +663,11 @@ async fn correlate_rule_based_linking(pool: PgPool) {
     // Insert a correlation rule matching "PAYMENT RECEIVED"
     let rule = Rule {
         id: RuleId::new(),
-        rule_type: RuleType::Correlation,
+        target: RuleTarget::Correlation(CorrelationType::Transfer),
         conditions: vec![RuleCondition {
             field: MatchField::Merchant,
             pattern: "PAYMENT RECEIVED".to_owned(),
         }],
-        target_category_id: None,
-        target_correlation_type: Some(CorrelationType::Transfer),
         priority: Priority::new(100).unwrap(),
     };
     db.insert_rule(&rule)

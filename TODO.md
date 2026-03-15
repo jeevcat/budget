@@ -15,7 +15,6 @@
 
 ## Parse Don't Validate
 
-- [ ] **NicknameUpdate**: `UpdateNickname.nickname: Option<String>` overloads `None` for "clear" → `enum NicknameUpdate { Set(String), Clear }`
 - [ ] **Account connection state**: `Account.connection_id: Option<ConnectionId>` conflates "manual" vs "connected" → `enum AccountOrigin { Manual, Connected(ConnectionId) }`
 
 ## Blocked Upstream

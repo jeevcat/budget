@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Priority, Rule, RuleCondition, RuleId,
-    RuleType, TransactionId,
+    RuleTarget, RuleType, TransactionId,
 };
 use budget_core::rules::{compile_rule, evaluate_categorization_rules, matches_rule};
 use budget_jobs::CategorizeJob;
@@ -31,6 +31,26 @@ pub struct CreateRule {
     pub target_category_id: Option<CategoryId>,
     pub target_correlation_type: Option<CorrelationType>,
     pub priority: Priority,
+}
+
+impl CreateRule {
+    fn into_target(self) -> Result<(RuleTarget, Vec<ConditionRequest>, Priority), &'static str> {
+        let target = match (
+            self.rule_type,
+            self.target_category_id,
+            self.target_correlation_type,
+        ) {
+            (RuleType::Categorization, Some(id), _) => RuleTarget::Categorization(id),
+            (RuleType::Correlation, _, Some(ct)) => RuleTarget::Correlation(ct),
+            (RuleType::Categorization, None, _) => {
+                return Err("categorization rule requires target_category_id");
+            }
+            (RuleType::Correlation, _, None) => {
+                return Err("correlation rule requires target_correlation_type");
+            }
+        };
+        Ok((target, self.conditions, self.priority))
+    }
 }
 
 /// Request body for previewing a rule, extending `CreateRule` with an optional
@@ -73,8 +93,11 @@ fn into_rule(body: CreateRule, id: RuleId) -> Result<Rule, AppError> {
         ));
     }
 
-    let conditions = body
-        .conditions
+    let (target, cond_reqs, priority) = body
+        .into_target()
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_owned()))?;
+
+    let conditions = cond_reqs
         .into_iter()
         .map(|c| RuleCondition {
             field: c.field,
@@ -84,11 +107,9 @@ fn into_rule(body: CreateRule, id: RuleId) -> Result<Rule, AppError> {
 
     Ok(Rule {
         id,
-        rule_type: body.rule_type,
+        target,
         conditions,
-        target_category_id: body.target_category_id,
-        target_correlation_type: body.target_correlation_type,
-        priority: body.priority,
+        priority,
     })
 }
 
@@ -262,7 +283,7 @@ async fn preview(
     let compiled =
         compile_rule(&rule).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let mut transactions = match rule.rule_type {
+    let mut transactions = match rule.target.rule_type() {
         RuleType::Categorization => state.db.get_rule_eligible_transactions().await?,
         RuleType::Correlation => state.db.get_uncorrelated_transactions().await?,
     };
@@ -277,7 +298,7 @@ async fn preview(
     }
 
     // Enrich with Amazon item titles so AmazonItemTitle rules can match
-    if rule.rule_type == RuleType::Categorization {
+    if rule.target.rule_type() == RuleType::Categorization {
         let txn_ids: Vec<uuid::Uuid> = transactions.iter().map(|t| *t.id.as_uuid()).collect();
         let mut amazon_titles = state
             .db
