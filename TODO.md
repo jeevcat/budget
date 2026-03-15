@@ -9,7 +9,6 @@
 - [ ] **Late/missing salary UX**: Verify the previous budget month stays open indefinitely and surface a clear signal when expected salaries haven't arrived
 
 ### Frontend
-- [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month
 - [ ] **Error boundaries + retry**: Errors replace entire page content with no retry button. Add a retry mechanism
 
 ## Blocked Upstream
