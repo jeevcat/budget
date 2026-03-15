@@ -14,7 +14,6 @@
 ## Insights & Analytics
 
 ### Features
-- [ ] **Net worth projection frontend**: Backend API complete (`GET /accounts/net-worth/projection`). Needs frontend chart on insights page to visualize historical series + forecast with confidence bands
 - [ ] **Budget burndown charts**: Daily cumulative spend curve for variable-mode categories with predicted end-of-month landing. Overlay 3 previous months as ghost lines for comparison. Lives on insights page as drill-down from dashboard categories
 - [ ] **Fixed category simplification**: Replace pace indicator bars for fixed-mode categories with compact paid/pending indicator — these are binary, don't need a progress bar
 - [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
@@ -22,7 +21,7 @@
 
 ### Integration
 - [ ] **Expand augurs features**: Add `mstl`, `ets`, `seasons`, `changepoint` features to augurs dependency when implementing anomaly detection and seasonality-aware pacing
-- [ ] **Insights page**: New frontend page for net worth projection chart and burndown drill-downs. Keep lightweight — most intelligence surfaces on the existing dashboard via enhanced pace indicators and anomaly badges
+- [ ] **Insights page**: Add burndown drill-downs to the existing insights page. Keep lightweight — most intelligence surfaces on the existing dashboard via enhanced pace indicators and anomaly badges
 
 ## Blocked Upstream
 

@@ -868,3 +868,67 @@ dialog > form > div {
   text-align: center;
   padding: 3rem 1rem;
 }
+
+/* Net worth projection chart (SVG) */
+.nw-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.nw-grid-line {
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+.nw-line-history {
+  fill: none;
+  stroke: var(--kw-crystal-blue);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nw-line-forecast {
+  fill: none;
+  stroke: var(--kw-oni-violet);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nw-line-bridge {
+  fill: none;
+  stroke: var(--kw-oni-violet);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.5;
+}
+.nw-band {
+  fill: var(--kw-oni-violet);
+  opacity: 0.12;
+}
+.nw-axis-label {
+  fill: var(--muted-foreground);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.nw-crosshair {
+  stroke: var(--foreground);
+  stroke-width: 0.5;
+  opacity: 0.3;
+}
+.nw-dot-history {
+  fill: var(--kw-crystal-blue);
+}
+.nw-dot-forecast {
+  fill: var(--kw-oni-violet);
+}
+.nw-dot-band {
+  fill: var(--kw-oni-violet);
+  opacity: 0.5;
+}
+.nw-tooltip {
+  padding: 0.4rem 0.75rem;
+  font-size: var(--text-7);
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  align-items: center;
+}

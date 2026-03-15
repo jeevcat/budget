@@ -3990,6 +3990,318 @@ function Jobs() {
 }
 
 // ---------------------------------------------------------------------------
+// Insights
+// ---------------------------------------------------------------------------
+
+function NetWorthChart({ data }) {
+  const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+  const width = 720;
+  const height = 340;
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+
+  const allPoints = useMemo(() => {
+    const hist = (data.history || []).map((p) => ({
+      date: new Date(`${p.date}T00:00:00`),
+      value: Number(p.value),
+    }));
+    const fore = (data.forecast || []).map((p) => ({
+      date: new Date(`${p.date}T00:00:00`),
+      value: p.value,
+      lower: p.lower,
+      upper: p.upper,
+    }));
+    return { hist, fore };
+  }, [data]);
+
+  const { hist, fore } = allPoints;
+
+  const allDates = [...hist.map((p) => p.date), ...fore.map((p) => p.date)];
+  const allValues = [
+    ...hist.map((p) => p.value),
+    ...fore.map((p) => p.value),
+    ...fore.map((p) => p.lower),
+    ...fore.map((p) => p.upper),
+  ];
+
+  if (allDates.length === 0) return html`<p class="text-light">No data.</p>`;
+
+  const minDate = Math.min(...allDates);
+  const maxDate = Math.max(...allDates);
+  const minVal = Math.min(...allValues);
+  const maxVal = Math.max(...allValues);
+  const valRange = maxVal - minVal || 1;
+  const dateRange = maxDate - minDate || 1;
+
+  const x = (d) => padding.left + ((d - minDate) / dateRange) * innerW;
+  const y = (v) => padding.top + (1 - (v - minVal) / valRange) * innerH;
+
+  const histLine =
+    hist.length > 0
+      ? hist
+          .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.date)},${y(p.value)}`)
+          .join(" ")
+      : "";
+
+  const foreLine =
+    fore.length > 0
+      ? fore
+          .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.date)},${y(p.value)}`)
+          .join(" ")
+      : "";
+
+  const bandPath =
+    fore.length > 0
+      ? `M${fore.map((p) => `${x(p.date)},${y(p.upper)}`).join(" L")} ` +
+        `L${[...fore]
+          .reverse()
+          .map((p) => `${x(p.date)},${y(p.lower)}`)
+          .join(" L")} Z`
+      : "";
+
+  // Dashed line from last history point to first forecast point
+  const bridgeLine =
+    hist.length > 0 && fore.length > 0
+      ? `M${x(hist[hist.length - 1].date)},${y(hist[hist.length - 1].value)} L${x(fore[0].date)},${y(fore[0].value)}`
+      : "";
+
+  const yTickCount = 5;
+  const yTicks = Array.from({ length: yTickCount + 1 }, (_, i) => {
+    const v = minVal + (valRange * i) / yTickCount;
+    return { value: v, y: y(v) };
+  });
+
+  const xTickCount = Math.min(6, allDates.length);
+  const xTicks = Array.from({ length: xTickCount }, (_, i) => {
+    const d = new Date(minDate + (dateRange * i) / (xTickCount - 1 || 1));
+    return { date: d, x: x(d) };
+  });
+
+  const monthFmt = new Intl.DateTimeFormat("en", {
+    month: "short",
+    year: "2-digit",
+  });
+
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
+  const onMouseMove = useCallback(
+    (e) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width) * width;
+      const dateAtMouse = minDate + ((mx - padding.left) / innerW) * dateRange;
+
+      let closest = null;
+      let closestDist = Infinity;
+      for (const p of hist) {
+        const dist = Math.abs(p.date - dateAtMouse);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = { ...p, type: "history" };
+        }
+      }
+      for (const p of fore) {
+        const dist = Math.abs(p.date - dateAtMouse);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = { ...p, type: "forecast" };
+        }
+      }
+      if (closest) setHover(closest);
+    },
+    [hist, fore, minDate, dateRange, innerW],
+  );
+
+  const onMouseLeave = useCallback(() => setHover(null), []);
+
+  return html`
+    <svg
+      ref=${svgRef}
+      viewBox="0 0 ${width} ${height}"
+      class="nw-chart"
+      onMouseMove=${onMouseMove}
+      onMouseLeave=${onMouseLeave}
+    >
+      ${yTicks.map(
+        (t) => html`
+          <line
+            x1=${padding.left}
+            y1=${t.y}
+            x2=${width - padding.right}
+            y2=${t.y}
+            class="nw-grid-line"
+          />
+        `,
+      )}
+      ${bandPath && html`<path d=${bandPath} class="nw-band" />`}
+      ${histLine && html`<path d=${histLine} class="nw-line-history" />`}
+      ${bridgeLine && html`<path d=${bridgeLine} class="nw-line-bridge" />`}
+      ${foreLine && html`<path d=${foreLine} class="nw-line-forecast" />`}
+      ${yTicks.map(
+        (t) => html`
+          <text x=${padding.left - 8} y=${t.y + 4} class="nw-axis-label" text-anchor="end">
+            ${formatAmount(t.value, { decimals: 0 })}
+          </text>
+        `,
+      )}
+      ${xTicks.map(
+        (t) => html`
+          <text x=${t.x} y=${height - 8} class="nw-axis-label" text-anchor="middle">
+            ${monthFmt.format(t.date)}
+          </text>
+        `,
+      )}
+      ${
+        hover &&
+        html`
+        <line
+          x1=${x(hover.date)}
+          y1=${padding.top}
+          x2=${x(hover.date)}
+          y2=${padding.top + innerH}
+          class="nw-crosshair"
+        />
+        <circle cx=${x(hover.date)} cy=${y(hover.value)} r="4" class="nw-dot-${hover.type}" />
+        ${
+          hover.type === "forecast" &&
+          hover.lower != null &&
+          html`
+          <circle cx=${x(hover.date)} cy=${y(hover.lower)} r="2.5" class="nw-dot-band" />
+          <circle cx=${x(hover.date)} cy=${y(hover.upper)} r="2.5" class="nw-dot-band" />
+        `
+        }
+      `
+      }
+    </svg>
+    ${
+      hover &&
+      html`
+      <div class="nw-tooltip hstack gap-4">
+        <span class="text-light">${monthFmt.format(hover.date)}</span>
+        <span style="font-weight:600">${formatAmount(hover.value, { decimals: 0 })}</span>
+        ${
+          hover.type === "forecast" &&
+          hover.lower != null &&
+          html`
+          <span class="text-light" style="font-size:var(--text-8)">
+            ${formatAmount(hover.lower, { decimals: 0 })} – ${formatAmount(hover.upper, { decimals: 0 })}
+          </span>
+        `
+        }
+        <span class="badge" data-variant=${hover.type === "history" ? "default" : "primary"}>
+          ${hover.type === "history" ? "Actual" : "Forecast"}
+        </span>
+      </div>
+    `
+    }
+  `;
+}
+
+function Insights() {
+  const [projection, setProjection] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api
+      .get("/accounts/net-worth/projection?months=12&interval_width=0.8")
+      .then((data) => {
+        setProjection(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  const latestNetWorth = useMemo(() => {
+    if (!projection?.history?.length) return null;
+    const last = projection.history[projection.history.length - 1];
+    return { date: last.date, value: Number(last.value) };
+  }, [projection]);
+
+  const forecastEnd = useMemo(() => {
+    if (!projection?.forecast?.length) return null;
+    const last = projection.forecast[projection.forecast.length - 1];
+    return {
+      date: last.date,
+      value: last.value,
+      lower: last.lower,
+      upper: last.upper,
+    };
+  }, [projection]);
+
+  if (loading)
+    return html`<div class="vstack gap-2"><h2>Insights</h2><progress></progress></div>`;
+
+  if (error)
+    return html`
+      <div class="vstack gap-2">
+        <h2>Insights</h2>
+        <p class="text-light">${error}</p>
+        <button data-variant="primary" onClick=${() => location.reload()}>Retry</button>
+      </div>
+    `;
+
+  return html`
+    <div class="vstack gap-4">
+      <h2>Insights</h2>
+
+      <div class="card" style="padding:1.25rem">
+        <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
+          <h3 style="margin:0">Net Worth Projection</h3>
+          ${
+            projection?.message &&
+            html`<span class="badge" data-variant="warning">${projection.message}</span>`
+          }
+        </div>
+
+        ${
+          latestNetWorth &&
+          html`
+          <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
+            <div class="vstack gap-0">
+              <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Current</span>
+              <span style="font-size:var(--text-4);font-weight:600;color:${latestNetWorth.value >= 0 ? "var(--success)" : "var(--danger)"}">
+                ${formatAmount(latestNetWorth.value, { decimals: 0 })}
+              </span>
+              <span class="text-light" style="font-size:var(--text-8)">${formatDateShort(latestNetWorth.date)}</span>
+            </div>
+            ${
+              forecastEnd &&
+              html`
+              <div class="vstack gap-0">
+                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">12-month forecast</span>
+                <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
+                  ${formatAmount(forecastEnd.value, { decimals: 0 })}
+                </span>
+                <span class="text-light" style="font-size:var(--text-8)">
+                  ${formatAmount(forecastEnd.lower, { decimals: 0 })} – ${formatAmount(forecastEnd.upper, { decimals: 0 })}
+                </span>
+              </div>
+              <div class="vstack gap-0">
+                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Change</span>
+                <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
+                  ${formatAmount(forecastEnd.value - latestNetWorth.value, { decimals: 0, sign: true })}
+                </span>
+              </div>
+            `
+            }
+          </div>
+        `
+        }
+
+        <${NetWorthChart} data=${projection} />
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Auth gate
 // ---------------------------------------------------------------------------
 
@@ -4060,6 +4372,7 @@ function App() {
     if (s0 === "transactions") return html`<${Transactions} />`;
     if (s0 === "categories") return html`<${Categories} />`;
     if (s0 === "rules") return html`<${Rules} />`;
+    if (s0 === "insights") return html`<${Insights} />`;
     if (s0 === "connections") return html`<${Connections} />`;
     if (s0 === "jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;
@@ -4072,6 +4385,7 @@ function App() {
         <nav>
           <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Dashboard<//>
           <${NavLink} href="/transactions">Transactions<//>
+          <${NavLink} href="/insights">Insights<//>
           <${NavLink} href="/categories">Categories<//>
           <${NavLink} href="/rules">Rules<//>
           <${NavLink} href="/connections">Connections<//>
