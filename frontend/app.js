@@ -76,6 +76,20 @@ const api = {
     }),
 };
 
+/** Poll /jobs/counts until no jobs are active or waiting, then resolve. */
+async function waitForJobsDrained() {
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const counts = await api.get("/jobs/counts");
+      const busy = counts.some((q) => q.active > 0 || q.waiting > 0);
+      if (!busy) return;
+    } catch {
+      return;
+    }
+  }
+}
+
 // Date formatting, account display, amount formatting, category helpers,
 // text helpers, pace helpers, time ago, job queue helpers — all in helpers.js
 
@@ -1241,7 +1255,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
             project_transactions: updateList(prev.project_transactions),
           }));
         }}
-        onRuleCreated=${() => setTimeout(() => load(), 1500)}
+        onRuleCreated=${() => waitForJobsDrained().then(load)}
         compact=${true}
       />
     </article>
@@ -2037,7 +2051,7 @@ function Transactions() {
           ),
         }));
       }}
-      onRuleCreated=${() => setTimeout(() => reload(), 1500)}
+      onRuleCreated=${() => waitForJobsDrained().then(reload)}
     />
 
     ${
@@ -3709,17 +3723,28 @@ function Jobs() {
       .catch((err) => ot.toast(err.message, "Error", { variant: "danger" }));
   }
 
+  const pollRef = useRef(null);
+
   useEffect(() => {
-    load();
-    const interval = setInterval(() => {
+    let cancelled = false;
+    function poll() {
       Promise.all([api.get("/jobs/counts"), api.get("/jobs/schedule")])
         .then(([c, s]) => {
+          if (cancelled) return;
           setCounts(c);
           setSchedule(s);
+          const busy = c.some((q) => q.active > 0 || q.waiting > 0);
+          pollRef.current = setTimeout(poll, busy ? 2000 : 10000);
         })
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(interval);
+        .catch(() => {
+          if (!cancelled) pollRef.current = setTimeout(poll, 10000);
+        });
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollRef.current);
+    };
   }, []);
 
   function addTriggering(key) {
@@ -3858,17 +3883,28 @@ function Jobs() {
       setAllJobs(null);
       return;
     }
-    api
-      .get("/jobs")
-      .then(setAllJobs)
-      .catch(() => {});
-    const iv = setInterval(() => {
+    let cancelled = false;
+    let timer = null;
+    function poll() {
       api
         .get("/jobs")
-        .then(setAllJobs)
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(iv);
+        .then((jobs) => {
+          if (cancelled) return;
+          setAllJobs(jobs);
+          const busy = jobs.some(
+            (j) => j.status === "Running" || j.status === "Pending",
+          );
+          timer = setTimeout(poll, busy ? 2000 : 10000);
+        })
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(poll, 10000);
+        });
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [jobsOpen]);
 
   function statusChip(s) {

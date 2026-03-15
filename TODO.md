@@ -11,7 +11,6 @@
 ### Frontend
 - [ ] **Budget month transaction view**: No way to view transactions scoped to a specific budget month
 - [ ] **Error boundaries + retry**: Errors replace entire page content with no retry button. Add a retry mechanism
-- [ ] **Magic timeouts**: Fixed 5s polling on Jobs page, hardcoded 1500ms delay after rule creation. Poll adaptively or use SSE
 
 ## Blocked Upstream
 
