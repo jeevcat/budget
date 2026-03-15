@@ -4,8 +4,8 @@
 use apalis::prelude::*;
 
 use budget_core::models::{
-    AccountId, Bic, ConnectionStatus, CurrencyCode, DomainCode, ExchangeRateType, Iban,
-    MerchantCategoryCode, ReferenceNumberSchema, SubFamilyCode, Transaction,
+    AccountId, AccountOrigin, Bic, ConnectionStatus, CurrencyCode, DomainCode, ExchangeRateType,
+    Iban, MerchantCategoryCode, ReferenceNumberSchema, SubFamilyCode, Transaction,
 };
 use budget_db::Db;
 
@@ -130,13 +130,13 @@ pub(crate) async fn sync_account(
         account_id = %account.id,
         provider_account_id = %account.provider_account_id,
         institution = %account.institution,
-        connection_id = ?account.connection_id,
+        origin = ?account.origin,
         "starting sync"
     );
 
     // Resolve the bank provider from the account's connection
-    let provider_name = match account.connection_id {
-        Some(conn_id) => {
+    let provider_name = match account.origin {
+        AccountOrigin::Connected(conn_id) => {
             let connection = db.get_connection(conn_id).await?.ok_or_else(|| {
                 format!("connection {conn_id} not found for account {account_id}")
             })?;
@@ -159,7 +159,7 @@ pub(crate) async fn sync_account(
 
             Some(connection.provider)
         }
-        None => None,
+        AccountOrigin::Manual => None,
     };
 
     let bank = factory.create(provider_name.as_deref())?;

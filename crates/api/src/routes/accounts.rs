@@ -4,7 +4,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use budget_core::models::{Account, AccountId, AccountType, CurrencyCode};
+use budget_core::models::{Account, AccountId, AccountOrigin, AccountType, CurrencyCode};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -70,7 +70,7 @@ async fn create(
         institution: body.institution,
         account_type: body.account_type,
         currency: body.currency,
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
 
     state.db.upsert_account(&account).await?;

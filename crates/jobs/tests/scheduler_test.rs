@@ -8,7 +8,8 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use budget_core::models::{
-    Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
+    Account, AccountId, AccountOrigin, AccountType, Connection, ConnectionId, ConnectionStatus,
+    CurrencyCode,
 };
 use budget_db::Db;
 use budget_jobs::schedule_queries::{
@@ -55,7 +56,7 @@ async fn seed_account(db: &Db, name: &str, connection_id: ConnectionId) -> Accou
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: Some(connection_id),
+        origin: AccountOrigin::Connected(connection_id),
     };
     db.upsert_account(&account).await.expect("seed account");
     account
@@ -352,7 +353,7 @@ async fn scheduler_skips_csv_only_accounts(pool: PgPool) {
         institution: "American Express".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("EUR").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&csv_account)
         .await
@@ -462,7 +463,7 @@ async fn schedule_status_query_returns_summary(pool: PgPool) {
         institution: "Manual".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("EUR").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&csv_account)
         .await

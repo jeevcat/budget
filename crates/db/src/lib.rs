@@ -15,10 +15,10 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use budget_core::models::{
-    Account, AccountType, BudgetConfig, BudgetMode, BudgetType, Categorization, Category,
-    CategoryId, CategoryMethod, Connection, ConnectionStatus, Correlation, CorrelationType,
-    ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleTarget, Transaction,
-    TransactionId,
+    Account, AccountOrigin, AccountType, BudgetConfig, BudgetMode, BudgetType, Categorization,
+    Category, CategoryId, CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation,
+    CorrelationType, ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleTarget,
+    Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,10 @@ fn row_to_account(row: &PgRow) -> Result<Account, DbError> {
         institution: row.try_get("institution")?,
         account_type: parse_enum::<AccountType>(row, "account_type")?,
         currency: row.try_get("currency")?,
-        connection_id: row.try_get("connection_id")?,
+        origin: match row.try_get::<Option<ConnectionId>, _>("connection_id")? {
+            Some(id) => AccountOrigin::Connected(id),
+            None => AccountOrigin::Manual,
+        },
     })
 }
 
@@ -276,7 +279,7 @@ mod tests {
             institution: "Test Bank".into(),
             account_type: AccountType::Checking,
             currency: CurrencyCode::new("EUR").unwrap(),
-            connection_id: None,
+            origin: AccountOrigin::Manual,
         }
     }
 
@@ -1301,7 +1304,10 @@ mod tests {
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].name, "Checking");
         assert_eq!(accounts[0].id.to_string(), acct_id);
-        assert_eq!(accounts[0].connection_id.unwrap().to_string(), conn_id);
+        assert_eq!(
+            accounts[0].origin.connection_id().unwrap().to_string(),
+            conn_id
+        );
 
         let cats = db.list_categories().await.unwrap();
         assert_eq!(cats.len(), 2);

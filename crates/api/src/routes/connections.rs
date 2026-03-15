@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::models::{
-    Account, AccountId, AccountType, Connection, ConnectionId, ConnectionStatus, CurrencyCode,
-    ValidDays,
+    Account, AccountId, AccountOrigin, AccountType, Connection, ConnectionId, ConnectionStatus,
+    CurrencyCode, ValidDays,
 };
 use budget_providers::{AspspEntry, EnableBankingAuth};
 
@@ -272,7 +272,7 @@ async fn callback(
                 .as_deref()
                 .and_then(|s| s.parse::<CurrencyCode>().ok())
                 .unwrap_or_else(|| CurrencyCode::new("EUR").expect("valid default")),
-            connection_id: Some(connection_id),
+            origin: AccountOrigin::Connected(connection_id),
         };
 
         state

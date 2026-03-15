@@ -309,6 +309,23 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CategoryName {
     }
 }
 
+/// Whether an account was created manually or linked via a bank connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountOrigin {
+    Manual,
+    Connected(ConnectionId),
+}
+
+impl AccountOrigin {
+    #[must_use]
+    pub fn connection_id(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Connected(id) => Some(*id),
+            Self::Manual => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
@@ -318,7 +335,28 @@ pub struct Account {
     pub institution: String,
     pub account_type: AccountType,
     pub currency: CurrencyCode,
-    pub connection_id: Option<ConnectionId>,
+    #[serde(rename = "connection_id", with = "account_origin_serde")]
+    pub origin: AccountOrigin,
+}
+
+mod account_origin_serde {
+    use super::{AccountOrigin, ConnectionId};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(origin: &AccountOrigin, ser: S) -> Result<S::Ok, S::Error> {
+        match origin {
+            AccountOrigin::Connected(id) => ser.serialize_some(id),
+            AccountOrigin::Manual => ser.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<AccountOrigin, D::Error> {
+        let opt = Option::<ConnectionId>::deserialize(de)?;
+        Ok(match opt {
+            Some(id) => AccountOrigin::Connected(id),
+            None => AccountOrigin::Manual,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

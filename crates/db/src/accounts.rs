@@ -28,7 +28,7 @@ impl Db {
         .bind(&account.institution)
         .bind(account.account_type.to_string())
         .bind(&account.currency)
-        .bind(account.connection_id)
+        .bind(account.origin.connection_id())
         .execute(pool)
         .await?;
         Ok(())

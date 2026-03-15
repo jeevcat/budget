@@ -13,8 +13,8 @@ use api::state::AppState;
 use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::models::{
-    Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    CurrencyCode, Priority, Rule, RuleCondition, RuleTarget, SecretKey, Transaction,
+    Account, AccountId, AccountOrigin, AccountType, Categorization, Category, CategoryId,
+    CategoryName, CurrencyCode, Priority, Rule, RuleCondition, RuleTarget, SecretKey, Transaction,
 };
 use budget_db::Db;
 
@@ -318,7 +318,7 @@ async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -370,7 +370,7 @@ async fn transactions_categorize_success(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -750,7 +750,7 @@ async fn generate_rule_for_categorized_transaction(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -806,7 +806,7 @@ async fn generate_rule_rejects_rule_categorized_transaction(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -845,7 +845,7 @@ async fn generate_rule_rejects_uncategorized_transaction(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -876,7 +876,7 @@ async fn rules_apply_with_no_rules_categorizes_nothing(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -902,7 +902,7 @@ async fn rules_apply_categorizes_matching_transactions(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -977,7 +977,7 @@ async fn rules_apply_skips_already_categorized_transactions(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 
@@ -1057,7 +1057,7 @@ async fn budgets_status_with_current_month(pool: PgPool) {
         institution: "Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account).await.expect("account");
 

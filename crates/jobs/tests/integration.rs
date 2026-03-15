@@ -11,9 +11,9 @@ use rust_decimal_macros::dec;
 use sqlx::PgPool;
 
 use budget_core::models::{
-    Account, AccountId, AccountType, Categorization, Category, CategoryId, CategoryName,
-    Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode, MatchField,
-    Priority, Rule, RuleCondition, RuleId, RuleTarget, Transaction,
+    Account, AccountId, AccountOrigin, AccountType, Categorization, Category, CategoryId,
+    CategoryName, Connection, ConnectionId, ConnectionStatus, CorrelationType, CurrencyCode,
+    MatchField, Priority, Rule, RuleCondition, RuleId, RuleTarget, Transaction,
 };
 use budget_db::Db;
 use budget_jobs::{
@@ -59,7 +59,7 @@ async fn seed_checking_account(db: &Db) -> Account {
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account)
         .await
@@ -77,7 +77,7 @@ async fn seed_credit_card_account(db: &Db) -> Account {
         institution: "Mock Bank".to_owned(),
         account_type: AccountType::CreditCard,
         currency: CurrencyCode::new("USD").unwrap(),
-        connection_id: None,
+        origin: AccountOrigin::Manual,
     };
     db.upsert_account(&account)
         .await
@@ -171,7 +171,7 @@ async fn seed_connected_account(db: &Db, connection_id: ConnectionId) -> Account
         institution: "Test Bank".to_owned(),
         account_type: AccountType::Checking,
         currency: CurrencyCode::new("EUR").unwrap(),
-        connection_id: Some(connection_id),
+        origin: AccountOrigin::Connected(connection_id),
     };
     db.upsert_account(&account)
         .await
