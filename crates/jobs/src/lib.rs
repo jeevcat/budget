@@ -163,7 +163,7 @@ pub use categorize::{handle_categorize_job, handle_categorize_transaction_job};
 pub use correlate::{handle_correlate_job, handle_correlate_transaction_job};
 pub use enrich::{
     AmazonEnrichConfig, handle_amazon_fetch_order_job, handle_amazon_match_job,
-    handle_amazon_sync_job,
+    handle_amazon_page_job, handle_amazon_sync_job,
 };
 pub use sync::{ImportResult, handle_sync_job, import_provider_transactions};
 
@@ -476,6 +476,21 @@ pub struct AmazonSyncJob {
     pub schedule_run_id: Option<String>,
 }
 
+/// Fetch one page of Amazon transactions and its invoices.
+///
+/// Re-fetches the transactions page to get a fresh JWT, then skips to the
+/// target page via `page_key`. After processing, enqueues the next page
+/// or a match job if done.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AmazonPageJob {
+    pub account_id: budget_core::models::AmazonAccountId,
+    pub page_key: String,
+    pub page_num: u32,
+    /// Propagated from the sync job for schedule run tracking.
+    #[serde(default)]
+    pub schedule_run_id: Option<String>,
+}
+
 /// Fetch a single Amazon order's invoice page.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AmazonFetchOrderJob {
@@ -583,11 +598,19 @@ pub async fn run_workers(
         .data(apalis_pool.clone())
         .build(handle_amazon_sync_job);
 
-    // Rate-limited: 1 request per 3 seconds to avoid Amazon throttling
+    let amazon_page_worker = WorkerBuilder::new("budget-amazon-page")
+        .backend(backend!(AmazonPageJob))
+        .data(db.clone())
+        .data(amazon_config.clone())
+        .data(apalis_pool.clone())
+        .build(handle_amazon_page_job);
+
+    // Fallback single-order fetch (retries / manual use)
     let amazon_order_worker = WorkerBuilder::new("budget-amazon-order")
         .backend(backend!(AmazonFetchOrderJob))
         .data(db.clone())
         .data(amazon_config.clone())
+        .data(apalis_pool.clone())
         .concurrency(1)
         .rate_limit(1, std::time::Duration::from_secs(3))
         .build(handle_amazon_fetch_order_job);
@@ -628,6 +651,7 @@ pub async fn run_workers(
     spawn_worker!(set, "correlate", correlate_worker);
     spawn_worker!(set, "correlate-txn", correlate_txn_worker);
     spawn_worker!(set, "amazon-sync", amazon_sync_worker);
+    spawn_worker!(set, "amazon-page", amazon_page_worker);
     spawn_worker!(set, "amazon-order", amazon_order_worker);
     spawn_worker!(set, "amazon-match", amazon_match_worker);
     spawn_worker!(set, "noop", noop_worker);

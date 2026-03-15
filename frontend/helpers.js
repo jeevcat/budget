@@ -283,7 +283,12 @@ export const QUEUE_CARDS = [
     key: "amazon",
     title: "Amazon",
     desc: "Fetch Amazon order details and match to bank transactions",
-    types: ["AmazonSyncJob", "AmazonFetchOrderJob", "AmazonMatchJob"],
+    types: [
+      "AmazonSyncJob",
+      "AmazonPageJob",
+      "AmazonFetchOrderJob",
+      "AmazonMatchJob",
+    ],
   },
 ];
 

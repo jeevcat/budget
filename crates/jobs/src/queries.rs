@@ -134,6 +134,32 @@ pub async fn reclaim_stale(pool: &ApalisPool, stale_seconds: i64) -> Result<u64,
     Ok(res.rows_affected())
 }
 
+/// Kill all pending `AmazonFetchOrderJob`s for a given account.
+///
+/// Used to short-circuit when cookies are expired — avoids hammering Amazon
+/// with requests that will all fail the same way.
+///
+/// # Errors
+///
+/// Returns `sqlx::Error` on database failure.
+pub async fn kill_pending_order_jobs(
+    pool: &ApalisPool,
+    account_id: &str,
+) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query(&format!(
+        "UPDATE {JOBS_TABLE} \
+         SET status = 'Killed', done_at = NOW(), \
+             last_result = '{{\"Err\": \"cookies expired — batch aborted\"}}'::jsonb \
+         WHERE job_type = 'budget_jobs::AmazonFetchOrderJob' \
+           AND status = 'Pending' \
+           AND job->>'account_id' = $1",
+    ))
+    .bind(account_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// Delete finished jobs (`Done`, `Failed`, `Killed`) older than `max_age_seconds`.
 ///
 /// # Errors
