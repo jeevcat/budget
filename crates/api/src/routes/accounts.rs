@@ -4,7 +4,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use budget_core::models::{
     Account, AccountId, AccountOrigin, AccountType, BalanceSnapshot, BalanceSnapshotId,
@@ -42,6 +42,7 @@ pub struct CreateAccount {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/net-worth", get(net_worth))
         .route("/{id}", get(get_by_id).patch(update_nickname))
         .route("/{id}/balances", get(list_balances).post(create_balance))
 }
@@ -140,6 +141,81 @@ async fn update_nickname(
     })?;
 
     Ok(Json(updated))
+}
+
+// ---------------------------------------------------------------------------
+// Net worth
+// ---------------------------------------------------------------------------
+
+/// Per-account balance entry in the net worth response.
+#[derive(Serialize)]
+struct AccountBalance {
+    account_id: AccountId,
+    account_name: String,
+    account_type: AccountType,
+    current: Decimal,
+    currency: CurrencyCode,
+    snapshot_at: DateTime<Utc>,
+}
+
+/// Aggregated net worth across all accounts.
+#[derive(Serialize)]
+struct NetWorth {
+    total: Decimal,
+    currency: CurrencyCode,
+    accounts: Vec<AccountBalance>,
+}
+
+/// Get current net worth: latest balance per account, summed.
+///
+/// Only includes accounts that have at least one balance snapshot.
+/// All balances are assumed to be in the same currency (no FX conversion).
+///
+/// # Errors
+///
+/// Returns `AppError` if the database query fails.
+async fn net_worth(State(state): State<AppState>) -> Result<Json<NetWorth>, AppError> {
+    let snapshots = state.db.get_latest_balance_per_account().await?;
+    let accounts_by_id: std::collections::HashMap<AccountId, Account> = state
+        .db
+        .list_accounts()
+        .await?
+        .into_iter()
+        .map(|a| (a.id, a))
+        .collect();
+
+    let mut total = Decimal::ZERO;
+    let mut accounts = Vec::with_capacity(snapshots.len());
+
+    for s in snapshots {
+        total += s.current;
+        if let Some(account) = accounts_by_id.get(&s.account_id) {
+            accounts.push(AccountBalance {
+                account_id: s.account_id,
+                account_name: account
+                    .nickname
+                    .clone()
+                    .unwrap_or_else(|| account.name.clone()),
+                account_type: account.account_type,
+                current: s.current,
+                currency: s.currency,
+                snapshot_at: s.snapshot_at,
+            });
+        }
+    }
+
+    // Sort by balance descending for a natural presentation
+    accounts.sort_by(|a, b| b.current.cmp(&a.current));
+
+    let currency = accounts
+        .first()
+        .map_or_else(|| "EUR".parse().expect("valid"), |a| a.currency.clone());
+
+    Ok(Json(NetWorth {
+        total,
+        currency,
+        accounts,
+    }))
 }
 
 // ---------------------------------------------------------------------------
