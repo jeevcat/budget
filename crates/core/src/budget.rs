@@ -3558,4 +3558,57 @@ mod tests {
         let spending = compute_category_spending(&transactions, food.id, &months[0], &categories);
         assert_eq!(spending, dec!(60)); // 20 + 30 + 10
     }
+
+    #[test]
+    fn first_month_not_extended_when_only_salary_transactions_provided() {
+        // detect_budget_month_boundaries only extends the first month
+        // backward when it can see non-salary transactions. The API's
+        // derive_months() passes salary-only data, then compensates
+        // with a separate MIN(posted_date) query.
+        let categories = vec![salary_category(), food_category()];
+        let salary_only = vec![make_txn(
+            Categorization::Manual(salary_cat_id()),
+            dec!(3000),
+            date(2026, 1, 15),
+        )];
+
+        let months = detect_budget_month_boundaries(&salary_only, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].start_date, date(2026, 1, 15));
+        assert!(!is_in_budget_month(date(2026, 1, 1), &months[0]));
+    }
+
+    #[test]
+    fn first_month_extended_across_calendar_month_boundary() {
+        // Pre-salary transactions in an earlier calendar month should
+        // still be covered by backward extension.
+        let food = food_category();
+        let categories = vec![salary_category(), food.clone()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(food.id),
+                dec!(-25),
+                date(2025, 12, 20),
+            ),
+            make_txn(Categorization::Manual(food.id), dec!(-15), date(2026, 1, 3)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2026, 1, 15),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].start_date, date(2025, 12, 20));
+        assert!(is_in_budget_month(date(2025, 12, 20), &months[0]));
+        assert!(is_in_budget_month(date(2026, 1, 3), &months[0]));
+
+        let spending = compute_category_spending(&transactions, food.id, &months[0], &categories);
+        assert_eq!(spending, dec!(40)); // 25 + 15
+    }
 }

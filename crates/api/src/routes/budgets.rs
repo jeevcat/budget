@@ -156,6 +156,17 @@ async fn derive_months(
     match detect_budget_month_boundaries(&salary_txns, state.expected_salary_count, categories) {
         Ok(mut months) => {
             months.sort_by_key(|bm| bm.start_date);
+            // Extend the first budget month backward to cover any
+            // transactions that predate the first salary. We only pass
+            // salary transactions above, so the backward-extension in
+            // detect_budget_month_boundaries never fires; one cheap
+            // MIN(posted_date) query fixes that.
+            if let Some(first) = months.first_mut()
+                && let Some(earliest) = state.db.get_earliest_transaction_date().await?
+                && earliest < first.start_date
+            {
+                first.start_date = earliest;
+            }
             Ok(months)
         }
         Err(budget_core::error::Error::NoSalaryCategory) => Ok(Vec::new()),

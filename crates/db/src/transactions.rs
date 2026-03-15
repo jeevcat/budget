@@ -648,6 +648,23 @@ impl Db {
         rows.iter().map(row_to_transaction).collect()
     }
 
+    /// Get the earliest `posted_date` across all transactions, or `None` if
+    /// there are no transactions yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn get_earliest_transaction_date(&self) -> Result<Option<NaiveDate>, DbError> {
+        let pool = &self.0;
+        let row = sqlx::query("SELECT MIN(posted_date) as min_date FROM transactions")
+            .fetch_optional(pool)
+            .await?;
+        match row {
+            Some(r) => Ok(r.try_get("min_date")?),
+            None => Ok(None),
+        }
+    }
+
     /// Get the most recent `posted_date` for a given account, or `None` if the
     /// account has no transactions yet.
     ///

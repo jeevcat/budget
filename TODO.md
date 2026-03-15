@@ -5,10 +5,6 @@
 
 ## From Spec — Remaining Work
 
-### Backfill Logic
-- [ ] **Inter-month gap transaction assignment**: Transactions posted between calendar month start and salary arrival should be assigned to the previous (still-open) budget month
-- [ ] **First-time backfill verification**: Verify retroactive budget month detection covers full imported history end-to-end
-
 ### Edge Case Coverage
 - [ ] **Late/missing salary UX**: Verify the previous budget month stays open indefinitely and surface a clear signal when expected salaries haven't arrived
 
