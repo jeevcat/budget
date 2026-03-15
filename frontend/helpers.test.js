@@ -405,6 +405,22 @@ describe("paceLabel", () => {
   test("does not include delta for on_track", () => {
     expect(paceLabel("on_track", 10)).toBe("On track");
   });
+
+  test("appends seasonal when seasonalFactor is present", () => {
+    const label = paceLabel("on_track", null, 1.15);
+    expect(label).toBe("On track (seasonal)");
+  });
+
+  test("combines delta and seasonal", () => {
+    const label = paceLabel("above_pace", 30, 1.2);
+    expect(label).toContain("Above pace");
+    expect(label).toContain("30");
+    expect(label).toContain("(seasonal)");
+  });
+
+  test("no seasonal suffix when null", () => {
+    expect(paceLabel("on_track", null, null)).toBe("On track");
+  });
 });
 
 describe("paceColor", () => {

@@ -841,6 +841,12 @@ pub struct BudgetStatus {
     /// Positive = over pace, negative = under pace.
     pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
+    /// Seasonal multiplier vs. mean historical spend (e.g. 1.15 = 15% above average).
+    /// `None` when insufficient history for MSTL decomposition.
+    pub seasonal_factor: Option<f64>,
+    /// Monthly trend slope from MSTL decomposition (positive = spending increasing).
+    /// `None` when insufficient history.
+    pub trend_monthly: Option<f64>,
 }
 
 /// Point-in-time balance snapshot for an account.

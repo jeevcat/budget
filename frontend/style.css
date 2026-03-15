@@ -513,6 +513,12 @@ dialog > form > div {
   background: var(--foreground);
   opacity: 0.35;
 }
+.trend-arrow {
+  font-size: var(--text-8);
+  margin-left: 0.25em;
+  cursor: help;
+}
+
 .ledger-pace-dot {
   display: inline-block;
   width: 6px;

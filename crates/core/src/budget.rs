@@ -370,9 +370,36 @@ pub fn is_in_budget_month(date: NaiveDate, budget_month: &BudgetMonth) -> bool {
     }
 }
 
+/// Build a per-month spending series for a category across closed budget months.
+///
+/// Returns one `f64` value per budget month (positive = money spent).
+/// Excludes the current open month (no `end_date`) since incomplete data
+/// would skew decomposition.
+#[must_use]
+pub fn build_monthly_spending_series(
+    transactions: &[Transaction],
+    category_id: CategoryId,
+    budget_months: &[BudgetMonth],
+    categories: &[Category],
+) -> Vec<f64> {
+    let subtree = collect_budget_subtree(category_id, categories);
+    let filtered = filter_for_budget(transactions, categories);
+
+    budget_months
+        .iter()
+        .filter(|bm| bm.end_date.is_some())
+        .map(|bm| {
+            let spent = compute_spending_for_subtree(&filtered, &subtree, bm);
+            spent.to_string().parse::<f64>().unwrap_or(0.0)
+        })
+        .collect()
+}
+
 /// Compute pace indicator and delta for a budget category.
 ///
 /// Dispatches to fixed or variable logic based on `budget_type`.
+/// When `seasonal_factor` is `Some`, adjusts the expected spend for variable
+/// categories using the MSTL-derived seasonal multiplier.
 /// Returns the pace indicator and the signed delta.
 fn compute_pace(
     spent: Decimal,
@@ -380,10 +407,13 @@ fn compute_pace(
     elapsed: i64,
     total: i64,
     budget_type: BudgetType,
+    seasonal_factor: Option<f64>,
 ) -> (PaceIndicator, Decimal) {
     match budget_type {
         BudgetType::Fixed => compute_pace_fixed(spent, budget),
-        BudgetType::Variable => compute_pace_variable(spent, budget, elapsed, total),
+        BudgetType::Variable => {
+            compute_pace_variable(spent, budget, elapsed, total, seasonal_factor)
+        }
     }
 }
 
@@ -401,7 +431,11 @@ fn compute_pace_fixed(spent: Decimal, budget: Decimal) -> (PaceIndicator, Decima
     }
 }
 
-/// Variable expense pace: pro-rata linear comparison with ±5% tolerance band.
+/// Variable expense pace: pro-rata comparison with ±5% tolerance band.
+///
+/// When `seasonal_factor` is `Some`, the expected spend is adjusted by the
+/// MSTL-derived seasonal multiplier, replacing naive linear pro-rata with a
+/// seasonality-aware expectation.
 ///
 /// Only produces: `UnderBudget`, `OnTrack`, `AbovePace`, `OverBudget`.
 fn compute_pace_variable(
@@ -409,6 +443,7 @@ fn compute_pace_variable(
     budget: Decimal,
     elapsed: i64,
     total: i64,
+    seasonal_factor: Option<f64>,
 ) -> (PaceIndicator, Decimal) {
     if total <= 0 || budget == Decimal::ZERO {
         let delta = spent - budget;
@@ -421,7 +456,12 @@ fn compute_pace_variable(
         }
     } else {
         let fraction = Decimal::from(elapsed) / Decimal::from(total);
-        let expected_spend = budget * fraction;
+        let mut expected_spend = budget * fraction;
+        if let Some(f) = seasonal_factor
+            && let Some(factor) = Decimal::from_f64_retain(f)
+        {
+            expected_spend *= factor;
+        }
         let delta = spent - expected_spend;
         if spent > budget {
             (PaceIndicator::OverBudget, delta)
@@ -482,6 +522,7 @@ fn compute_monthly_status(
     current_month: &BudgetMonth,
     categories: &[Category],
     today: NaiveDate,
+    seasonal: Option<&crate::seasonality::SeasonalContext>,
 ) -> BudgetStatus {
     let spent = compute_category_spending(transactions, category.id, current_month, categories);
     let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
@@ -499,7 +540,8 @@ fn compute_monthly_status(
         .budget
         .budget_type()
         .unwrap_or(BudgetType::Variable);
-    let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt);
+    let sf = seasonal.map(|s| s.seasonal_factor);
+    let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt, sf);
 
     BudgetStatus {
         category_id: category.id,
@@ -511,6 +553,8 @@ fn compute_monthly_status(
         pace,
         pace_delta,
         budget_mode: BudgetMode::Monthly,
+        seasonal_factor: sf,
+        trend_monthly: seasonal.map(|s| s.trend_monthly),
     }
 }
 
@@ -555,8 +599,14 @@ fn compute_annual_status(
         .budget
         .budget_type()
         .unwrap_or(BudgetType::Variable);
-    let (pace, pace_delta) =
-        compute_pace(spent, budget_amount, elapsed_months, total_year_months, bt);
+    let (pace, pace_delta) = compute_pace(
+        spent,
+        budget_amount,
+        elapsed_months,
+        total_year_months,
+        bt,
+        None,
+    );
 
     BudgetStatus {
         category_id: category.id,
@@ -568,6 +618,8 @@ fn compute_annual_status(
         pace,
         pace_delta,
         budget_mode: BudgetMode::Annual,
+        seasonal_factor: None,
+        trend_monthly: None,
     }
 }
 
@@ -631,7 +683,7 @@ fn compute_project_status(
             let total_days = (e - s).num_days();
             let elapsed_days = (today - s).num_days().max(0);
             let tl = (e - today).num_days().max(0);
-            let (p, d) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt);
+            let (p, d) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt, None);
             (Some(tl), p, d)
         }
         // Open-ended or no budget: can't compute pace
@@ -648,6 +700,8 @@ fn compute_project_status(
         pace,
         pace_delta,
         budget_mode: BudgetMode::Project,
+        seasonal_factor: None,
+        trend_monthly: None,
     }
 }
 
@@ -662,6 +716,7 @@ pub fn compute_budget_status(
     all_months: &[BudgetMonth],
     categories: &[Category],
     today: NaiveDate,
+    seasonal: Option<&crate::seasonality::SeasonalContext>,
 ) -> BudgetStatus {
     match category.budget.mode() {
         Some(BudgetMode::Annual) => compute_annual_status(
@@ -678,7 +733,14 @@ pub fn compute_budget_status(
         // Monthly is the default for budgeted categories.
         // Salary/Transfer categories are excluded at the API layer but fall back here defensively.
         Some(BudgetMode::Monthly | BudgetMode::Salary | BudgetMode::Transfer) | None => {
-            compute_monthly_status(category, transactions, current_month, categories, today)
+            compute_monthly_status(
+                category,
+                transactions,
+                current_month,
+                categories,
+                today,
+                seasonal,
+            )
         }
     }
 }
@@ -1491,8 +1553,15 @@ mod tests {
         )];
 
         let today = date(2025, 1, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        let status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+            None,
+        );
 
         assert_eq!(status.spent, dec!(100));
         assert_eq!(status.remaining, dec!(400));
@@ -1526,8 +1595,15 @@ mod tests {
         )];
 
         let today = date(2025, 1, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        let status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+            None,
+        );
 
         assert_eq!(status.spent, dec!(250));
         assert_eq!(status.remaining, dec!(-50));
@@ -1642,6 +1718,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
 
         assert_eq!(status.budget_mode, BudgetMode::Annual);
@@ -1703,6 +1780,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
 
         assert_eq!(status.budget_mode, BudgetMode::Project);
@@ -1744,6 +1822,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
 
         assert_eq!(status.budget_mode, BudgetMode::Project);
@@ -1844,6 +1923,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
         assert_eq!(food_status.budget_mode, BudgetMode::Monthly);
         assert_eq!(food_status.spent, dec!(200));
@@ -1858,6 +1938,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
         assert_eq!(ins_status.budget_mode, BudgetMode::Annual);
         // 100 + 150 = 250 across two months
@@ -1903,8 +1984,15 @@ mod tests {
         let food_spending = compute_category_spending(&transactions, food.id, &bm, &categories);
         assert_eq!(food_spending, dec!(120));
 
-        let food_status =
-            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        let food_status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+            None,
+        );
         assert_eq!(food_status.spent, dec!(120));
         assert_eq!(food_status.remaining, dec!(380));
 
@@ -1919,6 +2007,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
         assert_eq!(ins_status.spent, dec!(1200));
         assert_eq!(ins_status.remaining, dec!(1200));
@@ -1998,7 +2087,15 @@ mod tests {
         let statuses: Vec<BudgetStatus> = budgeted_categories
             .iter()
             .map(|cat| {
-                compute_budget_status(cat, &transactions, &bm_feb, &all_months, &categories, today)
+                compute_budget_status(
+                    cat,
+                    &transactions,
+                    &bm_feb,
+                    &all_months,
+                    &categories,
+                    today,
+                    None,
+                )
             })
             .collect();
 
@@ -2050,8 +2147,15 @@ mod tests {
         let transactions: Vec<Transaction> = vec![];
 
         let today = date(2025, 1, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        let status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+            None,
+        );
 
         assert_eq!(status.spent, Decimal::ZERO);
         assert_eq!(status.remaining, dec!(500));
@@ -2086,8 +2190,15 @@ mod tests {
         ];
 
         let today = date(2025, 1, 25);
-        let status =
-            compute_budget_status(&food, &transactions, &bm, &all_months, &categories, today);
+        let status = compute_budget_status(
+            &food,
+            &transactions,
+            &bm,
+            &all_months,
+            &categories,
+            today,
+            None,
+        );
 
         // Net: -100 + 300 = +200, negated → -200 (negative spending = net income)
         assert_eq!(status.spent, dec!(-200));
@@ -2140,6 +2251,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
 
         assert_eq!(status.budget_mode, BudgetMode::Project);
@@ -2155,7 +2267,7 @@ mod tests {
 
     #[test]
     fn variable_exactly_at_expected_is_on_track() {
-        let (pace, delta) = compute_pace(dec!(250), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(250), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
@@ -2163,7 +2275,7 @@ mod tests {
     #[test]
     fn variable_within_tolerance_band_is_on_track() {
         // 247.5 is within ±5% of expected 250 (range: 237.5–262.5)
-        let (pace, delta) = compute_pace(dec!(247.5), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(247.5), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert!(delta < Decimal::ZERO);
     }
@@ -2171,28 +2283,28 @@ mod tests {
     #[test]
     fn variable_above_tolerance_but_within_budget_is_above_pace() {
         // 265 exceeds upper band of 262.5 (= 250 * 1.05) but is under budget 500
-        let (pace, delta) = compute_pace(dec!(265), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(265), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::AbovePace);
         assert_eq!(delta, dec!(15));
     }
 
     #[test]
     fn variable_spent_at_budget_early_is_above_pace() {
-        let (pace, delta) = compute_pace(dec!(500), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(500), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::AbovePace);
         assert_eq!(delta, dec!(250));
     }
 
     #[test]
     fn variable_exceeds_total_budget_is_over_budget() {
-        let (pace, delta) = compute_pace(dec!(510), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(510), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert!(delta > Decimal::ZERO);
     }
 
     #[test]
     fn variable_well_below_expected_is_under_budget() {
-        let (pace, delta) = compute_pace(dec!(100), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(100), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::UnderBudget);
         assert_eq!(delta, dec!(-150));
     }
@@ -2200,7 +2312,7 @@ mod tests {
     #[test]
     fn variable_just_below_lower_band_is_under_budget() {
         // 237.49 is just below 237.5 (= 250 * 0.95)
-        let (pace, delta) = compute_pace(dec!(237.49), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(237.49), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::UnderBudget);
         assert!(delta < Decimal::ZERO);
     }
@@ -2208,7 +2320,7 @@ mod tests {
     #[test]
     fn variable_at_lower_band_boundary_is_on_track() {
         // 237.5 is exactly at the lower 5% band (= 250 * 0.95)
-        let (pace, delta) = compute_pace(dec!(237.5), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(237.5), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert!(delta < Decimal::ZERO);
     }
@@ -2216,7 +2328,7 @@ mod tests {
     #[test]
     fn variable_at_upper_band_boundary_is_on_track() {
         // 262.5 is exactly at the upper 5% band (= 250 * 1.05)
-        let (pace, delta) = compute_pace(dec!(262.5), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(262.5), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert!(delta > Decimal::ZERO);
     }
@@ -2224,35 +2336,35 @@ mod tests {
     #[test]
     fn variable_just_above_upper_band_within_budget_is_above_pace() {
         // 262.51 just exceeds 262.5 (= 250 * 1.05)
-        let (pace, delta) = compute_pace(dec!(262.51), dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(262.51), dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::AbovePace);
         assert!(delta > Decimal::ZERO);
     }
 
     #[test]
     fn variable_last_day_spent_at_budget_is_on_track() {
-        let (pace, delta) = compute_pace(dec!(500), dec!(500), 30, 30, V);
+        let (pace, delta) = compute_pace(dec!(500), dec!(500), 30, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
 
     #[test]
     fn variable_last_day_over_budget_is_over_budget() {
-        let (pace, delta) = compute_pace(dec!(510), dec!(500), 30, 30, V);
+        let (pace, delta) = compute_pace(dec!(510), dec!(500), 30, 30, V, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(10));
     }
 
     #[test]
     fn variable_zero_spent_is_under_budget() {
-        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(500), 15, 30, V);
+        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(500), 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::UnderBudget);
         assert_eq!(delta, dec!(-250));
     }
 
     #[test]
     fn variable_first_day_zero_spent_is_on_track() {
-        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(500), 0, 30, V);
+        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(500), 0, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
@@ -2260,7 +2372,7 @@ mod tests {
     #[test]
     fn variable_first_day_any_spend_within_budget_is_above_pace() {
         // On day 0, expected is 0, so any spend exceeds the upper band
-        let (pace, delta) = compute_pace(dec!(50), dec!(500), 0, 30, V);
+        let (pace, delta) = compute_pace(dec!(50), dec!(500), 0, 30, V, None);
         assert_eq!(pace, PaceIndicator::AbovePace);
         assert_eq!(delta, dec!(50));
     }
@@ -2269,37 +2381,73 @@ mod tests {
 
     #[test]
     fn variable_zero_budget_zero_spent_is_on_track() {
-        let (pace, delta) = compute_pace(Decimal::ZERO, Decimal::ZERO, 15, 30, V);
+        let (pace, delta) = compute_pace(Decimal::ZERO, Decimal::ZERO, 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
 
     #[test]
     fn variable_zero_budget_with_spending_is_over_budget() {
-        let (pace, delta) = compute_pace(dec!(100), Decimal::ZERO, 15, 30, V);
+        let (pace, delta) = compute_pace(dec!(100), Decimal::ZERO, 15, 30, V, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(100));
     }
 
     #[test]
     fn variable_zero_total_spent_equals_budget_is_on_track() {
-        let (pace, delta) = compute_pace(dec!(500), dec!(500), 0, 0, V);
+        let (pace, delta) = compute_pace(dec!(500), dec!(500), 0, 0, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
 
     #[test]
     fn variable_zero_total_over_budget_is_over_budget() {
-        let (pace, delta) = compute_pace(dec!(600), dec!(500), 0, 0, V);
+        let (pace, delta) = compute_pace(dec!(600), dec!(500), 0, 0, V, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(100));
     }
 
     #[test]
     fn variable_zero_total_under_budget_is_on_track() {
-        let (pace, delta) = compute_pace(dec!(300), dec!(500), 0, 0, V);
+        let (pace, delta) = compute_pace(dec!(300), dec!(500), 0, 0, V, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, dec!(-200));
+    }
+
+    // ── Variable with seasonal factor ──────────────────────────────────
+
+    #[test]
+    fn seasonal_factor_adjusts_expected_spend() {
+        // Without seasonality: expected = 500 * 15/30 = 250, so 300 is above pace
+        let (pace_no_season, _) = compute_pace(dec!(300), dec!(500), 15, 30, V, None);
+        assert_eq!(pace_no_season, PaceIndicator::AbovePace);
+
+        // With seasonal factor 1.3: expected = 250 * 1.3 = 325
+        // lower = 325 * 0.95 = 308.75, spent 300 < lower → under pace
+        let (pace_season, delta) = compute_pace(dec!(300), dec!(500), 15, 30, V, Some(1.3));
+        assert_eq!(pace_season, PaceIndicator::UnderBudget);
+        assert!(delta < Decimal::ZERO);
+
+        // 320 is within [308.75, 341.25] → on track
+        let (pace_on_track, _) = compute_pace(dec!(320), dec!(500), 15, 30, V, Some(1.3));
+        assert_eq!(pace_on_track, PaceIndicator::OnTrack);
+    }
+
+    #[test]
+    fn seasonal_factor_below_one_tightens_expectation() {
+        // With seasonal factor 0.7: expected = 250 * 0.7 = 175
+        // 200 > 175 * 1.05 = 183.75, so above pace
+        let (pace, _) = compute_pace(dec!(200), dec!(500), 15, 30, V, Some(0.7));
+        assert_eq!(pace, PaceIndicator::AbovePace);
+    }
+
+    #[test]
+    fn seasonal_factor_none_is_linear() {
+        // Verify None gives same result as not having seasonality
+        let (pace_none, delta_none) = compute_pace(dec!(250), dec!(500), 15, 30, V, None);
+        let (pace_one, delta_one) = compute_pace(dec!(250), dec!(500), 15, 30, V, Some(1.0));
+        assert_eq!(pace_none, pace_one);
+        assert_eq!(delta_none, delta_one);
     }
 
     // ── Fixed: payment hasn't arrived, arrived on target, or exceeded ─
@@ -2307,7 +2455,7 @@ mod tests {
     #[test]
     fn fixed_no_spend_is_pending() {
         // Mortgage hasn't been paid yet this month
-        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(2000), 2, 30, F);
+        let (pace, delta) = compute_pace(Decimal::ZERO, dec!(2000), 2, 30, F, None);
         assert_eq!(pace, PaceIndicator::Pending);
         assert_eq!(delta, dec!(-2000));
     }
@@ -2315,7 +2463,7 @@ mod tests {
     #[test]
     fn fixed_full_payment_is_on_track() {
         // Mortgage paid in full on day 2 — exactly the budget
-        let (pace, delta) = compute_pace(dec!(2000), dec!(2000), 2, 30, F);
+        let (pace, delta) = compute_pace(dec!(2000), dec!(2000), 2, 30, F, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, Decimal::ZERO);
     }
@@ -2323,7 +2471,7 @@ mod tests {
     #[test]
     fn fixed_partial_payment_is_on_track() {
         // Partial payment (e.g. first of two installments)
-        let (pace, delta) = compute_pace(dec!(500), dec!(2000), 5, 30, F);
+        let (pace, delta) = compute_pace(dec!(500), dec!(2000), 5, 30, F, None);
         assert_eq!(pace, PaceIndicator::OnTrack);
         assert_eq!(delta, dec!(-1500));
     }
@@ -2331,7 +2479,7 @@ mod tests {
     #[test]
     fn fixed_over_budget_is_over_budget() {
         // Subscription price increased — exceeded the budgeted amount
-        let (pace, delta) = compute_pace(dec!(2100), dec!(2000), 2, 30, F);
+        let (pace, delta) = compute_pace(dec!(2100), dec!(2000), 2, 30, F, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(100));
     }
@@ -2339,9 +2487,9 @@ mod tests {
     #[test]
     fn fixed_ignores_elapsed_time() {
         // Same result regardless of what day of the month it is
-        let (pace_early, _) = compute_pace(dec!(2000), dec!(2000), 1, 30, F);
-        let (pace_mid, _) = compute_pace(dec!(2000), dec!(2000), 15, 30, F);
-        let (pace_late, _) = compute_pace(dec!(2000), dec!(2000), 30, 30, F);
+        let (pace_early, _) = compute_pace(dec!(2000), dec!(2000), 1, 30, F, None);
+        let (pace_mid, _) = compute_pace(dec!(2000), dec!(2000), 15, 30, F, None);
+        let (pace_late, _) = compute_pace(dec!(2000), dec!(2000), 30, 30, F, None);
         assert_eq!(pace_early, PaceIndicator::OnTrack);
         assert_eq!(pace_mid, PaceIndicator::OnTrack);
         assert_eq!(pace_late, PaceIndicator::OnTrack);
@@ -2349,13 +2497,13 @@ mod tests {
 
     #[test]
     fn fixed_zero_budget_zero_spent_is_pending() {
-        let (pace, _) = compute_pace(Decimal::ZERO, Decimal::ZERO, 15, 30, F);
+        let (pace, _) = compute_pace(Decimal::ZERO, Decimal::ZERO, 15, 30, F, None);
         assert_eq!(pace, PaceIndicator::Pending);
     }
 
     #[test]
     fn fixed_zero_budget_with_spending_is_over_budget() {
-        let (pace, delta) = compute_pace(dec!(50), Decimal::ZERO, 15, 30, F);
+        let (pace, delta) = compute_pace(dec!(50), Decimal::ZERO, 15, 30, F, None);
         assert_eq!(pace, PaceIndicator::OverBudget);
         assert_eq!(delta, dec!(50));
     }
@@ -3271,6 +3419,7 @@ mod tests {
             &all_months,
             &categories,
             today,
+            None,
         );
 
         assert_eq!(status.budget_mode, BudgetMode::Annual);

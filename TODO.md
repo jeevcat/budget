@@ -16,10 +16,7 @@
 ### Features
 - [ ] **Budget burndown charts**: Daily cumulative spend curve for variable-mode categories with predicted end-of-month landing. Overlay 3 previous months as ghost lines for comparison. Lives on insights page as drill-down from dashboard categories
 - [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
-- [ ] **Seasonality-aware pacing**: MSTL decomposition per category feeds seasonal expectations into pace calculation — "over budget" accounts for the fact that December is always expensive. Powers trend warnings ("groceries trending up €24/year") and budget adjustment suggestions ("your December grocery spend is consistently €70 above budget")
-
 ### Integration
-- [ ] **Expand augurs features**: Add `mstl`, `ets`, `seasons`, `changepoint` features to augurs dependency when implementing anomaly detection and seasonality-aware pacing
 - [ ] **Insights page**: Add burndown drill-downs to the existing insights page. Keep lightweight — most intelligence surfaces on the existing dashboard via enhanced pace indicators and anomaly badges
 
 ## Blocked Upstream

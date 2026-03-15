@@ -523,6 +523,7 @@ fn compute_projects(
                 budget_months,
                 categories,
                 reference_date,
+                None,
             );
             let has_children = categories.iter().any(|c| c.parent_id == Some(cat.id));
             let children = if has_children {
@@ -614,6 +615,24 @@ fn build_ledgers(
 ///
 /// Returns all data needed to render the dashboard: budget statuses, pre-filtered
 /// transactions grouped by mode, uncategorized count, budget year, and project
+fn seasonal_context_for(
+    cat: &Category,
+    transactions: &[Transaction],
+    budget_months: &[BudgetMonth],
+    categories: &[Category],
+) -> Option<budget_core::seasonality::SeasonalContext> {
+    if cat.budget.budget_type() != Some(budget_core::models::BudgetType::Variable) {
+        return None;
+    }
+    let series = budget_core::budget::build_monthly_spending_series(
+        transactions,
+        cat.id,
+        budget_months,
+        categories,
+    );
+    budget_core::seasonality::compute_seasonal_context(&series)
+}
+
 /// child breakdowns. The frontend is a pure display layer — no business logic.
 ///
 /// # Errors
@@ -651,6 +670,10 @@ async fn status(
             earliest = earliest.min(*start_date);
         }
     }
+    // Go back far enough for MSTL to have 24+ months of history
+    if let Some(first_month) = budget_months.first() {
+        earliest = earliest.min(first_month.start_date);
+    }
 
     let transactions = state.db.list_transactions_since(earliest).await?;
     let reference_date = month.end_date.unwrap_or_else(|| Utc::now().date_naive());
@@ -664,6 +687,7 @@ async fn status(
             )
         })
         .map(|cat| {
+            let seasonal = seasonal_context_for(cat, &transactions, &budget_months, &categories);
             let status = compute_budget_status(
                 cat,
                 &transactions,
@@ -671,6 +695,7 @@ async fn status(
                 &budget_months,
                 &categories,
                 reference_date,
+                seasonal.as_ref(),
             );
             let direct_children: Vec<ChildCategoryInfo> = categories
                 .iter()
@@ -754,6 +779,8 @@ mod tests {
             pace,
             pace_delta: Decimal::ZERO,
             budget_mode: BudgetMode::Monthly,
+            seasonal_factor: None,
+            trend_monthly: None,
         }
     }
 
@@ -2371,6 +2398,8 @@ mod tests {
             pace: PaceIndicator::OnTrack,
             pace_delta: Decimal::ZERO,
             budget_mode: BudgetMode::Project,
+            seasonal_factor: None,
+            trend_monthly: None,
         };
         let car_status = BudgetStatus {
             category_id: cat_id(61),
@@ -2382,6 +2411,8 @@ mod tests {
             pace: PaceIndicator::OverBudget,
             pace_delta: Decimal::ZERO,
             budget_mode: BudgetMode::Project,
+            seasonal_factor: None,
+            trend_monthly: None,
         };
 
         let projects = vec![

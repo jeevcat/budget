@@ -13,6 +13,7 @@ pub mod error;
 pub mod models;
 pub mod projection;
 pub mod rules;
+pub mod seasonality;
 
 use models::{CurrencyCode, DatabaseUrl, Host, SecretKey};
 

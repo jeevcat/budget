@@ -212,7 +212,7 @@ export function paceBadge(pace) {
   return "danger";
 }
 
-export function paceLabel(pace, delta) {
+export function paceLabel(pace, delta, seasonalFactor) {
   const base =
     pace === "pending"
       ? "Pending"
@@ -223,12 +223,14 @@ export function paceLabel(pace, delta) {
           : pace === "above_pace"
             ? "Above pace"
             : "Over budget";
+  let label = base;
   if (
     delta != null &&
     (pace === "under_budget" || pace === "over_budget" || pace === "above_pace")
   )
-    return `${base} (${formatAmount(delta, { decimals: 0, sign: true })})`;
-  return base;
+    label = `${base} (${formatAmount(delta, { decimals: 0, sign: true })})`;
+  if (seasonalFactor != null) label += " (seasonal)";
+  return label;
 }
 
 export function paceColor(pace) {

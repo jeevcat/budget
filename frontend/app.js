@@ -433,6 +433,15 @@ function NetSummary({ ledger }) {
   `;
 }
 
+function TrendArrow({ trend_monthly, budget_amount }) {
+  if (trend_monthly == null || !budget_amount) return null;
+  const annual = trend_monthly * 12;
+  if (Math.abs(trend_monthly) < Number(budget_amount) * 0.02) return null;
+  const arrow = annual > 0 ? "\u2197" : "\u2198";
+  const label = `Trending ${annual > 0 ? "up" : "down"} ~${formatAmount(Math.abs(annual), { decimals: 0 })}/yr`;
+  return html`<span class="trend-arrow" title=${label}>${arrow}</span>`;
+}
+
 function Ledger({
   items,
   ledger,
@@ -505,12 +514,13 @@ function Ledger({
             <div
               class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
               key=${s.category_id}
-              title="${paceLabel(s.pace, s.pace_delta)}"
+              title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
               onClick=${() => onCategoryClick?.(s.category_id)}
             >
               <span class="ledger-row-name">
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
+                <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
               </span>
               <${BudgetBar}
                 pace=${s.pace}
@@ -553,7 +563,7 @@ function Ledger({
                 <div
                   class="ledger-fixed-item${s.pace === "over_budget" ? " ledger-fixed-over" : ""}${s.pace === "pending" ? " ledger-fixed-pending" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
                   key=${s.category_id}
-                  title="${paceLabel(s.pace, s.pace_delta)}"
+                  title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
                   onClick=${() => onCategoryClick?.(s.category_id)}
                 >
                   <${FixedStatusIcon} pace=${s.pace} />
@@ -668,7 +678,7 @@ function BudgetSection({
           <div
             class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
             key=${s.category_id}
-            title="${paceLabel(s.pace, s.pace_delta)}"
+            title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
             onClick=${() => onCategoryClick?.(s.category_id)}
           >
             <span class="ledger-row-name">
@@ -683,6 +693,7 @@ function BudgetSection({
                 s.project_start_date &&
                 html` <span class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
               }
+              <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
             </span>
             <${BudgetBar}
               pace=${s.pace}
@@ -786,7 +797,7 @@ function ProjectDrillDown({
       <article class="card proj-stat-card">
         <span class="proj-stat-label text-light">Status</span>
         <span class="proj-stat-value">
-          <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace, project.pace_delta)}</span>
+          <span class="badge small ${paceBadge(project.pace)}">${paceLabel(project.pace, project.pace_delta, null)}</span>
         </span>
       </article>
     </div>
@@ -1234,7 +1245,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
                         <div
                           class="hstack clickable-row clickable-item${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
                           key=${s.category_id}
-                          title="${paceLabel(s.pace, s.pace_delta)}"
+                          title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
                           onClick=${() => handleProjectClick?.(s.category_id)}
                         >
                           <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
@@ -1255,7 +1266,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
                             </div>
                           </div>
                           <div class="vstack" style="align-items:flex-end;gap:0.15rem;white-space:nowrap">
-                            <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta)}</span>
+                            <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}</span>
                             <span class="text-body" style="${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
                               ${formatAmount(s.remaining, { decimals: 0, sign: true })}
                             </span>
