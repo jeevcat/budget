@@ -50,6 +50,25 @@ impl Db {
         rows.iter().map(row_to_balance_snapshot).collect()
     }
 
+    /// List all balance snapshots across all accounts, oldest first.
+    ///
+    /// Used for time series construction (net worth projection).
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn list_all_balance_snapshots(&self) -> Result<Vec<BalanceSnapshot>, DbError> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT id, account_id, current_balance, available_balance, currency, snapshot_at
+             FROM balance_snapshots
+             ORDER BY snapshot_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+        rows.iter().map(row_to_balance_snapshot).collect()
+    }
+
     /// Get the most recent balance snapshot per account.
     ///
     /// Uses `DISTINCT ON` to return one row per account, ordered by
@@ -163,6 +182,45 @@ mod tests {
             .await
             .expect("list");
         assert_eq!(snapshots.len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn list_all_snapshots_ordered_by_time(pool: PgPool) {
+        let db = setup_db(pool).await;
+
+        let a1 = seed_account_model();
+        db.upsert_account(&a1).await.expect("seed a1");
+
+        let mut a2 = seed_account_model();
+        a2.provider_account_id = "test-002".to_owned();
+        a2.name = "Savings".to_owned();
+        db.upsert_account(&a2).await.expect("seed a2");
+
+        let now = Utc::now();
+        for (aid, amount, offset_secs) in [
+            (a1.id, dec!(100.00), 0),
+            (a2.id, dec!(500.00), 30),
+            (a1.id, dec!(200.00), 60),
+        ] {
+            let s = BalanceSnapshot {
+                id: BalanceSnapshotId::new(),
+                account_id: aid,
+                current: amount,
+                available: None,
+                currency: "EUR".parse().expect("valid"),
+                snapshot_at: now + chrono::Duration::seconds(offset_secs),
+            };
+            db.insert_balance_snapshot(&s).await.expect("insert");
+        }
+
+        let all = db.list_all_balance_snapshots().await.expect("list all");
+        assert_eq!(all.len(), 3);
+        // Oldest first
+        assert_eq!(all[0].current, dec!(100.00));
+        assert_eq!(all[1].current, dec!(500.00));
+        assert_eq!(all[2].current, dec!(200.00));
+        // Multiple accounts present
+        assert_ne!(all[0].account_id, all[1].account_id);
     }
 
     #[sqlx::test]

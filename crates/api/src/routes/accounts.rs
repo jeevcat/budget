@@ -10,6 +10,7 @@ use budget_core::models::{
     Account, AccountId, AccountOrigin, AccountType, BalanceSnapshot, BalanceSnapshotId,
     CurrencyCode,
 };
+use budget_core::projection::{self, ForecastPoint, NetWorthPoint};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -43,6 +44,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
         .route("/net-worth", get(net_worth))
+        .route("/net-worth/projection", get(net_worth_projection))
         .route("/{id}", get(get_by_id).patch(update_nickname))
         .route("/{id}/balances", get(list_balances).post(create_balance))
 }
@@ -216,6 +218,59 @@ async fn net_worth(State(state): State<AppState>) -> Result<Json<NetWorth>, AppE
         currency,
         accounts,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Net worth projection
+// ---------------------------------------------------------------------------
+
+/// Query parameters for net worth projection.
+#[derive(Deserialize)]
+pub struct ProjectionParams {
+    /// Forecast horizon in months (default 12, max 24).
+    pub months: Option<u32>,
+    /// Confidence interval width, 0.0–1.0 (default 0.8).
+    pub interval_width: Option<f64>,
+}
+
+/// Response body for net worth projection.
+#[derive(Serialize)]
+struct ProjectionResponse {
+    history: Vec<NetWorthPoint>,
+    forecast: Vec<ForecastPoint>,
+    message: Option<String>,
+}
+
+/// Project net worth forward using Prophet.
+///
+/// Returns historical daily series plus forecasted values with confidence
+/// bands. When insufficient data exists, returns empty arrays with an
+/// explanatory message rather than an error status.
+///
+/// # Errors
+///
+/// Returns `AppError` if the database query fails.
+async fn net_worth_projection(
+    State(state): State<AppState>,
+    Query(params): Query<ProjectionParams>,
+) -> Result<Json<ProjectionResponse>, AppError> {
+    let months = params.months.unwrap_or(12).min(24);
+    let interval_width = params.interval_width.unwrap_or(0.8).clamp(0.0, 1.0);
+
+    let snapshots = state.db.list_all_balance_snapshots().await?;
+
+    match projection::project_net_worth(&snapshots, months, interval_width) {
+        Ok(proj) => Ok(Json(ProjectionResponse {
+            history: proj.history,
+            forecast: proj.forecast,
+            message: None,
+        })),
+        Err(e) => Ok(Json(ProjectionResponse {
+            history: Vec::new(),
+            forecast: Vec::new(),
+            message: Some(e.to_string()),
+        })),
+    }
 }
 
 // ---------------------------------------------------------------------------

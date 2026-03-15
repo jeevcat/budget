@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub mod budget;
 pub mod error;
 pub mod models;
+pub mod projection;
 pub mod rules;
 
 use models::{CurrencyCode, DatabaseUrl, Host, SecretKey};
