@@ -122,6 +122,18 @@ export function categoryBudgetMode(catMap, id) {
   return null;
 }
 
+export function categoryBudgetType(catMap, id) {
+  if (!id) return null;
+  const cat = catMap[id];
+  if (!cat) return null;
+  if (cat.budget_type) return cat.budget_type;
+  if (cat.parent_id) {
+    const parent = catMap[cat.parent_id];
+    return parent?.budget_type ?? null;
+  }
+  return null;
+}
+
 export function budgetModeColor(mode) {
   if (mode === "monthly") return "cat-monthly";
   if (mode === "annual") return "cat-annual";

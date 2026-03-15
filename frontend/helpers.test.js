@@ -6,6 +6,7 @@ import {
   buildCategoryTree,
   cardCounts,
   categoryBudgetMode,
+  categoryBudgetType,
   categoryLabel,
   categoryName,
   categoryQualifiedName,
@@ -196,6 +197,34 @@ describe("categoryBudgetMode", () => {
 
   test("returns null for no id", () => {
     expect(categoryBudgetMode({}, null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// categoryBudgetType
+// ---------------------------------------------------------------------------
+
+describe("categoryBudgetType", () => {
+  test("returns own budget_type", () => {
+    const catMap = { 1: { budget_type: "fixed" } };
+    expect(categoryBudgetType(catMap, 1)).toBe("fixed");
+  });
+
+  test("inherits from parent", () => {
+    const catMap = {
+      1: { budget_type: "fixed" },
+      2: { parent_id: 1, budget_type: null },
+    };
+    expect(categoryBudgetType(catMap, 2)).toBe("fixed");
+  });
+
+  test("returns null for no id", () => {
+    expect(categoryBudgetType({}, null)).toBeNull();
+  });
+
+  test("returns null when not set", () => {
+    const catMap = { 1: {} };
+    expect(categoryBudgetType(catMap, 1)).toBeNull();
   });
 });
 

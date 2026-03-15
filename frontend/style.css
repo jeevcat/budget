@@ -551,6 +551,59 @@ dialog > form > div {
   outline: 1.5px solid var(--primary);
   outline-offset: -1.5px;
 }
+.ledger-fixed-label {
+  font-size: var(--text-8);
+  padding: 0.5rem 0.35rem 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ledger-fixed-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+.ledger-fixed-item {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--text-7);
+}
+.ledger-fixed-item:hover {
+  background: var(--muted);
+}
+.ledger-fixed-pending {
+  opacity: 0.55;
+}
+.ledger-fixed-over {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.ledger-fixed-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ledger-fixed-amount {
+  font-family: var(--font-mono);
+  font-size: var(--text-8);
+  text-align: right;
+  white-space: nowrap;
+}
+.ledger-fixed-over .ledger-fixed-amount {
+  color: var(--danger);
+}
+.fixed-status-icon {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .ledger-fixed-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .ledger-divider {
   border-top: 1px dashed var(--border);
   margin: 0.35rem 0;

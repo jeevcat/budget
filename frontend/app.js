@@ -14,6 +14,7 @@ import {
   buildCategoryTree,
   cardCounts,
   categoryBudgetMode,
+  categoryBudgetType,
   categoryLabel,
   categoryName,
   categoryQualifiedName,
@@ -379,6 +380,37 @@ function BudgetBar({ pace, fillPct, markPct }) {
   `;
 }
 
+function FixedStatusIcon({ pace }) {
+  const size = 16;
+  const r = 6;
+  const cx = size / 2;
+  const cy = size / 2;
+  if (pace === "pending") {
+    return html`
+      <svg width=${size} height=${size} viewBox="0 0 ${size} ${size}" class="fixed-status-icon">
+        <circle cx=${cx} cy=${cy} r=${r}
+          fill="none" stroke="var(--text-light)" stroke-width="1.5"
+          stroke-dasharray="3 2.5" opacity="0.7" />
+      </svg>
+    `;
+  }
+  if (pace === "over_budget") {
+    return html`
+      <svg width=${size} height=${size} viewBox="0 0 ${size} ${size}" class="fixed-status-icon">
+        <circle cx=${cx} cy=${cy} r=${r} fill="var(--danger)" opacity="0.85" />
+        <line x1="5.5" y1="5.5" x2="10.5" y2="10.5" stroke="white" stroke-width="1.5" stroke-linecap="round" />
+        <line x1="10.5" y1="5.5" x2="5.5" y2="10.5" stroke="white" stroke-width="1.5" stroke-linecap="round" />
+      </svg>
+    `;
+  }
+  return html`
+    <svg width=${size} height=${size} viewBox="0 0 ${size} ${size}" class="fixed-status-icon">
+      <circle cx=${cx} cy=${cy} r=${r} fill="var(--primary)" opacity="0.85" />
+      <polyline points="5.5,8 7.5,10 11,5.5" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `;
+}
+
 function NetSummary({ ledger }) {
   if (!ledger) return null;
   const net = Number(ledger.net);
@@ -446,21 +478,29 @@ function Ledger({
       <!-- OUT -->
       <div class="ledger-section">
         <div class="ledger-section-label text-light">Out</div>
-        ${
-          items.length > 0 &&
-          html`
-          <div class="ledger-col-headers">
-            <span>Name</span>
-            <span></span>
-            <span>Budget</span>
-            <span>Spent</span>
-            <span style="text-align:right">\u0394</span>
-          </div>
-        `
-        }
-        ${items
-          .filter((s) => Number(s.spent) !== 0)
-          .map(
+        ${(() => {
+          const variableItems = items.filter((s) => s.budgetType !== "fixed");
+          const fixedItems = items.filter((s) => s.budgetType === "fixed");
+          const variableWithSpend = variableItems.filter(
+            (s) => Number(s.spent) !== 0,
+          );
+          const variableZeroSpend = variableItems.filter(
+            (s) => Number(s.spent) === 0,
+          );
+          return html`
+          ${
+            variableWithSpend.length > 0 &&
+            html`
+            <div class="ledger-col-headers">
+              <span>Name</span>
+              <span></span>
+              <span>Budget</span>
+              <span>Spent</span>
+              <span style="text-align:right">\u0394</span>
+            </div>
+          `
+          }
+          ${variableWithSpend.map(
             (s) => html`
             <div
               class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
@@ -483,14 +523,11 @@ function Ledger({
             </div>
           `,
           )}
-
-        ${
-          items.filter((s) => Number(s.spent) === 0).length > 0 &&
-          html`
-          <div class="ledger-zero-spend">
-            ${items
-              .filter((s) => Number(s.spent) === 0)
-              .map(
+          ${
+            variableZeroSpend.length > 0 &&
+            html`
+            <div class="ledger-zero-spend">
+              ${variableZeroSpend.map(
                 (s) => html`
                 <span
                   class="ledger-zero-chip${selectedCategoryId === s.category_id ? " ledger-zero-chip-selected" : ""}"
@@ -503,9 +540,36 @@ function Ledger({
                 </span>
               `,
               )}
-          </div>
-        `
-        }
+            </div>
+          `
+          }
+          ${
+            fixedItems.length > 0 &&
+            html`
+            <div class="ledger-fixed-label text-light">Fixed</div>
+            <div class="ledger-fixed-grid">
+              ${fixedItems.map(
+                (s) => html`
+                <div
+                  class="ledger-fixed-item${s.pace === "over_budget" ? " ledger-fixed-over" : ""}${s.pace === "pending" ? " ledger-fixed-pending" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+                  key=${s.category_id}
+                  title="${paceLabel(s.pace, s.pace_delta)}"
+                  onClick=${() => onCategoryClick?.(s.category_id)}
+                >
+                  <${FixedStatusIcon} pace=${s.pace} />
+                  <span class="ledger-fixed-name">${s.shortName}</span>
+                  <span class="ledger-fixed-amount">${formatAmount(
+                    Number(s.spent) !== 0 ? s.spent : s.budget_amount,
+                    { decimals: 0 },
+                  )}</span>
+                </div>
+              `,
+              )}
+            </div>
+          `
+          }
+          `;
+        })()}
 
         ${
           ledger.unbudgeted.length > 0 &&
@@ -876,6 +940,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       shortName: label?.short ?? s.category_name,
       parentName: label?.parent ?? null,
       budgetMode: cat?.budget_mode ?? null,
+      budgetType: categoryBudgetType(catMap, s.category_id),
     };
   };
 
