@@ -1,5 +1,6 @@
 mod accounts;
 mod amazon;
+mod balances;
 mod categories;
 mod connections;
 mod error;
@@ -15,10 +16,10 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use budget_core::models::{
-    Account, AccountOrigin, AccountType, BudgetConfig, BudgetMode, BudgetType, Categorization,
-    Category, CategoryId, CategoryMethod, Connection, ConnectionId, ConnectionStatus, Correlation,
-    CorrelationType, ExchangeRateType, ReferenceNumberSchema, Rule, RuleCondition, RuleTarget,
-    Transaction, TransactionId,
+    Account, AccountOrigin, AccountType, BalanceSnapshot, BudgetConfig, BudgetMode, BudgetType,
+    Categorization, Category, CategoryId, CategoryMethod, Connection, ConnectionId,
+    ConnectionStatus, Correlation, CorrelationType, ExchangeRateType, ReferenceNumberSchema, Rule,
+    RuleCondition, RuleTarget, Transaction, TransactionId,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,6 +68,17 @@ fn row_to_account(row: &PgRow) -> Result<Account, DbError> {
             Some(id) => AccountOrigin::Connected(id),
             None => AccountOrigin::Manual,
         },
+    })
+}
+
+fn row_to_balance_snapshot(row: &PgRow) -> Result<BalanceSnapshot, DbError> {
+    Ok(BalanceSnapshot {
+        id: row.try_get("id")?,
+        account_id: row.try_get("account_id")?,
+        current: row.try_get("current_balance")?,
+        available: row.try_get("available_balance")?,
+        currency: row.try_get("currency")?,
+        snapshot_at: row.try_get("snapshot_at")?,
     })
 }
 

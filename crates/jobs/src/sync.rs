@@ -3,9 +3,12 @@
 
 use apalis::prelude::*;
 
+use chrono::Utc;
+
 use budget_core::models::{
-    AccountId, AccountOrigin, Bic, ConnectionStatus, CurrencyCode, DomainCode, ExchangeRateType,
-    Iban, MerchantCategoryCode, ReferenceNumberSchema, SubFamilyCode, Transaction,
+    AccountId, AccountOrigin, BalanceSnapshot, BalanceSnapshotId, Bic, ConnectionStatus,
+    CurrencyCode, DomainCode, ExchangeRateType, Iban, MerchantCategoryCode, ReferenceNumberSchema,
+    SubFamilyCode, Transaction,
 };
 use budget_db::Db;
 
@@ -174,6 +177,25 @@ pub(crate) async fn sync_account(
     let provider_txns = bank.fetch_transactions(&provider_account_id, since).await?;
 
     let result = import_provider_transactions(account.id, &provider_txns, db).await?;
+
+    // Best-effort balance snapshot — failure does not block transaction import
+    match bank.get_balances(&provider_account_id).await {
+        Ok(balance) => {
+            let snapshot = BalanceSnapshot {
+                id: BalanceSnapshotId::new(),
+                account_id: account.id,
+                current: balance.current,
+                available: Some(balance.available),
+                currency: try_parse::<CurrencyCode, _>(&balance.currency, "balance_currency")
+                    .unwrap_or_else(|| account.currency.clone()),
+                snapshot_at: Utc::now(),
+            };
+            if let Err(e) = db.insert_balance_snapshot(&snapshot).await {
+                tracing::warn!(%e, "failed to store balance snapshot");
+            }
+        }
+        Err(e) => tracing::warn!(%e, "failed to fetch balance"),
+    }
 
     if !result.failed.is_empty() {
         let count = result.imported + result.failed.len();

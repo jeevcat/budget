@@ -1,10 +1,15 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::Deserialize;
 
-use budget_core::models::{Account, AccountId, AccountOrigin, AccountType, CurrencyCode};
+use budget_core::models::{
+    Account, AccountId, AccountOrigin, AccountType, BalanceSnapshot, BalanceSnapshotId,
+    CurrencyCode,
+};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -38,6 +43,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
         .route("/{id}", get(get_by_id).patch(update_nickname))
+        .route("/{id}/balances", get(list_balances).post(create_balance))
 }
 
 /// List all accounts.
@@ -134,6 +140,68 @@ async fn update_nickname(
     })?;
 
     Ok(Json(updated))
+}
+
+// ---------------------------------------------------------------------------
+// Balance snapshot endpoints
+// ---------------------------------------------------------------------------
+
+/// Request body for creating a manual balance snapshot.
+#[derive(Deserialize)]
+pub struct CreateBalanceSnapshot {
+    pub current: Decimal,
+    pub available: Option<Decimal>,
+    pub currency: Option<CurrencyCode>,
+    pub snapshot_at: Option<DateTime<Utc>>,
+}
+
+/// Query parameters for listing balance snapshots.
+#[derive(Deserialize)]
+pub struct ListBalancesParams {
+    pub limit: Option<i64>,
+}
+
+/// Create a manual balance snapshot for an account.
+///
+/// # Errors
+///
+/// Returns 404 if the account does not exist.
+async fn create_balance(
+    State(state): State<AppState>,
+    Path(id): Path<AccountId>,
+    Json(body): Json<CreateBalanceSnapshot>,
+) -> Result<(StatusCode, Json<BalanceSnapshot>), AppError> {
+    let account = state
+        .db
+        .get_account(id)
+        .await?
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("account {id} not found")))?;
+
+    let snapshot = BalanceSnapshot {
+        id: BalanceSnapshotId::new(),
+        account_id: account.id,
+        current: body.current,
+        available: body.available,
+        currency: body.currency.unwrap_or(account.currency),
+        snapshot_at: body.snapshot_at.unwrap_or_else(Utc::now),
+    };
+
+    state.db.insert_balance_snapshot(&snapshot).await?;
+    Ok((StatusCode::CREATED, Json(snapshot)))
+}
+
+/// List balance snapshots for an account, newest first.
+///
+/// # Errors
+///
+/// Returns `AppError` if the database query fails.
+async fn list_balances(
+    State(state): State<AppState>,
+    Path(id): Path<AccountId>,
+    Query(params): Query<ListBalancesParams>,
+) -> Result<Json<Vec<BalanceSnapshot>>, AppError> {
+    let snapshots = state.db.list_balance_snapshots(id, params.limit).await?;
+    Ok(Json(snapshots))
 }
 
 #[cfg(test)]

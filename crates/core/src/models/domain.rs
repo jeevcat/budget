@@ -9,7 +9,8 @@ use super::enums::{
     MatchField, PaceIndicator, RuleType,
 };
 use super::id::{
-    AccountId, AmazonAccountId, BudgetMonthId, CategoryId, ConnectionId, RuleId, TransactionId,
+    AccountId, AmazonAccountId, BalanceSnapshotId, BudgetMonthId, CategoryId, ConnectionId, RuleId,
+    TransactionId,
 };
 use super::newtypes::{
     Bic, CurrencyCode, DomainCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
@@ -840,6 +841,22 @@ pub struct BudgetStatus {
     /// Positive = over pace, negative = under pace.
     pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
+}
+
+/// Point-in-time balance snapshot for an account.
+///
+/// Captured automatically during bank sync or entered manually for accounts
+/// without bank connections (brokerage, pension, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceSnapshot {
+    pub id: BalanceSnapshotId,
+    pub account_id: AccountId,
+    /// Booked (current) balance.
+    pub current: Decimal,
+    /// Available balance — nullable for manual entries that only have one figure.
+    pub available: Option<Decimal>,
+    pub currency: CurrencyCode,
+    pub snapshot_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

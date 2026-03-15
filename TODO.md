@@ -13,10 +13,6 @@
 
 ## Insights & Analytics
 
-### Prerequisites
-- [ ] **Balance snapshots**: New `balance_snapshots` table storing (account_id, balance, currency, timestamp). Call `get_balances()` during each bank sync to populate automatically
-- [ ] **Manual accounts with balance entry**: Extend manual accounts to support hand-entered balance snapshots for accounts without bank connections (e.g. brokerage, pension, depository). UI for entering "this account is worth €X today"
-
 ### Features
 - [ ] **Net worth projection**: Sum balance snapshots across all accounts over time, forecast 6-12 months forward using Prophet (augurs-prophet with wasmstan). Show confidence bands. Depends on balance snapshots prerequisite
 - [ ] **Budget burndown charts**: Daily cumulative spend curve for variable-mode categories with predicted end-of-month landing. Overlay 3 previous months as ghost lines for comparison. Lives on insights page as drill-down from dashboard categories

@@ -1404,3 +1404,96 @@ async fn connections_callback_is_unauthenticated(pool: PgPool) {
         "callback must be unauthenticated"
     );
 }
+
+// ===========================================================================
+// Balance Snapshots
+// ===========================================================================
+
+#[sqlx::test]
+async fn balance_snapshot_create_and_list(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    // Seed an account
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "bal-test-001".to_owned(),
+        name: "Balance Test".to_owned(),
+        nickname: None,
+        institution: "Test Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        origin: AccountOrigin::Manual,
+    };
+    db.upsert_account(&account).await.expect("seed account");
+
+    let uri = format!("/api/accounts/{}/balances", account.id);
+
+    // POST a manual balance snapshot (Decimal uses serde-str)
+    let payload = serde_json::json!({
+        "current": "1500.50",
+        "available": "1400.00",
+        "currency": "EUR"
+    });
+    let (status, body) = send(app.clone(), post_json(&uri, &payload)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let snapshot: budget_core::models::BalanceSnapshot =
+        serde_json::from_slice(&body).expect("parse snapshot");
+    assert_eq!(snapshot.account_id, account.id);
+
+    // POST a second snapshot without optional fields
+    let payload2 = serde_json::json!({ "current": "2000" });
+    let (status2, _) = send(app.clone(), post_json(&uri, &payload2)).await;
+    assert_eq!(status2, StatusCode::CREATED);
+
+    // GET the list
+    let (status3, body3) = send(app.clone(), get(&uri)).await;
+    assert_eq!(status3, StatusCode::OK);
+    let snapshots: Vec<budget_core::models::BalanceSnapshot> =
+        serde_json::from_slice(&body3).expect("parse list");
+    assert_eq!(snapshots.len(), 2);
+    // Newest first
+    assert_eq!(snapshots[0].current, rust_decimal::Decimal::new(2000, 0));
+}
+
+#[sqlx::test]
+async fn balance_snapshot_404_for_missing_account(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = AccountId::new();
+    let uri = format!("/api/accounts/{fake_id}/balances");
+    let payload = serde_json::json!({ "current": "100" });
+    let (status, _) = send(app, post_json(&uri, &payload)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn balance_snapshot_list_with_limit(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = Account {
+        id: AccountId::new(),
+        provider_account_id: "bal-limit-001".to_owned(),
+        name: "Limit Test".to_owned(),
+        nickname: None,
+        institution: "Test Bank".to_owned(),
+        account_type: AccountType::Savings,
+        currency: CurrencyCode::new("USD").unwrap(),
+        origin: AccountOrigin::Manual,
+    };
+    db.upsert_account(&account).await.expect("seed account");
+
+    let uri = format!("/api/accounts/{}/balances", account.id);
+
+    // Insert 3 snapshots
+    for amount in ["100", "200", "300"] {
+        let payload = serde_json::json!({ "current": amount });
+        let (status, _) = send(app.clone(), post_json(&uri, &payload)).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    // GET with limit=2
+    let (status, body) = send(app.clone(), get(&format!("{uri}?limit=2"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let snapshots: Vec<budget_core::models::BalanceSnapshot> =
+        serde_json::from_slice(&body).expect("parse list");
+    assert_eq!(snapshots.len(), 2);
+}

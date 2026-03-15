@@ -880,3 +880,39 @@ async fn correlate_already_paired_not_correlated_again(pool: PgPool) {
         "txn_c has no matching counterpart; should remain uncorrelated"
     );
 }
+
+// ===========================================================================
+// Balance snapshot tests (sync captures balances)
+// ===========================================================================
+
+#[sqlx::test]
+async fn sync_captures_balance_snapshot(pool: PgPool) {
+    let (db, _pool) = setup_db(pool).await;
+    let account = seed_checking_account(&db).await;
+    let bank = make_bank_factory();
+
+    let job = SyncJob {
+        account_id: account.id,
+    };
+
+    handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
+        .await
+        .expect("sync job should succeed");
+
+    let snapshots = db
+        .list_balance_snapshots(account.id, None)
+        .await
+        .expect("list snapshots");
+
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "sync should capture one balance snapshot"
+    );
+
+    let snapshot = &snapshots[0];
+    assert_eq!(snapshot.account_id, account.id);
+    // MockBankProvider returns 4250.00 for checking
+    assert_eq!(snapshot.current, dec!(4250.00));
+    assert_eq!(snapshot.available, Some(dec!(4250.00)));
+}

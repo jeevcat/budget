@@ -217,6 +217,18 @@ impl BankClient {
             .fetch_transactions_erased(account_id, since)
             .await
     }
+
+    /// Fetch the current balance for an account.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`ProviderError`] from the underlying provider.
+    pub async fn get_balances(
+        &self,
+        account_id: &budget_providers::AccountId,
+    ) -> Result<budget_providers::AccountBalance, ProviderError> {
+        self.inner.get_balances_erased(account_id).await
+    }
 }
 
 // Manual dyn-compatible mirror of the subset of `BankProvider` used by jobs.
@@ -226,6 +238,11 @@ trait ErasedBankProvider {
         account_id: &'a budget_providers::AccountId,
         since: Option<NaiveDate>,
     ) -> BoxFuture<'a, Result<Vec<budget_providers::Transaction>, ProviderError>>;
+
+    fn get_balances_erased<'a>(
+        &'a self,
+        account_id: &'a budget_providers::AccountId,
+    ) -> BoxFuture<'a, Result<budget_providers::AccountBalance, ProviderError>>;
 }
 
 impl<T: budget_providers::BankProvider + Sync> ErasedBankProvider for T {
@@ -235,6 +252,13 @@ impl<T: budget_providers::BankProvider + Sync> ErasedBankProvider for T {
         since: Option<NaiveDate>,
     ) -> BoxFuture<'a, Result<Vec<budget_providers::Transaction>, ProviderError>> {
         Box::pin(self.fetch_transactions(account_id, since))
+    }
+
+    fn get_balances_erased<'a>(
+        &'a self,
+        account_id: &'a budget_providers::AccountId,
+    ) -> BoxFuture<'a, Result<budget_providers::AccountBalance, ProviderError>> {
+        Box::pin(self.get_balances(account_id))
     }
 }
 
