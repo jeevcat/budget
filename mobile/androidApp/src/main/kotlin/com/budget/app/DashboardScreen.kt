@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -73,13 +75,13 @@ private const val FINISHED_ALPHA = 0.5f
 
 // -- Pace colors -----------------------------------------------------------
 
-private val PendingColor = Color(0xFF938AA9)
-private val UnderBudgetColor = Color(0xFF76946A)
-private val OnTrackColor = Color(0xFF7E9CD8)
-private val AbovePaceColor = Color(0xFFDCA561)
-private val OverBudgetColor = Color(0xFFC34043)
+internal val PendingColor = Color(0xFF938AA9)
+internal val UnderBudgetColor = Color(0xFF76946A)
+internal val OnTrackColor = Color(0xFF7E9CD8)
+internal val AbovePaceColor = Color(0xFFDCA561)
+internal val OverBudgetColor = Color(0xFFC34043)
 
-private fun paceColor(pace: PaceIndicator): Color =
+internal fun paceColor(pace: PaceIndicator): Color =
     when (pace) {
       PaceIndicator.PENDING -> PendingColor
       PaceIndicator.UNDER_BUDGET -> UnderBudgetColor
@@ -88,7 +90,7 @@ private fun paceColor(pace: PaceIndicator): Color =
       PaceIndicator.OVER_BUDGET -> OverBudgetColor
     }
 
-private fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
+internal fun paceLabel(pace: PaceIndicator, delta: Double? = null): String {
   val base =
       when (pace) {
         PaceIndicator.PENDING -> "Pending"
@@ -139,6 +141,22 @@ fun DashboardContent(
   val selectedCategoryId = state.selectedCategoryId
   if (selectedCategoryId != null) {
     BackHandler { viewModel.selectCategory(null) }
+
+    // Project drill-down: if a project with children is selected, show breakdown
+    if (state.selectedTab == BudgetMode.PROJECT) {
+      val project = state.projects.find { it.categoryId == selectedCategoryId }
+      if (project != null && project.hasChildren && project.children.isNotEmpty()) {
+        ProjectDrillDownContent(
+            project = project,
+            transactions = resolveTransactions(state, selectedCategoryId),
+            onTransactionClick = onTransactionClick,
+            onBack = { viewModel.selectCategory(null) },
+            modifier = modifier,
+        )
+        return
+      }
+    }
+
     CategoryTransactionsContent(
         state = state,
         categoryId = selectedCategoryId,
@@ -274,6 +292,7 @@ private fun LazyListScope.annualTabContent(
       selectedCategoryId = state.selectedCategoryId,
       onCategoryClick = { viewModel.selectCategory(it) },
       onCashFlowItemClick = { viewModel.selectCashFlowItem(it) },
+      onMonthlyBudgetsClick = { viewModel.selectTab(BudgetMode.MONTHLY) },
   )
 }
 
@@ -458,7 +477,7 @@ private fun SummaryCards(summary: BudgetSummary) {
 }
 
 @Composable
-private fun StatCard(
+internal fun StatCard(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
@@ -766,7 +785,6 @@ private fun CategoryTransactionsContent(
   val info = resolveCategoryInfo(state, categoryId)
   val transactions = resolveTransactions(state, categoryId)
   val status = resolveBudgetStatus(state, categoryId)
-  val hasChildren = status?.hasChildren == true
   LazyColumn(
       modifier = modifier.fillMaxSize(),
       contentPadding =
@@ -807,7 +825,7 @@ private fun CategoryTransactionsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-    } else if (hasChildren && status != null) {
+    } else if (status != null && status.hasChildren) {
       subcategoryTransactionSections(
           transactions = transactions,
           children = status.children,

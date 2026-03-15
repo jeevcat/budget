@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,8 +17,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,6 +33,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.budget.shared.api.BudgetStatus
@@ -36,31 +42,88 @@ import com.budget.shared.api.LedgerSummary
 import com.budget.shared.api.PaceIndicator
 import kotlin.math.abs
 
-// Pace colors matching DashboardScreen
-private val PendingColor = Color(0xFF938AA9)
-private val UnderBudgetColor = Color(0xFF76946A)
-private val OnTrackColor = Color(0xFF7E9CD8)
-private val AbovePaceColor = Color(0xFFDCA561)
-private val OverBudgetColor = Color(0xFFC34043)
+// -- Net summary strip -------------------------------------------------------
 
-private fun paceColor(pace: PaceIndicator): Color =
-    when (pace) {
-      PaceIndicator.PENDING -> PendingColor
-      PaceIndicator.UNDER_BUDGET -> UnderBudgetColor
-      PaceIndicator.ON_TRACK -> OnTrackColor
-      PaceIndicator.ABOVE_PACE -> AbovePaceColor
-      PaceIndicator.OVER_BUDGET -> OverBudgetColor
+@Composable
+fun NetSummaryStrip(ledger: LedgerSummary) {
+  Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    OutlinedCard(modifier = Modifier.weight(1f)) {
+      Column(
+          modifier = Modifier.padding(12.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Text(
+            text = "In",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = formatAmount(ledger.totalIn),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = UnderBudgetColor,
+        )
+      }
     }
+    OutlinedCard(modifier = Modifier.weight(1f)) {
+      Column(
+          modifier = Modifier.padding(12.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Text(
+            text = "Net",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = formatAmount(ledger.net, showSign = true),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (ledger.net < 0) OverBudgetColor else UnderBudgetColor,
+        )
+      }
+    }
+    OutlinedCard(modifier = Modifier.weight(1f)) {
+      Column(
+          modifier = Modifier.padding(12.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Text(
+            text = "Out",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = formatAmount(ledger.totalOut),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = OverBudgetColor,
+        )
+      }
+    }
+  }
+}
 
 // -- Ledger content for LazyColumn -----------------------------------------
 
+@OptIn(ExperimentalLayoutApi::class)
 fun LazyListScope.ledgerContent(
     ledger: LedgerSummary,
     statuses: List<BudgetStatus>,
     selectedCategoryId: String?,
     onCategoryClick: (String) -> Unit,
     onCashFlowItemClick: (CashFlowItem) -> Unit,
+    onMonthlyBudgetsClick: (() -> Unit)? = null,
 ) {
+  // Net summary strip
+  item(key = "ledger-net-summary") { NetSummaryStrip(ledger = ledger) }
+
   // IN section
   if (ledger.income.isNotEmpty()) {
     item(key = "ledger-in-label") { LedgerSectionLabel(text = "IN") }
@@ -78,7 +141,14 @@ fun LazyListScope.ledgerContent(
 
   // OUT section
   item(key = "ledger-out-label") { LedgerSectionLabel(text = "OUT") }
-  items(statuses, key = { "ledger-out-${it.categoryId}" }) { status ->
+
+  // Column headers
+  item(key = "ledger-col-headers") { LedgerColumnHeaders() }
+
+  val withSpend = statuses.filter { it.spent != 0.0 }
+  val zeroSpend = statuses.filter { it.spent == 0.0 }
+
+  items(withSpend, key = { "ledger-out-${it.categoryId}" }) { status ->
     LedgerBudgetRow(
         status = status,
         barMax = ledger.barMax,
@@ -86,6 +156,42 @@ fun LazyListScope.ledgerContent(
         onClick = { onCategoryClick(status.categoryId) },
     )
   }
+
+  // Zero-spend chips
+  if (zeroSpend.isNotEmpty()) {
+    item(key = "ledger-zero-chips") {
+      FlowRow(
+          modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        zeroSpend.forEach { status ->
+          val color = paceColor(status.pace)
+          val isSelected = status.categoryId == selectedCategoryId
+          FilterChip(
+              selected = isSelected,
+              onClick = { onCategoryClick(status.categoryId) },
+              label = {
+                Text(
+                    text = status.categoryName,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+              },
+              leadingIcon = {
+                Canvas(modifier = Modifier.size(6.dp).clip(CircleShape)) {
+                  drawCircle(color = color)
+                }
+              },
+              colors =
+                  FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                  ),
+          )
+        }
+      }
+    }
+  }
+
   if (ledger.unbudgeted.isNotEmpty()) {
     item(key = "ledger-unbudgeted-divider") {
       HorizontalDivider(
@@ -97,6 +203,21 @@ fun LazyListScope.ledgerContent(
       LedgerUnbudgetedRow(item = item, onClick = { onCashFlowItemClick(item) })
     }
   }
+
+  // Monthly budgets row (annual ledger only)
+  if (onMonthlyBudgetsClick != null && ledger.monthlySpent > 0) {
+    item(key = "ledger-monthly-budgets") {
+      HorizontalDivider(
+          modifier = Modifier.padding(vertical = 4.dp),
+          color = MaterialTheme.colorScheme.outlineVariant,
+      )
+      LedgerMonthlyBudgetsRow(
+          ledger = ledger,
+          onClick = onMonthlyBudgetsClick,
+      )
+    }
+  }
+
   item(key = "ledger-out-subtotal") {
     LedgerSubtotalRow(
         label = "Total Out",
@@ -125,6 +246,52 @@ private fun LedgerSectionLabel(text: String) {
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
   )
+}
+
+// -- Column headers --------------------------------------------------------
+
+@Composable
+private fun LedgerColumnHeaders() {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp, horizontal = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    // Pace dot spacer
+    Spacer(modifier = Modifier.size(8.dp))
+
+    Text(
+        text = "Name",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.weight(1f),
+    )
+
+    // Bar spacer
+    Spacer(modifier = Modifier.widthIn(min = 48.dp, max = 80.dp))
+
+    Text(
+        text = "Budget",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+    )
+
+    Text(
+        text = "Spent",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+    )
+
+    Text(
+        text = "Δ",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+    )
+  }
+  HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 // -- Income row ------------------------------------------------------------
@@ -226,6 +393,49 @@ private fun LedgerBudgetRow(
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
         color = color,
+    )
+  }
+}
+
+// -- Monthly budgets row (annual ledger) -----------------------------------
+
+@Composable
+private fun LedgerMonthlyBudgetsRow(
+    ledger: LedgerSummary,
+    onClick: () -> Unit,
+) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .clickable(onClick = onClick)
+              .padding(vertical = 6.dp, horizontal = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Text(
+        text = "Monthly budgets",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.weight(1f),
+    )
+    Text(
+        text = formatAmount(ledger.monthlyBudget),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        text = formatAmount(ledger.monthlySpent),
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        text = formatAmount(ledger.monthlyRemaining, showSign = true),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color =
+            if (ledger.monthlyRemaining < 0) OverBudgetColor
+            else MaterialTheme.colorScheme.onSurfaceVariant,
     )
   }
 }

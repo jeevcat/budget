@@ -68,6 +68,9 @@ data class LedgerSummary(
     val net: Double,
     val saved: Double,
     @SerialName("bar_max") val barMax: Double,
+    @SerialName("monthly_budget") val monthlyBudget: Double = 0.0,
+    @SerialName("monthly_spent") val monthlySpent: Double = 0.0,
+    @SerialName("monthly_remaining") val monthlyRemaining: Double = 0.0,
 )
 
 @Serializable
