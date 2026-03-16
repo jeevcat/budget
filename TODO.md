@@ -17,9 +17,6 @@
 - [ ] **Account balance history**: Show expandable balance history per account on Connections page using `GET /accounts/{id}/balances`
 - [ ] **Manual balance recording**: Add "Record Balance" button for manual accounts (no auto-sync) on Connections page using `POST /accounts/{id}/balances`
 
-### Cleanup
-- [ ] **Delete `GET /transactions/uncategorized` endpoint**: Redundant — `GET /transactions?category_method=__none` achieves the same thing and is what the frontend actually uses
-
 ## Insights & Analytics
 
 ### Features

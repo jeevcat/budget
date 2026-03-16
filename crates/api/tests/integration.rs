@@ -316,59 +316,6 @@ async fn transactions_list_empty(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn transactions_uncategorized_returns_only_uncategorized(pool: PgPool) {
-    let (app, db) = setup(pool).await;
-
-    // Insert an account directly so we can reference it
-    let account = Account {
-        id: AccountId::new(),
-        provider_account_id: "prov-tx-1".to_owned(),
-        name: "Tx Test Account".to_owned(),
-        nickname: None,
-        institution: "Bank".to_owned(),
-        account_type: AccountType::Checking,
-        currency: CurrencyCode::new("USD").unwrap(),
-        origin: AccountOrigin::Manual,
-    };
-    db.upsert_account(&account).await.expect("account");
-
-    let category = make_category("Groceries");
-    db.insert_category(&category).await.expect("category");
-
-    // Insert one categorized and one uncategorized transaction
-    let mut txn_categorized = make_txn(account.id, "Grocery Store", 15);
-    txn_categorized.categorization = Categorization::Manual(category.id);
-    txn_categorized.amount = rust_decimal::Decimal::new(2500, 2);
-    txn_categorized.remittance_information = vec!["Weekly groceries".to_owned()];
-    db.upsert_transaction(&txn_categorized, Some("txn-cat-1"))
-        .await
-        .expect("insert categorized");
-
-    let mut txn_uncategorized = make_txn(account.id, "Coffee Shop", 16);
-    txn_uncategorized.remittance_information = vec!["Morning coffee".to_owned()];
-    db.upsert_transaction(&txn_uncategorized, Some("txn-uncat-1"))
-        .await
-        .expect("insert uncategorized");
-
-    // GET /uncategorized should return only the uncategorized one
-    let (status, body) = send(app.clone(), get("/api/transactions/uncategorized")).await;
-    assert_eq!(status, StatusCode::OK);
-
-    let txns: Vec<Transaction> = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(txns.len(), 1);
-    assert_eq!(txns[0].merchant_name, "Coffee Shop");
-    assert_eq!(txns[0].categorization, Categorization::Uncategorized);
-
-    // GET / should return both
-    let (status, body) = send(app, get("/api/transactions")).await;
-    assert_eq!(status, StatusCode::OK);
-
-    let page: TransactionPage = serde_json::from_slice(&body).expect("parse");
-    assert_eq!(page.items.len(), 2);
-    assert_eq!(page.total, 2);
-}
-
-#[sqlx::test]
 async fn transactions_categorize_success(pool: PgPool) {
     let (app, db) = setup(pool).await;
 

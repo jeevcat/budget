@@ -25,7 +25,6 @@ pub struct CategorizeRequest {
 ///
 /// Mounts:
 /// - `GET /` -- list all transactions
-/// - `GET /uncategorized` -- list uncategorized transactions
 /// - `GET /{id}` -- fetch a single transaction
 /// - `POST /{id}/categorize` -- assign a category to a transaction
 /// - `POST /{id}/generate-rule` -- generate rule proposals for a transaction
@@ -36,7 +35,6 @@ pub struct CategorizeRequest {
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
-        .routes(routes!(uncategorized))
         .routes(routes!(get_one))
         .routes(routes!(categorize, uncategorize))
         .routes(routes!(generate_rule))
@@ -174,17 +172,6 @@ async fn list(
         limit,
         offset,
     }))
-}
-
-/// List transactions that have not been assigned a category.
-///
-/// # Errors
-///
-/// Returns `AppError` if the database query fails.
-#[utoipa::path(get, path = "/uncategorized", tag = "transactions", responses((status = 200, body = Vec<Transaction>)), security(("bearer_token" = [])))]
-async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
-    let transactions = state.db.get_uncategorized_transactions().await?;
-    Ok(Json(transactions))
 }
 
 /// Fetch a single transaction by ID.

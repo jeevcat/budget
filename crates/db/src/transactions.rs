@@ -302,21 +302,6 @@ impl Db {
 
     /// Get transactions that have not yet been categorized.
     ///
-    /// # Errors
-    ///
-    /// Returns `DbError` if the query fails.
-    pub async fn get_uncategorized_transactions(&self) -> Result<Vec<Transaction>, DbError> {
-        let pool = &self.0;
-        let rows = sqlx::query(&format!(
-            "SELECT {TXN_COLUMNS}
-             FROM transactions
-             WHERE category_id IS NULL"
-        ))
-        .fetch_all(pool)
-        .await?;
-        rows.iter().map(row_to_transaction).collect()
-    }
-
     /// Get categorized transactions that have no correlation assigned.
     ///
     /// Useful for the correlation engine to find candidate transfers and

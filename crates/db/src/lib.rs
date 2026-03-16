@@ -488,27 +488,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    async fn test_get_uncategorized_transactions(pool: PgPool) {
-        let db = wrap(pool);
-        let acct = make_account();
-        db.upsert_account(&acct).await.unwrap();
-
-        let cat = make_category("Groceries");
-        db.insert_category(&cat).await.unwrap();
-
-        let txn_uncat = make_transaction(acct.id);
-        db.upsert_transaction(&txn_uncat, None).await.unwrap();
-
-        let mut txn_cat = make_transaction(acct.id);
-        txn_cat.categorization = Categorization::Manual(cat.id);
-        db.upsert_transaction(&txn_cat, None).await.unwrap();
-
-        let uncat = db.get_uncategorized_transactions().await.unwrap();
-        assert_eq!(uncat.len(), 1);
-        assert_eq!(uncat[0].id, txn_uncat.id);
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
     async fn test_get_uncorrelated_transactions(pool: PgPool) {
         let db = wrap(pool);
         let acct = make_account();
