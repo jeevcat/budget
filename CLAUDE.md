@@ -84,6 +84,21 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - Use `ConnectionTester` (fun interface) to abstract API calls in ViewModels for unit testability
 - ViewModel tests go in `shared/src/commonTest` using `kotlinx-coroutines-test` with fake implementations
 
+## REST API Design Rules
+
+- **Never version the API** — no `/v1/` prefixes. Breaking changes are allowed but must update all clients (frontend + mobile) in the same PR
+- **Never remove or rename a JSON response field** without updating every consumer in the same change
+- **Plural nouns for resource paths** — `/accounts`, `/transactions`, `/categories`. No singular forms, no verbs as path segments for CRUD
+- **Action endpoints use verb sub-resources** — e.g. `/rules/apply`, `/jobs/categorize`. Reserve these for operations that don't map to CRUD
+- **Nest resources under their parent** — `/accounts/{id}/balances`, not `/balances?account_id={id}`
+- **POST returns 201 + the created resource**. PUT returns 200 + the updated resource. DELETE returns 204 with no body
+- **Errors are JSON** — `{"error": "human-readable message"}` with an appropriate HTTP status code. Never plain text error bodies (migration tracked in TODO.md)
+- **Use cursor-based pagination** for all list endpoints that can grow unboundedly. Request: `?cursor=X&limit=N`. Response includes `next_cursor` (null when exhausted). Never offset-based (migration tracked in TODO.md)
+- **IDs are UUIDs** — exposed as strings in JSON, parsed into newtypes in Rust. Never expose internal integer PKs
+- **Use the correct HTTP method** — GET for reads (safe, cacheable), POST for creates and actions, PUT for full replacement, PATCH for partial update, DELETE for removal. Never use GET for mutations
+- **No request body on GET or DELETE** — use query parameters or path segments instead
+- **Auth is bearer token** — all endpoints behind auth middleware except `/health` and OAuth callbacks
+
 ## Coding Standards
 
 - **Never suppress clippy lints** without explicit human approval
