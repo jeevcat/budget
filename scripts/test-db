@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Manages temporary PostgreSQL databases for tests.
+#
+# Usage:
+#   scripts/test-db create <prefix>   — clean stale DBs, create a new one, print its name
+#   scripts/test-db drop <dbname>     — drop a single database (best-effort)
+#
+# All databases are named <prefix>_<timestamp_or_pid> and stale ones matching
+# <prefix>_* are cleaned up automatically on create.
+set -euo pipefail
+
+PG_USER="budget"
+PG_HOST="localhost"
+PG="-U ${PG_USER} -h ${PG_HOST}"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  create)
+    prefix="${1:?usage: scripts/test-db create <prefix>}"
+    # Drop leftover databases from crashed prior runs
+    stale=$(psql $PG -d postgres -tAc \
+      "SELECT datname FROM pg_database WHERE datname LIKE '${prefix}_%'")
+    for db in $stale; do
+      dropdb $PG --if-exists --force "$db" 2>/dev/null || true
+    done
+    db_name="${prefix}_$$"
+    createdb $PG "$db_name"
+    echo "$db_name"
+    ;;
+  drop)
+    db_name="${1:?usage: scripts/test-db drop <dbname>}"
+    dropdb $PG --if-exists "$db_name" 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: scripts/test-db {create|drop} ..." >&2
+    exit 1
+    ;;
+esac

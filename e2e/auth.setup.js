@@ -1,7 +1,7 @@
 // @ts-check
 import { test as setup, expect } from "@playwright/test";
 
-const TEST_SECRET = "e2e-test-secret-key";
+const TEST_SECRET = "test-secret-key";
 export const STORAGE_STATE = "playwright/.auth/user.json";
 
 setup("authenticate", async ({ page }) => {

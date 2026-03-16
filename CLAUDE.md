@@ -2,6 +2,8 @@
 
 ## Setup
 
+All commands below assume you're in the Nix dev shell (`nix develop`).
+
 Activate the pre-commit hook:
 ```bash
 ln -sf ../../.github/hooks/pre-commit .git/hooks/pre-commit

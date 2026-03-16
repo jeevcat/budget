@@ -66,7 +66,8 @@ if [ "$TEST_MODE" = 1 ]; then
   PORT=3099
   TOKEN="test-secret-key"
   BASE="http://localhost:${PORT}/api"
-  DB_NAME="budget_api_test_$$"
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  DB_NAME=$("$SCRIPT_DIR/test-db" create budget_api_test)
   SERVER_PID=""
 
   cleanup() {
@@ -74,15 +75,14 @@ if [ "$TEST_MODE" = 1 ]; then
       kill "$SERVER_PID" 2>/dev/null || true
       wait "$SERVER_PID" 2>/dev/null || true
     fi
-    dropdb -U budget -h localhost --if-exists "$DB_NAME" 2>/dev/null || true
+    "$SCRIPT_DIR/test-db" drop "$DB_NAME"
   }
   trap cleanup EXIT
 
   echo "building..." >&2
   cargo build --quiet 2>&1 >&2
 
-  echo "creating temp database: $DB_NAME" >&2
-  createdb -U budget -h localhost "$DB_NAME"
+  echo "created temp database: $DB_NAME" >&2
 
   DATABASE_URL="postgresql://budget@localhost:5432/${DB_NAME}" \
     BUDGET_PORT="$PORT" \
