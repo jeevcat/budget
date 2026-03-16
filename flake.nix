@@ -265,10 +265,14 @@
               packages = [
                 pkgs.biome
                 pkgs.bun
+                pkgs.cargo-llvm-cov
                 pkgs.chromium
                 pkgs.jdk21_headless
+                pkgs.rustc.llvmPackages.llvm
                 androidSdk
               ];
+              env.LLVM_COV = "${pkgs.rustc.llvmPackages.llvm}/bin/llvm-cov";
+              env.LLVM_PROFDATA = "${pkgs.rustc.llvmPackages.llvm}/bin/llvm-profdata";
               env.DATABASE_URL = "postgresql://budget@localhost:5432/budget";
               env.JAVA_HOME = "${pkgs.jdk21_headless}";
               env.ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
