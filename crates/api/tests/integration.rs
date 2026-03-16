@@ -17,8 +17,10 @@ use api::state::AppState;
 use budget_jobs::{JobStorage, PipelineStorage};
 
 use budget_core::models::{
-    Account, AccountId, AccountOrigin, AccountType, Categorization, Category, CategoryId,
-    CategoryName, CurrencyCode, Priority, Rule, RuleCondition, RuleTarget, SecretKey, Transaction,
+    Account, AccountId, AccountOrigin, AccountType, AmazonAccount, AmazonAccountId,
+    BalanceSnapshot, BalanceSnapshotId, BudgetConfig, BudgetType, Categorization, Category,
+    CategoryId, CategoryName, Connection, ConnectionId, ConnectionStatus, CurrencyCode, Priority,
+    Rule, RuleCondition, RuleTarget, SecretKey, Transaction,
 };
 use budget_db::Db;
 
@@ -190,6 +192,42 @@ fn make_txn(account_id: AccountId, merchant: &str, day: u32) -> Transaction {
         merchant_name: merchant.to_owned(),
         posted_date: chrono::NaiveDate::from_ymd_opt(2025, 1, day).expect("date"),
         ..Default::default()
+    }
+}
+
+/// Helper: build a JSON PATCH request with bearer token.
+fn patch_json(uri: &str, json: &serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("PATCH")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
+        .body(Body::from(serde_json::to_vec(json).expect("serialize")))
+        .expect("build request")
+}
+
+/// Helper: build a request with text body and bearer token.
+fn post_text(uri: &str, text: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("POST")
+        .header("content-type", "text/plain")
+        .header("authorization", format!("Bearer {TEST_SECRET}"))
+        .body(Body::from(text.to_owned()))
+        .expect("build request")
+}
+
+/// Helper: build an account fixture.
+fn make_account(name: &str) -> Account {
+    Account {
+        id: AccountId::new(),
+        provider_account_id: format!("prov-{}", uuid::Uuid::new_v4()),
+        name: name.to_owned(),
+        nickname: None,
+        institution: "Test Bank".to_owned(),
+        account_type: AccountType::Checking,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        origin: AccountOrigin::Manual,
     }
 }
 
@@ -1526,4 +1564,947 @@ async fn openapi_spec_is_valid_and_complete(pool: PgPool) {
         security_schemes["bearer_token"].is_object(),
         "missing bearer_token security scheme"
     );
+}
+
+// ===========================================================================
+// Accounts: net-worth
+// ===========================================================================
+
+#[sqlx::test]
+async fn accounts_net_worth_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/accounts/net-worth")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["total"], "0");
+    assert!(resp["accounts"].as_array().expect("array").is_empty());
+}
+
+#[sqlx::test]
+async fn accounts_net_worth_with_balances(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let acct1 = make_account("Checking");
+    let acct2 = make_account("Savings");
+    db.upsert_account(&acct1).await.expect("acct1");
+    db.upsert_account(&acct2).await.expect("acct2");
+
+    let snap1 = BalanceSnapshot {
+        id: BalanceSnapshotId::new(),
+        account_id: acct1.id,
+        current: rust_decimal::Decimal::new(150_050, 2),
+        available: None,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        snapshot_at: chrono::Utc::now(),
+    };
+    let snap2 = BalanceSnapshot {
+        id: BalanceSnapshotId::new(),
+        account_id: acct2.id,
+        current: rust_decimal::Decimal::new(300_000, 2),
+        available: None,
+        currency: CurrencyCode::new("EUR").unwrap(),
+        snapshot_at: chrono::Utc::now(),
+    };
+    db.insert_balance_snapshot(&snap1).await.expect("snap1");
+    db.insert_balance_snapshot(&snap2).await.expect("snap2");
+
+    let (status, body) = send(app, get("/api/accounts/net-worth")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["total"], "4500.50");
+    let accounts = resp["accounts"].as_array().expect("array");
+    assert_eq!(accounts.len(), 2);
+    // Sorted by balance descending
+    assert_eq!(accounts[0]["current"], "3000.00");
+}
+
+// ===========================================================================
+// Accounts: net-worth/projection
+// ===========================================================================
+
+#[sqlx::test]
+async fn accounts_net_worth_projection_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/accounts/net-worth/projection")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    // Insufficient data returns empty arrays with a message
+    assert!(resp["history"].as_array().expect("array").is_empty());
+    assert!(resp["forecast"].as_array().expect("array").is_empty());
+    assert!(resp["message"].is_string());
+}
+
+#[sqlx::test]
+async fn accounts_net_worth_projection_with_params(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(
+        app,
+        get("/api/accounts/net-worth/projection?months=6&interval_width=0.9"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    // With no data, should still return 200 with empty/message
+    assert!(resp["history"].is_array());
+    assert!(resp["forecast"].is_array());
+}
+
+// ===========================================================================
+// Accounts: PATCH /{id} (update_nickname)
+// ===========================================================================
+
+#[sqlx::test]
+async fn accounts_update_nickname(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Original Name");
+    db.upsert_account(&account).await.expect("account");
+
+    // Set a nickname
+    let payload = serde_json::json!({ "nickname": "My Primary" });
+    let (status, body) = send(
+        app.clone(),
+        patch_json(&format!("/api/accounts/{}", account.id), &payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let updated: Account = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(updated.nickname.as_deref(), Some("My Primary"));
+    assert_eq!(updated.name, "Original Name");
+
+    // Clear the nickname
+    let clear = serde_json::json!({ "nickname": null });
+    let (status, body) = send(
+        app,
+        patch_json(&format!("/api/accounts/{}", account.id), &clear),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let cleared: Account = serde_json::from_slice(&body).expect("parse");
+    assert!(cleared.nickname.is_none());
+}
+
+#[sqlx::test]
+async fn accounts_update_nickname_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let payload = serde_json::json!({ "nickname": "test" });
+    let (status, _body) = send(
+        app,
+        patch_json(&format!("/api/accounts/{fake_id}"), &payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: accounts CRUD
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_accounts_list_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/amazon/accounts")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let accounts: Vec<AmazonAccount> = serde_json::from_slice(&body).expect("parse");
+    assert!(accounts.is_empty());
+}
+
+#[sqlx::test]
+async fn amazon_accounts_create_and_list(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let payload = serde_json::json!({ "label": "My Amazon DE" });
+    let (status, body) = send(app.clone(), post_json("/api/amazon/accounts", &payload)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let created: AmazonAccount = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(created.label, "My Amazon DE");
+
+    let (status, body) = send(app, get("/api/amazon/accounts")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let accounts: Vec<AmazonAccount> = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].label, "My Amazon DE");
+}
+
+#[sqlx::test]
+async fn amazon_accounts_delete(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = AmazonAccount {
+        id: AmazonAccountId::new(),
+        label: "To Delete".to_owned(),
+    };
+    db.insert_amazon_account(&account).await.expect("insert");
+
+    let (status, _body) = send(
+        app.clone(),
+        delete(&format!("/api/amazon/accounts/{}", account.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Verify it's gone
+    let (status, body) = send(app, get("/api/amazon/accounts")).await;
+    assert_eq!(status, StatusCode::OK);
+    let accounts: Vec<AmazonAccount> = serde_json::from_slice(&body).expect("parse");
+    assert!(accounts.is_empty());
+}
+
+#[sqlx::test]
+async fn amazon_accounts_delete_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, delete(&format!("/api/amazon/accounts/{fake_id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn amazon_accounts_update_label(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = AmazonAccount {
+        id: AmazonAccountId::new(),
+        label: "Old Label".to_owned(),
+    };
+    db.insert_amazon_account(&account).await.expect("insert");
+
+    let payload = serde_json::json!({ "label": "New Label" });
+    let (status, body) = send(
+        app,
+        patch_json(&format!("/api/amazon/accounts/{}", account.id), &payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let updated: AmazonAccount = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(updated.label, "New Label");
+    assert_eq!(updated.id, account.id);
+}
+
+#[sqlx::test]
+async fn amazon_accounts_update_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let payload = serde_json::json!({ "label": "Nope" });
+    let (status, _body) = send(
+        app,
+        patch_json(&format!("/api/amazon/accounts/{fake_id}"), &payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: cookies
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_cookies_nonexistent_account_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let payload = serde_json::json!({ "cookies": [] });
+    let (status, _body) = send(
+        app,
+        post_json(&format!("/api/amazon/accounts/{fake_id}/cookies"), &payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: account status
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_account_status(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = AmazonAccount {
+        id: AmazonAccountId::new(),
+        label: "Status Test".to_owned(),
+    };
+    db.insert_amazon_account(&account).await.expect("insert");
+
+    let (status, body) = send(
+        app,
+        get(&format!("/api/amazon/accounts/{}/status", account.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["account"]["label"], "Status Test");
+    // No cookies file exists, so cookies_valid should be null
+    assert!(resp["cookies_valid"].is_null());
+}
+
+#[sqlx::test]
+async fn amazon_account_status_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, get(&format!("/api/amazon/accounts/{fake_id}/status"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: sync
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_trigger_sync(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = AmazonAccount {
+        id: AmazonAccountId::new(),
+        label: "Sync Test".to_owned(),
+    };
+    db.insert_amazon_account(&account).await.expect("insert");
+
+    let (status, _body) = send(
+        app,
+        post_empty(&format!("/api/amazon/accounts/{}/sync", account.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+#[sqlx::test]
+async fn amazon_trigger_sync_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(
+        app,
+        post_empty(&format!("/api/amazon/accounts/{fake_id}/sync")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: enrichment
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_enrichment_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, get(&format!("/api/amazon/enrichment/{fake_id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Amazon: matches
+// ===========================================================================
+
+#[sqlx::test]
+async fn amazon_matches_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/amazon/matches")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let matches: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert!(matches.is_empty());
+}
+
+// ===========================================================================
+// Budgets: burndown
+// ===========================================================================
+
+#[sqlx::test]
+async fn budgets_burndown_missing_category_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(
+        app,
+        get(&format!("/api/budgets/burndown?category_id={fake_id}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn budgets_burndown_non_monthly_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    // Create a category with annual budget (not monthly)
+    let category = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Annual Cat").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Annual {
+            amount: rust_decimal::Decimal::new(120_000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&category).await.expect("category");
+
+    let (status, _body) = send(
+        app,
+        get(&format!(
+            "/api/budgets/burndown?category_id={}",
+            category.id.as_uuid()
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn budgets_burndown_fixed_category_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    // Monthly fixed category — burndown only supports variable
+    let category = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Fixed Cat").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(5000, 2),
+            budget_type: BudgetType::Fixed,
+        },
+    };
+    db.insert_category(&category).await.expect("category");
+
+    let (status, _body) = send(
+        app,
+        get(&format!(
+            "/api/budgets/burndown?category_id={}",
+            category.id.as_uuid()
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn budgets_burndown_with_data(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Burndown Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Salary category to create budget months
+    let salary_cat = Category {
+        budget: BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
+    db.insert_category(&salary_cat).await.expect("salary cat");
+
+    // Monthly variable category for burndown
+    let category = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Groceries").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(50000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&category).await.expect("category");
+
+    // Insert a salary transaction to create budget months
+    let today = chrono::Utc::now().date_naive();
+    let mut salary_txn = make_txn(account.id, "EMPLOYER", 1);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&salary_txn, Some("salary-bd"))
+        .await
+        .expect("salary txn");
+
+    // Insert a spending transaction
+    let mut spend_txn = make_txn(account.id, "SUPERMARKET", 1);
+    spend_txn.categorization = Categorization::Manual(category.id);
+    spend_txn.amount = rust_decimal::Decimal::new(-5000, 2);
+    spend_txn.posted_date = today - chrono::Duration::days(3);
+    db.upsert_transaction(&spend_txn, Some("spend-bd"))
+        .await
+        .expect("spend txn");
+    db.update_transaction_category(
+        spend_txn.id,
+        category.id,
+        budget_core::models::CategoryMethod::Manual,
+        None,
+    )
+    .await
+    .expect("categorize");
+
+    let (status, body) = send(
+        app,
+        get(&format!(
+            "/api/budgets/burndown?category_id={}",
+            category.id.as_uuid()
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["category_name"], "Groceries");
+    assert_eq!(resp["budget_amount"], "500.00");
+    assert!(resp["current"]["points"].is_array());
+    assert!(resp["current"]["total_days"].as_u64().expect("u64") > 0);
+}
+
+// ===========================================================================
+// Categories: suggestions
+// ===========================================================================
+
+#[sqlx::test]
+async fn categories_suggestions_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/categories/suggestions")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let suggestions: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert!(suggestions.is_empty());
+}
+
+#[sqlx::test]
+async fn categories_suggestions_with_data(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Suggestions Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Insert uncategorized transactions with suggested_category set
+    let mut txn1 = make_txn(account.id, "STORE A", 1);
+    txn1.suggested_category = Some("Groceries".to_owned());
+    db.upsert_transaction(&txn1, Some("sug-1"))
+        .await
+        .expect("insert");
+    db.update_transaction_suggested_category(txn1.id, "Groceries", None)
+        .await
+        .expect("update suggestion");
+
+    let mut txn2 = make_txn(account.id, "STORE B", 2);
+    txn2.suggested_category = Some("Groceries".to_owned());
+    db.upsert_transaction(&txn2, Some("sug-2"))
+        .await
+        .expect("insert");
+    db.update_transaction_suggested_category(txn2.id, "Groceries", None)
+        .await
+        .expect("update suggestion");
+
+    let mut txn3 = make_txn(account.id, "GAS STATION", 3);
+    txn3.suggested_category = Some("Transport".to_owned());
+    db.upsert_transaction(&txn3, Some("sug-3"))
+        .await
+        .expect("insert");
+    db.update_transaction_suggested_category(txn3.id, "Transport", None)
+        .await
+        .expect("update suggestion");
+
+    let (status, body) = send(app, get("/api/categories/suggestions")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let suggestions: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(suggestions.len(), 2);
+    // Sorted by count descending
+    assert_eq!(suggestions[0]["category_name"], "Groceries");
+    assert_eq!(suggestions[0]["count"], 2);
+    assert_eq!(suggestions[1]["category_name"], "Transport");
+    assert_eq!(suggestions[1]["count"], 1);
+}
+
+// ===========================================================================
+// Connections: authorize
+// ===========================================================================
+
+#[sqlx::test]
+async fn connections_authorize_returns_501_when_not_configured(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let payload = serde_json::json!({
+        "aspsp_name": "Test Bank",
+        "aspsp_country": "FI"
+    });
+
+    let (status, _body) = send(app, post_json("/api/connections/authorize", &payload)).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+}
+
+// ===========================================================================
+// Connections: DELETE /{id}
+// ===========================================================================
+
+#[sqlx::test]
+async fn connections_revoke(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    // Seed a connection directly
+    let connection = Connection {
+        id: ConnectionId::new(),
+        provider: "enable_banking".to_owned(),
+        provider_session_id: "test-session".to_owned(),
+        institution_name: "Test Bank".to_owned(),
+        valid_until: chrono::Utc::now() + chrono::Duration::days(90),
+        status: ConnectionStatus::Active,
+    };
+    db.insert_connection(&connection).await.expect("insert");
+
+    let (status, _body) = send(
+        app.clone(),
+        delete(&format!("/api/connections/{}", connection.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Verify it's revoked (still exists but status changed)
+    let fetched = db.get_connection(connection.id).await.expect("query");
+    assert!(fetched.is_some());
+    assert_eq!(fetched.unwrap().status, ConnectionStatus::Revoked);
+}
+
+#[sqlx::test]
+async fn connections_revoke_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, delete(&format!("/api/connections/{fake_id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Import: POST /accounts/{id}/import
+// ===========================================================================
+
+#[sqlx::test]
+async fn import_csv_nonexistent_account_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let csv = "Date,Description,Amount\n01/01/2025,Test,10.00";
+    let (status, _body) = send(
+        app,
+        post_text(&format!("/api/accounts/{fake_id}/import"), csv),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn import_csv_invalid_csv_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Import Test");
+    db.upsert_account(&account).await.expect("account");
+
+    let bad_csv = "this is not valid amex csv data at all";
+    let (status, _body) = send(
+        app,
+        post_text(&format!("/api/accounts/{}/import", account.id), bad_csv),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ===========================================================================
+// Jobs: counts
+// ===========================================================================
+
+#[sqlx::test]
+async fn jobs_counts_returns_200(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/jobs/counts")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let counts: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    // May be empty if no jobs have ever been enqueued, or may have entries
+    for count in &counts {
+        assert!(count["job_type"].is_string());
+        assert!(count["active"].is_number());
+        assert!(count["waiting"].is_number());
+    }
+}
+
+#[sqlx::test]
+async fn jobs_counts_after_enqueue(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    // Enqueue a categorize job
+    let (status, _body) = send(app.clone(), post_empty("/api/jobs/categorize")).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let (status, body) = send(app, get("/api/jobs/counts")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let counts: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    let categorize_count = counts.iter().find(|c| {
+        c["job_type"]
+            .as_str()
+            .is_some_and(|s| s.contains("Categorize"))
+    });
+    assert!(
+        categorize_count.is_some(),
+        "expected a categorize queue entry, got: {counts:?}"
+    );
+}
+
+// ===========================================================================
+// Jobs: schedule
+// ===========================================================================
+
+#[sqlx::test]
+async fn jobs_schedule_empty(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get("/api/jobs/schedule")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let schedule: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("parse");
+    assert!(schedule.is_empty());
+}
+
+// ===========================================================================
+// Rules: preview
+// ===========================================================================
+
+#[sqlx::test]
+async fn rules_preview_no_matches(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let category = make_category("Transport");
+    db.insert_category(&category).await.expect("category");
+
+    let payload = serde_json::json!({
+        "rule_type": "categorization",
+        "conditions": [{"field": "merchant", "pattern": "NONEXISTENT_MERCHANT"}],
+        "target_category_id": category.id.to_string(),
+        "priority": 10
+    });
+
+    let (status, body) = send(app, post_json("/api/rules/preview", &payload)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["match_count"], 0);
+    assert!(resp["sample"].as_array().expect("array").is_empty());
+}
+
+#[sqlx::test]
+async fn rules_preview_with_matches(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Preview Test");
+    db.upsert_account(&account).await.expect("account");
+
+    let category = make_category("Groceries");
+    db.insert_category(&category).await.expect("category");
+
+    // Uncategorized transactions that should match
+    let txn1 = make_uncategorized_txn(account.id, "LIDL STORE 123", 1);
+    let txn2 = make_uncategorized_txn(account.id, "LIDL MARKET 456", 2);
+    let txn3 = make_uncategorized_txn(account.id, "ALDI NORD", 3);
+    db.upsert_transaction(&txn1, None).await.expect("insert");
+    db.upsert_transaction(&txn2, None).await.expect("insert");
+    db.upsert_transaction(&txn3, None).await.expect("insert");
+
+    let payload = serde_json::json!({
+        "rule_type": "categorization",
+        "conditions": [{"field": "merchant", "pattern": "LIDL"}],
+        "target_category_id": category.id.to_string(),
+        "priority": 10
+    });
+
+    let (status, body) = send(app, post_json("/api/rules/preview", &payload)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["match_count"], 2);
+    let sample = resp["sample"].as_array().expect("array");
+    assert_eq!(sample.len(), 2);
+    assert!(
+        sample[0]["merchant_name"]
+            .as_str()
+            .expect("str")
+            .contains("LIDL")
+    );
+}
+
+#[sqlx::test]
+async fn rules_preview_invalid_pattern_returns_400(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let category = make_category("Test");
+    db.insert_category(&category).await.expect("category");
+
+    let payload = serde_json::json!({
+        "rule_type": "categorization",
+        "conditions": [{"field": "merchant", "pattern": "[invalid regex"}],
+        "target_category_id": category.id.to_string(),
+        "priority": 10
+    });
+
+    let (status, _body) = send(app, post_json("/api/rules/preview", &payload)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ===========================================================================
+// Transactions: GET /{id}
+// ===========================================================================
+
+#[sqlx::test]
+async fn transactions_get_one(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Get One Test");
+    db.upsert_account(&account).await.expect("account");
+
+    let txn = make_txn(account.id, "TEST MERCHANT", 15);
+    db.upsert_transaction(&txn, Some("get-one"))
+        .await
+        .expect("insert");
+
+    let (status, body) = send(app, get(&format!("/api/transactions/{}", txn.id))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fetched: Transaction = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(fetched.id, txn.id);
+    assert_eq!(fetched.merchant_name, "TEST MERCHANT");
+    assert_eq!(fetched.account_id, account.id);
+}
+
+#[sqlx::test]
+async fn transactions_get_one_nonexistent_returns_404(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+    let fake_id = uuid::Uuid::new_v4();
+
+    let (status, _body) = send(app, get(&format!("/api/transactions/{fake_id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ===========================================================================
+// Transactions: DELETE /{id}/categorize (uncategorize)
+// ===========================================================================
+
+#[sqlx::test]
+async fn transactions_uncategorize(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Uncat Test");
+    db.upsert_account(&account).await.expect("account");
+
+    let category = make_category("Coffee");
+    db.insert_category(&category).await.expect("category");
+
+    // Categorize a transaction
+    let mut txn = make_txn(account.id, "STARBUCKS", 5);
+    txn.categorization = Categorization::Manual(category.id);
+    db.upsert_transaction(&txn, Some("uncat-test"))
+        .await
+        .expect("insert");
+    db.update_transaction_category(
+        txn.id,
+        category.id,
+        budget_core::models::CategoryMethod::Manual,
+        None,
+    )
+    .await
+    .expect("categorize");
+
+    // Verify it's categorized
+    let before = db
+        .get_transaction_by_id(txn.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert_eq!(before.categorization.category_id(), Some(category.id));
+
+    // Uncategorize it
+    let (status, _body) = send(
+        app,
+        delete(&format!("/api/transactions/{}/categorize", txn.id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Verify it's uncategorized
+    let after = db
+        .get_transaction_by_id(txn.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert_eq!(after.categorization, Categorization::Uncategorized);
+}
+
+// ===========================================================================
+// Transactions: POST /{id}/skip-correlation
+// ===========================================================================
+
+#[sqlx::test]
+async fn transactions_skip_correlation(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Skip Corr Test");
+    db.upsert_account(&account).await.expect("account");
+
+    let txn = make_txn(account.id, "TRANSFER", 10);
+    db.upsert_transaction(&txn, Some("skip-corr"))
+        .await
+        .expect("insert");
+
+    // Set skip_correlation = true
+    let payload = serde_json::json!({ "skip": true });
+    let (status, _body) = send(
+        app.clone(),
+        post_json(
+            &format!("/api/transactions/{}/skip-correlation", txn.id),
+            &payload,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Verify via DB
+    let updated = db
+        .get_transaction_by_id(txn.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert!(updated.skip_correlation);
+
+    // Unset skip_correlation
+    let payload = serde_json::json!({ "skip": false });
+    let (status, _body) = send(
+        app,
+        post_json(
+            &format!("/api/transactions/{}/skip-correlation", txn.id),
+            &payload,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let restored = db
+        .get_transaction_by_id(txn.id)
+        .await
+        .expect("query")
+        .expect("found");
+    assert!(!restored.skip_correlation);
 }

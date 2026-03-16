@@ -27,51 +27,6 @@
 ### Features
 - [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
 
-## API Integration Test Coverage
-
-27/50 endpoints tested. Run `bun scripts/api-coverage.ts` to check.
-
-### Accounts
-- [ ] `GET /accounts/net-worth`
-- [ ] `GET /accounts/net-worth/projection`
-- [ ] `PATCH /accounts/{id}` (update_nickname)
-
-### Amazon (all untested)
-- [ ] `GET /amazon/accounts`
-- [ ] `POST /amazon/accounts`
-- [ ] `DELETE /amazon/accounts/{id}`
-- [ ] `PATCH /amazon/accounts/{id}`
-- [ ] `POST /amazon/accounts/{id}/cookies`
-- [ ] `GET /amazon/accounts/{id}/status`
-- [ ] `POST /amazon/accounts/{id}/sync`
-- [ ] `GET /amazon/enrichment/{transaction_id}`
-- [ ] `GET /amazon/matches`
-
-### Budgets
-- [ ] `GET /budgets/burndown`
-
-### Categories
-- [ ] `GET /categories/suggestions`
-
-### Connections
-- [ ] `POST /connections/authorize`
-- [ ] `DELETE /connections/{id}`
-
-### Import
-- [ ] `POST /accounts/{id}/import` (import_csv)
-
-### Jobs
-- [ ] `GET /jobs/counts`
-- [ ] `GET /jobs/schedule`
-
-### Rules
-- [ ] `POST /rules/preview`
-
-### Transactions
-- [ ] `GET /transactions/{id}`
-- [ ] `DELETE /transactions/{id}/categorize` (uncategorize)
-- [ ] `POST /transactions/{id}/skip-correlation`
-
 ## E2E Tests
 
 Current coverage: 3 smoke tests (dashboard loads, insights loads, no burndown on empty DB). All run against an empty database with no seeded data. Tests need API-seeded data (POST via `fetch` or Playwright `request`) since there's no seed script.
