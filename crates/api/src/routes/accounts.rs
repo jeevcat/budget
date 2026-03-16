@@ -12,6 +12,8 @@ use budget_core::models::{
 };
 use budget_core::projection::{self, ForecastPoint, NetWorthPoint};
 
+use tracing::{debug, warn};
+
 use crate::routes::AppError;
 use crate::state::AppState;
 
@@ -266,18 +268,44 @@ async fn net_worth_projection(
     let interval_width = params.interval_width.unwrap_or(0.8).clamp(0.0, 1.0);
 
     let snapshots = state.db.list_all_balance_snapshots().await?;
+    debug!(
+        snapshot_count = snapshots.len(),
+        "running net worth projection on blocking thread"
+    );
 
-    match projection::project_net_worth(&snapshots, months, interval_width) {
-        Ok(proj) => Ok(Json(ProjectionResponse {
-            history: proj.history,
-            forecast: proj.forecast,
-            message: None,
-        })),
-        Err(e) => Ok(Json(ProjectionResponse {
-            history: Vec::new(),
-            forecast: Vec::new(),
-            message: Some(e.to_string()),
-        })),
+    let result = tokio::task::spawn_blocking(move || {
+        projection::project_net_worth(&snapshots, months, interval_width)
+    })
+    .await
+    .map_err(|e| {
+        warn!("projection task panicked: {e}");
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("projection task failed: {e}"),
+        )
+    })?;
+
+    match result {
+        Ok(proj) => {
+            debug!(
+                history_len = proj.history.len(),
+                forecast_len = proj.forecast.len(),
+                "projection complete"
+            );
+            Ok(Json(ProjectionResponse {
+                history: proj.history,
+                forecast: proj.forecast,
+                message: None,
+            }))
+        }
+        Err(e) => {
+            debug!("projection unavailable: {e}");
+            Ok(Json(ProjectionResponse {
+                history: Vec::new(),
+                forecast: Vec::new(),
+                message: Some(e.to_string()),
+            }))
+        }
     }
 }
 
