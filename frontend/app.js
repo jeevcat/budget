@@ -101,6 +101,19 @@ async function waitForJobsDrained() {
 // text helpers, pace helpers, time ago, job queue helpers — all in helpers.js
 
 // ---------------------------------------------------------------------------
+// Shared error display
+// ---------------------------------------------------------------------------
+
+function ErrorPanel({ error, onRetry }) {
+  return html`
+    <div role="alert" data-variant="error">
+      <p>${error?.message ?? error}</p>
+      ${onRetry && html`<button data-variant="primary" onClick=${onRetry}>Retry</button>`}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Simple hash router
 // ---------------------------------------------------------------------------
 
@@ -912,7 +925,11 @@ function Dashboard({ tab = "monthly", monthId = null }) {
     api.get(statusUrl).then(setStatusResp).catch(setError);
   }, [statusUrl]);
 
-  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
   if (!statusResp || !categories || !months)
     return html`<p class="text-light">Loading...</p>`;
 
@@ -2020,7 +2037,11 @@ function Transactions() {
     fetchTransactions().then(setPageData).catch(setError);
   }, [fetchTransactions]);
 
-  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      reload();
+    }} />`;
   if (!pageData) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
@@ -2321,7 +2342,11 @@ function Categories() {
     }
   };
 
-  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
   if (!categories) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -2686,7 +2711,11 @@ function Rules() {
 
   useEffect(load, []);
 
-  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
   if (!rules) return html`<p class="text-light">Loading...</p>`;
 
   const catMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c]));
@@ -3272,7 +3301,11 @@ function Connections() {
         )
       : aspsps;
 
-  if (error) return html`<p class="text-light">${error.message}</p>`;
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
   if (!connections) return html`<p class="text-light">Loading...</p>`;
 
   const connectedAccounts = accounts
@@ -4497,7 +4530,7 @@ function Insights({ categoryId: routeCategoryId }) {
   const [bdLoading, setBdLoading] = useState(false);
   const [bdError, setBdError] = useState(null);
 
-  useEffect(() => {
+  function load() {
     setLoading(true);
     Promise.all([
       api.get("/accounts/net-worth/projection?months=12&interval_width=0.8"),
@@ -4512,7 +4545,9 @@ function Insights({ categoryId: routeCategoryId }) {
         setError(err.message);
         setLoading(false);
       });
-  }, []);
+  }
+
+  useEffect(load, []);
 
   // Filter to monthly variable categories
   const catMap = useMemo(() => {
@@ -4576,13 +4611,10 @@ function Insights({ categoryId: routeCategoryId }) {
     return html`<div class="vstack gap-2"><h2>Insights</h2><progress></progress></div>`;
 
   if (error)
-    return html`
-      <div class="vstack gap-2">
-        <h2>Insights</h2>
-        <p class="text-light">${error}</p>
-        <button data-variant="primary" onClick=${() => location.reload()}>Retry</button>
-      </div>
-    `;
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
 
   return html`
     <div class="vstack gap-4">
