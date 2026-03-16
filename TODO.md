@@ -10,6 +10,15 @@
 
 ### Frontend
 - [ ] **Error boundaries + retry**: Errors replace entire page content with no retry button. Add a retry mechanism
+- [ ] **Dashboard net worth card**: Show current net worth at a glance using `GET /accounts/net-worth`. Currently only projected net worth is shown on the Insights page
+- [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
+- [ ] **Amazon account rename**: Add click-to-edit label on Amazon account cards using `PATCH /amazon/accounts/{id}`. Currently requires delete + recreate
+- [ ] **Amazon matches list**: Show which transactions matched which Amazon orders on the Connections page using `GET /amazon/matches`. Currently matches are only visible one-at-a-time in the transaction detail panel
+- [ ] **Account balance history**: Show expandable balance history per account on Connections page using `GET /accounts/{id}/balances`
+- [ ] **Manual balance recording**: Add "Record Balance" button for manual accounts (no auto-sync) on Connections page using `POST /accounts/{id}/balances`
+
+### Cleanup
+- [ ] **Delete `GET /transactions/uncategorized` endpoint**: Redundant — `GET /transactions?category_method=__none` achieves the same thing and is what the frontend actually uses
 
 ## Insights & Analytics
 
