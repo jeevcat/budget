@@ -457,9 +457,34 @@ describe("timeAgo", () => {
     expect(timeAgo(iso)).toMatch(/2h ago/);
   });
 
+  test("days ago", () => {
+    const iso = new Date(Date.now() - 3 * 86400000).toISOString();
+    expect(timeAgo(iso)).toBe("3d ago");
+  });
+
+  test("weeks ago", () => {
+    const iso = new Date(Date.now() - 14 * 86400000).toISOString();
+    expect(timeAgo(iso)).toBe("2w ago");
+  });
+
+  test("months ago", () => {
+    const iso = new Date(Date.now() - 60 * 86400000).toISOString();
+    expect(timeAgo(iso)).toBe("2mo ago");
+  });
+
+  test("years ago", () => {
+    const iso = new Date(Date.now() - 400 * 86400000).toISOString();
+    expect(timeAgo(iso)).toBe("1y ago");
+  });
+
   test("future timestamps", () => {
     const iso = new Date(Date.now() + 120000).toISOString();
     expect(timeAgo(iso)).toMatch(/in 2min/);
+  });
+
+  test("future days", () => {
+    const iso = new Date(Date.now() + 3 * 86400000).toISOString();
+    expect(timeAgo(iso)).toBe("in 3d");
   });
 });
 

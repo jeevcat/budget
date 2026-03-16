@@ -252,11 +252,16 @@ export function timeAgo(iso) {
     const abs = -diff;
     if (abs < 60) return `in ${Math.round(abs)}s`;
     if (abs < 3600) return `in ${Math.round(abs / 60)}min`;
-    return `in ${Math.round(abs / 3600)}h`;
+    if (abs < 86400) return `in ${Math.round(abs / 3600)}h`;
+    return `in ${Math.round(abs / 86400)}d`;
   }
   if (diff < 60) return `${Math.round(diff)}s ago`;
   if (diff < 3600) return `${Math.round(diff / 60)}min ago`;
-  return `${Math.round(diff / 3600)}h ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.round(diff / 86400)}d ago`;
+  if (diff < 2592000) return `${Math.round(diff / 604800)}w ago`;
+  if (diff < 31536000) return `${Math.round(diff / 2592000)}mo ago`;
+  return `${Math.round(diff / 31536000)}y ago`;
 }
 
 // ---------------------------------------------------------------------------

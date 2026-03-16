@@ -1317,6 +1317,16 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       <a href="#/balances" class="card" style="display:block;padding:var(--space-4);margin-top:1rem;text-decoration:none;color:inherit">
         <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
           <h3 style="margin:0">Net Worth</h3>
+          ${(() => {
+            const stale = netWorth.accounts.filter(
+              (a) =>
+                a.is_manual &&
+                Date.now() - new Date(a.snapshot_at).getTime() > 7 * 86400_000,
+            ).length;
+            return stale > 0
+              ? html`<span class="badge warning small" style="margin-left:0.5rem">${stale} stale</span>`
+              : "";
+          })()}
           <span class="text-light text-body" style="margin-left:auto">\u203A</span>
         </div>
         <span style="font-size:var(--text-2);font-weight:700;color:${Number(netWorth.total) >= 0 ? "var(--success)" : "var(--danger)"}">
@@ -4761,6 +4771,12 @@ function Balances() {
     return new Set(accounts.filter((a) => !a.connection_id).map((a) => a.id));
   }, [accounts]);
 
+  const missingManualAccounts = useMemo(() => {
+    if (!accounts || !netWorth) return [];
+    const hasSnapshot = new Set(netWorth.accounts.map((a) => a.account_id));
+    return accounts.filter((a) => !a.connection_id && !hasSnapshot.has(a.id));
+  }, [accounts, netWorth]);
+
   const latestNetWorth = useMemo(() => {
     if (!projection?.history?.length) return null;
     const last = projection.history[projection.history.length - 1];
@@ -4811,8 +4827,8 @@ function Balances() {
                   <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:500">
                     ${formatAmount(a.current, { decimals: 0 })}
                   </td>
-                  <td class="text-light" style="text-align:right;width:6rem;font-size:var(--text-8)">
-                    ${timeAgo(a.snapshot_at)}
+                  <td class="text-light" style="text-align:right;width:8rem;font-size:var(--text-8)">
+                    ${timeAgo(a.snapshot_at)}${" "}${a.is_manual && Date.now() - new Date(a.snapshot_at).getTime() > 7 * 86400_000 ? html`<span class="badge warning small">stale</span>` : ""}
                   </td>
                   <td style="text-align:right;width:2rem;color:var(--muted-foreground)">
                     ${expandedAcct === a.account_id ? "\u25B4" : "\u25BE"}
@@ -4901,6 +4917,58 @@ function Balances() {
         `
         }
       </div>
+
+      ${
+        missingManualAccounts.length > 0 &&
+        html`
+        <div class="card" style="padding:1.25rem">
+          <h3 style="margin:0 0 1rem">Manual Accounts</h3>
+          <table style="width:100%">
+            <tbody>
+              ${missingManualAccounts.map(
+                (a) => html`
+                <tr key=${a.id}>
+                  <td>
+                    <span>${accountDisplayName(a)}</span>
+                    <span class="text-light" style="margin-left:0.5rem;font-size:var(--text-8)">${a.account_type}</span>
+                  </td>
+                  <td style="text-align:right">
+                    <span class="badge warning small">No balance recorded</span>
+                  </td>
+                  <td style="text-align:right;width:10rem">
+                    ${
+                      recordingAcct === a.id
+                        ? html`
+                        <form class="hstack gap-2" style="align-items:end;justify-content:flex-end" onSubmit=${(
+                          e,
+                        ) => {
+                          e.preventDefault();
+                          recordBalance(a.id);
+                        }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            required
+                            value=${recordForm.current}
+                            onInput=${(e) => setRecordForm((f) => ({ ...f, current: e.target.value }))}
+                            style="width:8rem"
+                            placeholder="Amount"
+                          />
+                          <button data-variant="primary" data-compact disabled=${recordSaving}>Save</button>
+                          <button type="button" data-compact onClick=${() => setRecordingAcct(null)}>Cancel</button>
+                        </form>
+                      `
+                        : html`<button data-compact onClick=${() => setRecordingAcct(a.id)}>Record Balance</button>`
+                    }
+                  </td>
+                </tr>
+              `,
+              )}
+            </tbody>
+          </table>
+        </div>
+      `
+      }
 
       <!-- Net worth projection -->
       ${

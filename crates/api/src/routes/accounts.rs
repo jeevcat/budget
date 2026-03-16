@@ -161,6 +161,7 @@ struct AccountBalance {
     account_id: AccountId,
     account_name: String,
     account_type: AccountType,
+    is_manual: bool,
     #[schema(value_type = String)]
     current: Decimal,
     currency: CurrencyCode,
@@ -208,6 +209,7 @@ async fn net_worth(State(state): State<AppState>) -> Result<Json<NetWorth>, AppE
                     .clone()
                     .unwrap_or_else(|| account.name.clone()),
                 account_type: account.account_type,
+                is_manual: matches!(account.origin, AccountOrigin::Manual),
                 current: s.current,
                 currency: s.currency,
                 snapshot_at: s.snapshot_at,
