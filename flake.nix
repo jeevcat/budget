@@ -268,6 +268,7 @@
                 pkgs.cargo-llvm-cov
                 pkgs.chromium
                 pkgs.jdk21_headless
+                pkgs.nodejs
                 pkgs.rustc.llvmPackages.llvm
                 androidSdk
               ];

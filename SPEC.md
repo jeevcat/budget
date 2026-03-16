@@ -135,7 +135,7 @@ Budget pacing differs by category type:
 
 - **Uncategorized transactions**: Transactions in the uncategorized queue are included in the **overall total** as unallocated spend (so the total is never artificially low), but they do not count toward any specific category budget until categorized.
 - **Always live / functional**: All views are computed from the current state of transactions. If a transaction posts late, gets recategorized, or is deleted, all daily and monthly views update retroactively. No snapshots — the system is purely functional over the current transaction set.
-- **Delivery**: Dashboard and insights page (pull model). User checks when they want to. Push notifications (email/mobile) are future work.
+- **Delivery**: Dashboard, Insights page, and Balances page (pull model). User checks when they want to. Push notifications (email/mobile) are future work.
 - **Overall total**: An aggregate spent/remaining across all active categories is shown for informational purposes, but overspend signals are per-category only.
 
 ### 5. Project Budgets
@@ -188,16 +188,26 @@ Amazon transactions appear on bank statements as opaque lump sums (e.g., "AMAZON
 
 ### 10. Insights & Forecasting
 
-The system uses time series analysis to surface spending intelligence. Rather than a standalone analytics dashboard, insights are integrated into the core budget UI — pace indicators become seasonality-aware, anomalies surface as badges on the dashboard, and detailed drill-downs live on a dedicated insights page.
+The system uses time series analysis to surface spending intelligence. Pace indicators become seasonality-aware, anomalies surface as badges on the dashboard, and detailed drill-downs live on a dedicated **Insights** page. The Insights page is focused on **budget intelligence** (burndown charts, anomaly detection, seasonality trends). Asset/balance visibility lives on the separate **Balances** page (see below).
 
 **Library**: `augurs` (Rust-native time series toolkit from the Grafana community). Provides Prophet forecasting via a bundled WebAssembly Stan model (no Python sidecar), MSTL decomposition, exponential smoothing, seasonality detection, and changepoint detection — all as pure Rust dependencies.
 
-#### Net Worth Projection
+#### Balances Page
+
+Net worth and balance data live on a dedicated **Balances** page, separate from the budget-focused Insights page. This page is the home for all asset/liability visibility:
+
+- **Net worth summary**: Current total net worth + per-account breakdown (name, type, latest balance, snapshot date). Uses `GET /accounts/net-worth`.
+- **Net worth projection chart**: Historical net worth series + Prophet forecast with confidence bands (moved from Insights). Uses `GET /accounts/net-worth/projection`.
+- **Per-account balance history**: Expandable rows showing balance snapshots over time for each account. Uses `GET /accounts/{id}/balances`.
+- **Manual balance recording**: "Record Balance" button on manual accounts (no auto-sync) for hand-entered snapshots. Uses `POST /accounts/{id}/balances`. Designed for accounts where transaction-level data isn't available (investment accounts, pensions, brokerages).
+
+The Dashboard shows a **net worth card** (current total + per-account breakdown) linking to the Balances page for the full projection and history.
+
+##### Net Worth Projection
 
 - **Balance snapshots**: Each bank sync stores the current account balance in a `balance_snapshots` table (account_id, balance, currency, timestamp). Manual accounts receive hand-entered snapshots.
 - **Time series**: Sum all account balance snapshots over time to produce a liquid net worth series.
 - **Forecast**: Prophet (augurs-prophet with wasmstan backend, MAP estimation) projects the net worth series 6–12 months forward with confidence bands. The model captures trend (are you accumulating or depleting?), seasonality (December spending dip, tax refund bump), and changepoints (salary raise, new recurring expense).
-- **Presentation**: A chart on the insights page showing historical net worth + projected trajectory with confidence intervals.
 
 #### Budget Burndown Charts
 

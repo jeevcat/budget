@@ -13,13 +13,11 @@
 - [ ] **Late/missing salary UX**: Verify the previous budget month stays open indefinitely and surface a clear signal when expected salaries haven't arrived
 
 ### Frontend
-- [ ] **Error boundaries + retry**: Errors replace entire page content with no retry button. Add a retry mechanism
-- [ ] **Dashboard net worth card**: Show current net worth at a glance using `GET /accounts/net-worth`. Currently only projected net worth is shown on the Insights page
+- [ ] **Balances page**: New page for all asset/balance visibility. Move net worth projection chart from Insights to Balances. Add net worth summary card (total + per-account breakdown via `GET /accounts/net-worth`), per-account balance history (expandable, via `GET /accounts/{id}/balances`), and manual balance recording button for manual accounts (`POST /accounts/{id}/balances`)
+- [ ] **Dashboard net worth card**: Show current net worth at a glance using `GET /accounts/net-worth` with per-account breakdown and link to Balances page
 - [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
 - [ ] **Amazon account rename**: Add click-to-edit label on Amazon account cards using `PATCH /amazon/accounts/{id}`. Currently requires delete + recreate
 - [ ] **Amazon matches list**: Show which transactions matched which Amazon orders on the Connections page using `GET /amazon/matches`. Currently matches are only visible one-at-a-time in the transaction detail panel
-- [ ] **Account balance history**: Show expandable balance history per account on Connections page using `GET /accounts/{id}/balances`
-- [ ] **Manual balance recording**: Add "Record Balance" button for manual accounts (no auto-sync) on Connections page using `POST /accounts/{id}/balances`
 
 ## Insights & Analytics
 
@@ -28,10 +26,10 @@
 
 ## E2E Tests
 
-Current coverage: 3 smoke tests (dashboard loads, insights loads, no burndown on empty DB). All run against an empty database with no seeded data. Tests need API-seeded data (POST via `fetch` or Playwright `request`) since there's no seed script.
+Current coverage: 3 smoke tests (dashboard loads, insights loads, no burndown on empty DB). All run against an empty database with no seeded data. Tests need API-seeded data (POST via `fetch` or Playwright `request`) since there's no seed script. Note: net worth tests should move to a Balances section once that page exists.
 
 ### Navigation & Auth
-- [ ] **Nav links**: Click each sidebar link (Transactions, Insights, Categories, Rules, Connections, Jobs) and assert the correct page heading renders
+- [ ] **Nav links**: Click each sidebar link (Transactions, Insights, Balances, Categories, Rules, Connections, Jobs) and assert the correct page heading renders
 - [ ] **Sign out**: Click sign out, verify redirect to login page, verify authenticated routes are inaccessible
 - [ ] **Auth guard**: Navigate to a protected route without auth, verify login page is shown
 
@@ -75,7 +73,12 @@ Current coverage: 3 smoke tests (dashboard loads, insights loads, no burndown on
 ### Insights
 - [ ] **Burndown chart with data**: Seed a monthly variable category with transactions, verify burndown card appears with chart SVG, stats (budget, spent, predicted)
 - [ ] **Burndown category selector**: Switch between categories in the dropdown, verify chart updates
-- [ ] **Net worth chart with data**: Seed account balances, verify net worth projection card renders with chart SVG and stats
+
+### Balances
+- [ ] **Net worth summary**: Seed account balances, verify total net worth and per-account breakdown render
+- [ ] **Net worth chart with data**: Seed account balances, verify projection card renders with chart SVG and stats
+- [ ] **Balance history**: Seed multiple balance snapshots for an account, verify expandable history shows snapshots
+- [ ] **Manual balance recording**: Create a manual account, record a balance, verify it appears in history
 
 ### Connections & Accounts
 - [ ] **Create manual account**: Fill form (name, institution, type, currency), submit, verify account appears in the list

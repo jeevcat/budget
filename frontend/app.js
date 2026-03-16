@@ -4105,7 +4105,7 @@ function Jobs() {
 }
 
 // ---------------------------------------------------------------------------
-// Insights
+// Charts (shared by Insights + Balances)
 // ---------------------------------------------------------------------------
 
 function NetWorthChart({ data }) {
@@ -4519,37 +4519,19 @@ function BurndownChart({ data }) {
 // ---------------------------------------------------------------------------
 
 function Insights({ categoryId: routeCategoryId }) {
-  const [projection, setProjection] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Burndown state
   const [categories, setCategories] = useState(null);
+  const [error, setError] = useState(null);
   const [selectedCat, setSelectedCat] = useState(routeCategoryId || "");
   const [burndown, setBurndown] = useState(null);
   const [bdLoading, setBdLoading] = useState(false);
   const [bdError, setBdError] = useState(null);
 
   function load() {
-    setLoading(true);
-    Promise.all([
-      api.get("/accounts/net-worth/projection?months=12&interval_width=0.8"),
-      api.get("/categories"),
-    ])
-      .then(([proj, cats]) => {
-        setProjection(proj);
-        setCategories(cats);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
+    api.get("/categories").then(setCategories).catch(setError);
   }
 
   useEffect(load, []);
 
-  // Filter to monthly variable categories
   const catMap = useMemo(() => {
     if (!categories) return {};
     const map = {};
@@ -4566,14 +4548,12 @@ function Insights({ categoryId: routeCategoryId }) {
     });
   }, [categories, catMap]);
 
-  // Auto-select first category if none selected and route didn't specify one
   useEffect(() => {
     if (!selectedCat && monthlyCats.length > 0) {
       setSelectedCat(monthlyCats[0].id);
     }
   }, [monthlyCats, selectedCat]);
 
-  // Fetch burndown data when category changes
   useEffect(() => {
     if (!selectedCat) return;
     setBdLoading(true);
@@ -4590,39 +4570,20 @@ function Insights({ categoryId: routeCategoryId }) {
       });
   }, [selectedCat]);
 
-  const latestNetWorth = useMemo(() => {
-    if (!projection?.history?.length) return null;
-    const last = projection.history[projection.history.length - 1];
-    return { date: last.date, value: Number(last.value) };
-  }, [projection]);
-
-  const forecastEnd = useMemo(() => {
-    if (!projection?.forecast?.length) return null;
-    const last = projection.forecast[projection.forecast.length - 1];
-    return {
-      date: last.date,
-      value: last.value,
-      lower: last.lower,
-      upper: last.upper,
-    };
-  }, [projection]);
-
-  if (loading)
-    return html`<div class="vstack gap-2"><h2>Insights</h2><progress></progress></div>`;
-
   if (error)
     return html`<${ErrorPanel} error=${error} onRetry=${() => {
       setError(null);
       load();
     }} />`;
+  if (!categories) return html`<p class="text-light">Loading...</p>`;
 
   return html`
     <div class="vstack gap-4">
       <h2>Insights</h2>
 
       ${
-        monthlyCats.length > 0 &&
-        html`
+        monthlyCats.length > 0
+          ? html`
         <div class="card" style="padding:1.25rem">
           <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
             <h3 style="margin:0">Budget Burndown</h3>
@@ -4681,54 +4642,284 @@ function Insights({ categoryId: routeCategoryId }) {
           }
         </div>
       `
+          : html`<p class="text-light">No monthly variable categories yet. Create one on the Categories page to see burndown charts.</p>`
       }
+    </div>
+  `;
+}
 
+// ---------------------------------------------------------------------------
+// Balances
+// ---------------------------------------------------------------------------
+
+function Balances() {
+  const [netWorth, setNetWorth] = useState(null);
+  const [accounts, setAccounts] = useState(null);
+  const [projection, setProjection] = useState(null);
+  const [error, setError] = useState(null);
+  const [expandedAcct, setExpandedAcct] = useState(null);
+  const [balanceHistory, setBalanceHistory] = useState({});
+  const [historyLoading, setHistoryLoading] = useState(null);
+  const [recordingAcct, setRecordingAcct] = useState(null);
+  const [recordForm, setRecordForm] = useState({
+    current: "",
+    snapshot_at: "",
+  });
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  function load() {
+    Promise.all([
+      api.get("/accounts/net-worth"),
+      api.get("/accounts"),
+      api.get("/accounts/net-worth/projection?months=12&interval_width=0.8"),
+    ])
+      .then(([nw, accts, proj]) => {
+        setNetWorth(nw);
+        setAccounts(accts);
+        setProjection(proj);
+      })
+      .catch(setError);
+  }
+
+  useEffect(load, []);
+
+  function toggleAccount(id) {
+    if (expandedAcct === id) {
+      setExpandedAcct(null);
+      return;
+    }
+    setExpandedAcct(id);
+    if (!balanceHistory[id]) {
+      setHistoryLoading(id);
+      api
+        .get(`/accounts/${id}/balances?limit=50`)
+        .then((data) => {
+          setBalanceHistory((prev) => ({ ...prev, [id]: data }));
+          setHistoryLoading(null);
+        })
+        .catch(() => setHistoryLoading(null));
+    }
+  }
+
+  async function recordBalance(accountId) {
+    if (!recordForm.current) return;
+    setRecordSaving(true);
+    try {
+      const body = { current: recordForm.current };
+      if (recordForm.snapshot_at)
+        body.snapshot_at = new Date(recordForm.snapshot_at).toISOString();
+      await api.post(`/accounts/${accountId}/balances`, body);
+      setRecordingAcct(null);
+      setRecordForm({ current: "", snapshot_at: "" });
+      // Refresh net worth and this account's history
+      const [nw, hist] = await Promise.all([
+        api.get("/accounts/net-worth"),
+        api.get(`/accounts/${accountId}/balances?limit=50`),
+      ]);
+      setNetWorth(nw);
+      setBalanceHistory((prev) => ({ ...prev, [accountId]: hist }));
+    } catch (err) {
+      setError(err);
+    } finally {
+      setRecordSaving(false);
+    }
+  }
+
+  const manualAcctIds = useMemo(() => {
+    if (!accounts) return new Set();
+    return new Set(accounts.filter((a) => !a.connection_id).map((a) => a.id));
+  }, [accounts]);
+
+  const latestNetWorth = useMemo(() => {
+    if (!projection?.history?.length) return null;
+    const last = projection.history[projection.history.length - 1];
+    return { date: last.date, value: Number(last.value) };
+  }, [projection]);
+
+  const forecastEnd = useMemo(() => {
+    if (!projection?.forecast?.length) return null;
+    const last = projection.forecast[projection.forecast.length - 1];
+    return {
+      date: last.date,
+      value: last.value,
+      lower: last.lower,
+      upper: last.upper,
+    };
+  }, [projection]);
+
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
+  if (!netWorth) return html`<p class="text-light">Loading...</p>`;
+
+  return html`
+    <div class="vstack gap-4">
+      <h2>Balances</h2>
+
+      <!-- Net worth summary -->
       <div class="card" style="padding:1.25rem">
-        <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
-          <h3 style="margin:0">Net Worth Projection</h3>
-          ${
-            projection?.message &&
-            html`<span class="badge" data-variant="warning">${projection.message}</span>`
-          }
-        </div>
+        <h3 style="margin:0 0 1rem">Net Worth</h3>
+        <span style="font-size:var(--text-2);font-weight:700;color:${Number(netWorth.total) >= 0 ? "var(--success)" : "var(--danger)"}">
+          ${formatAmount(netWorth.total, { decimals: 0 })}
+        </span>
 
         ${
-          latestNetWorth &&
+          netWorth.accounts.length > 0 &&
           html`
-          <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
-            <div class="vstack gap-0">
-              <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Current</span>
-              <span style="font-size:var(--text-4);font-weight:600;color:${latestNetWorth.value >= 0 ? "var(--success)" : "var(--danger)"}">
-                ${formatAmount(latestNetWorth.value, { decimals: 0 })}
-              </span>
-              <span class="text-light" style="font-size:var(--text-8)">${formatDateShort(latestNetWorth.date)}</span>
-            </div>
-            ${
-              forecastEnd &&
-              html`
-              <div class="vstack gap-0">
-                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">12-month forecast</span>
-                <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
-                  ${formatAmount(forecastEnd.value, { decimals: 0 })}
-                </span>
-                <span class="text-light" style="font-size:var(--text-8)">
-                  ${formatAmount(forecastEnd.lower, { decimals: 0 })} – ${formatAmount(forecastEnd.upper, { decimals: 0 })}
-                </span>
-              </div>
-              <div class="vstack gap-0">
-                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Change</span>
-                <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
-                  ${formatAmount(forecastEnd.value - latestNetWorth.value, { decimals: 0, sign: true })}
-                </span>
-              </div>
-            `
-            }
-          </div>
+          <table style="width:100%;margin-top:1rem">
+            <tbody>
+              ${netWorth.accounts.map(
+                (a) => html`
+                <tr key=${a.account_id} style="cursor:pointer" onClick=${() => toggleAccount(a.account_id)}>
+                  <td>
+                    <span>${a.account_name}</span>
+                    <span class="text-light" style="margin-left:0.5rem;font-size:var(--text-8)">${a.account_type}</span>
+                  </td>
+                  <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:500">
+                    ${formatAmount(a.current, { decimals: 0 })}
+                  </td>
+                  <td class="text-light" style="text-align:right;width:6rem;font-size:var(--text-8)">
+                    ${timeAgo(a.snapshot_at)}
+                  </td>
+                  <td style="text-align:right;width:2rem;color:var(--muted-foreground)">
+                    ${expandedAcct === a.account_id ? "\u25B4" : "\u25BE"}
+                  </td>
+                </tr>
+                ${
+                  expandedAcct === a.account_id &&
+                  html`
+                  <tr>
+                    <td colspan="4" style="padding:0.5rem 0 0.5rem 1rem">
+                      ${
+                        historyLoading === a.account_id
+                          ? html`<progress></progress>`
+                          : balanceHistory[a.account_id]?.length > 0
+                            ? html`
+                            <table style="width:100%;font-size:var(--text-8)">
+                              <thead>
+                                <tr class="text-light">
+                                  <th style="text-align:left;font-weight:normal">Date</th>
+                                  <th style="text-align:right;font-weight:normal">Balance</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                ${balanceHistory[a.account_id].map(
+                                  (s) => html`
+                                  <tr key=${s.id}>
+                                    <td>${formatDate(s.snapshot_at)}</td>
+                                    <td style="text-align:right;font-variant-numeric:tabular-nums">
+                                      ${formatAmount(s.current)}
+                                    </td>
+                                  </tr>
+                                `,
+                                )}
+                              </tbody>
+                            </table>
+                          `
+                            : html`<p class="text-light">No balance history.</p>`
+                      }
+                      ${
+                        manualAcctIds.has(a.account_id) &&
+                        html`
+                        ${
+                          recordingAcct === a.account_id
+                            ? html`
+                            <form class="hstack gap-2" style="margin-top:0.5rem;align-items:end" onSubmit=${(
+                              e,
+                            ) => {
+                              e.preventDefault();
+                              recordBalance(a.account_id);
+                            }}>
+                              <div class="vstack gap-0">
+                                <label style="font-size:var(--text-8)" class="text-light">Amount</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  required
+                                  value=${recordForm.current}
+                                  onInput=${(e) => setRecordForm((f) => ({ ...f, current: e.target.value }))}
+                                  style="width:8rem"
+                                />
+                              </div>
+                              <div class="vstack gap-0">
+                                <label style="font-size:var(--text-8)" class="text-light">Date (optional)</label>
+                                <input
+                                  type="date"
+                                  value=${recordForm.snapshot_at}
+                                  onInput=${(e) => setRecordForm((f) => ({ ...f, snapshot_at: e.target.value }))}
+                                />
+                              </div>
+                              <button data-variant="primary" data-compact disabled=${recordSaving}>Save</button>
+                              <button type="button" data-compact onClick=${() => setRecordingAcct(null)}>Cancel</button>
+                            </form>
+                          `
+                            : html`<button data-compact style="margin-top:0.5rem" onClick=${() => setRecordingAcct(a.account_id)}>Record Balance</button>`
+                        }
+                      `
+                      }
+                    </td>
+                  </tr>
+                `
+                }
+              `,
+              )}
+            </tbody>
+          </table>
         `
         }
-
-        <${NetWorthChart} data=${projection} />
       </div>
+
+      <!-- Net worth projection -->
+      ${
+        projection &&
+        html`
+        <div class="card" style="padding:1.25rem">
+          <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
+            <h3 style="margin:0">Projection</h3>
+            ${projection?.message && html`<span class="badge" data-variant="warning">${projection.message}</span>`}
+          </div>
+
+          ${
+            latestNetWorth &&
+            html`
+            <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
+              <div class="vstack gap-0">
+                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Current</span>
+                <span style="font-size:var(--text-4);font-weight:600;color:${latestNetWorth.value >= 0 ? "var(--success)" : "var(--danger)"}">
+                  ${formatAmount(latestNetWorth.value, { decimals: 0 })}
+                </span>
+                <span class="text-light" style="font-size:var(--text-8)">${formatDateShort(latestNetWorth.date)}</span>
+              </div>
+              ${
+                forecastEnd &&
+                html`
+                <div class="vstack gap-0">
+                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">12-month forecast</span>
+                  <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
+                    ${formatAmount(forecastEnd.value, { decimals: 0 })}
+                  </span>
+                  <span class="text-light" style="font-size:var(--text-8)">
+                    ${formatAmount(forecastEnd.lower, { decimals: 0 })} – ${formatAmount(forecastEnd.upper, { decimals: 0 })}
+                  </span>
+                </div>
+                <div class="vstack gap-0">
+                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Change</span>
+                  <span style="font-size:var(--text-4);font-weight:600;color:${forecastEnd.value >= latestNetWorth.value ? "var(--success)" : "var(--danger)"}">
+                    ${formatAmount(forecastEnd.value - latestNetWorth.value, { decimals: 0, sign: true })}
+                  </span>
+                </div>
+              `
+              }
+            </div>
+          `
+          }
+
+          <${NetWorthChart} data=${projection} />
+        </div>
+      `
+      }
     </div>
   `;
 }
@@ -4806,6 +4997,7 @@ function App() {
     if (s0 === "rules") return html`<${Rules} />`;
     if (s0 === "insights")
       return html`<${Insights} categoryId=${s1 || null} />`;
+    if (s0 === "balances") return html`<${Balances} />`;
     if (s0 === "connections") return html`<${Connections} />`;
     if (s0 === "jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;
@@ -4819,6 +5011,7 @@ function App() {
           <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Dashboard<//>
           <${NavLink} href="/transactions">Transactions<//>
           <${NavLink} href="/insights">Insights<//>
+          <${NavLink} href="/balances">Balances<//>
           <${NavLink} href="/categories">Categories<//>
           <${NavLink} href="/rules">Rules<//>
           <${NavLink} href="/connections">Connections<//>
