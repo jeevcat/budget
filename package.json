@@ -1,6 +1,7 @@
 {
   "name": "budget-frontend",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "bun build frontend/index.html --outdir frontend/dist --minify",
     "dev": "bun build frontend/index.html --outdir frontend/dist --watch",
