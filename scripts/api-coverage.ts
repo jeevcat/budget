@@ -35,20 +35,13 @@ const funcs: { name: string; count: number; filenames: string[] }[] =
 // 2. Get endpoints from the OpenAPI spec (via ephemeral test server)
 // ---------------------------------------------------------------------------
 console.error("Fetching OpenAPI spec...");
-const specResult = await $`./scripts/api --test /docs`.quiet().nothrow();
+const specResult =
+  await $`./scripts/api --test /docs/openapi.json`.quiet().nothrow();
 if (specResult.exitCode !== 0) {
   console.error("Failed to fetch OpenAPI spec");
   process.exit(1);
 }
-const specHtml = specResult.stdout.toString();
-const m = specHtml.match(
-  /type="application\/json">\s*(\{[\s\S]*?\})\s*<\/script>/,
-);
-if (!m) {
-  console.error("Could not extract OpenAPI spec from /api/docs");
-  process.exit(1);
-}
-const spec = JSON.parse(m[1]);
+const spec = JSON.parse(specResult.stdout.toString());
 
 // ---------------------------------------------------------------------------
 // 3. Build endpoint list from spec
