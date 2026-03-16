@@ -1,10 +1,10 @@
+use std::collections::{BTreeMap, HashSet};
+use std::num::NonZeroU32;
+
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use uuid::Uuid;
-
-use std::collections::HashSet;
-use std::num::NonZeroU32;
 
 use crate::error::Error;
 use crate::models::{
@@ -232,8 +232,7 @@ pub fn detect_budget_month_boundaries(
     salary_txns.sort_by_key(|t| t.posted_date);
 
     // Group salary transactions by calendar month (year, month)
-    let mut by_month: std::collections::BTreeMap<(i32, u32), Vec<NaiveDate>> =
-        std::collections::BTreeMap::new();
+    let mut by_month: BTreeMap<(i32, u32), Vec<NaiveDate>> = BTreeMap::new();
 
     for txn in &salary_txns {
         let key = (txn.posted_date.year(), txn.posted_date.month());
@@ -395,6 +394,209 @@ pub fn build_monthly_spending_series(
             spent.to_string().parse::<f64>().unwrap_or(0.0)
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Salary arrival prediction
+// ---------------------------------------------------------------------------
+
+/// Status of a single salary source (one root salary category).
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Clone, Serialize)]
+pub struct SalarySourceStatus {
+    pub category_id: CategoryId,
+    pub category_name: String,
+    pub arrived: bool,
+    pub arrived_date: Option<NaiveDate>,
+    /// ETS point forecast (day-of-month)
+    pub predicted_day: Option<u32>,
+    /// 80% confidence lower bound (day-of-month)
+    pub predicted_day_lower: Option<u32>,
+    /// 80% confidence upper bound (day-of-month)
+    pub predicted_day_upper: Option<u32>,
+    /// Today is past the upper bound and salary hasn't arrived
+    pub late: bool,
+}
+
+/// Aggregate salary arrival status across all sources.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Clone, Serialize)]
+pub struct SalaryStatus {
+    pub expected_count: u32,
+    pub arrived_count: u32,
+    pub sources: Vec<SalarySourceStatus>,
+    pub any_late: bool,
+    pub all_arrived: bool,
+}
+
+/// Days in a given month.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    // First day of next month minus one day
+    let next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    };
+    next.and_then(|d| d.pred_opt()).map_or(28, |d| d.day())
+}
+
+/// Predict salary arrival dates for the current (open) budget month.
+///
+/// For each salary root category, examines historical positive transactions
+/// in its subtree, extracts the earliest arrival day-of-month per calendar
+/// month, and uses ETS (or median fallback) to predict when the next
+/// salary will arrive.
+#[must_use]
+pub fn predict_salary_arrivals(
+    transactions: &[Transaction],
+    categories: &[Category],
+    today: NaiveDate,
+    expected_salary_count: NonZeroU32,
+) -> SalaryStatus {
+    let salary_roots: Vec<&Category> = categories
+        .iter()
+        .filter(|c| c.budget.mode() == Some(BudgetMode::Salary))
+        .collect();
+
+    if salary_roots.is_empty() {
+        return SalaryStatus {
+            expected_count: expected_salary_count.get(),
+            arrived_count: 0,
+            sources: Vec::new(),
+            any_late: false,
+            all_arrived: true,
+        };
+    }
+
+    let current_ym = (today.year(), today.month());
+    let max_day = days_in_month(today.year(), today.month());
+
+    let mut sources = Vec::new();
+
+    for root in &salary_roots {
+        let subtree = collect_budget_subtree(root.id, categories);
+        let subtree_set: HashSet<CategoryId> = subtree.into_iter().collect();
+
+        // Collect positive transactions in the subtree
+        let salary_txns: Vec<&Transaction> = transactions
+            .iter()
+            .filter(|t| {
+                t.amount > Decimal::ZERO
+                    && t.categorization
+                        .category_id()
+                        .is_some_and(|cid| subtree_set.contains(&cid))
+            })
+            .collect();
+
+        // Group by (year, month), take earliest date per month
+        let mut by_month: BTreeMap<(i32, u32), NaiveDate> = BTreeMap::new();
+        for txn in &salary_txns {
+            let key = (txn.posted_date.year(), txn.posted_date.month());
+            by_month
+                .entry(key)
+                .and_modify(|existing| {
+                    if txn.posted_date < *existing {
+                        *existing = txn.posted_date;
+                    }
+                })
+                .or_insert(txn.posted_date);
+        }
+
+        // Check if current month has an arrival
+        let arrived_date = by_month.get(&current_ym).copied();
+        let arrived = arrived_date.is_some();
+
+        // Historical days (excluding current month)
+        let historical_days: Vec<f64> = by_month
+            .iter()
+            .filter(|(ym, _)| **ym != current_ym)
+            .map(|(_, date)| f64::from(date.day()))
+            .collect();
+
+        let (predicted_day, predicted_day_lower, predicted_day_upper) =
+            predict_arrival_day(&historical_days, max_day);
+
+        let late = !arrived && predicted_day_upper.is_some_and(|upper| today.day() > upper);
+
+        sources.push(SalarySourceStatus {
+            category_id: root.id,
+            category_name: root.name.to_string(),
+            arrived,
+            arrived_date,
+            predicted_day,
+            predicted_day_lower,
+            predicted_day_upper,
+            late,
+        });
+    }
+
+    let arrived_count: u32 = sources
+        .iter()
+        .filter(|s| s.arrived)
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX);
+
+    SalaryStatus {
+        expected_count: expected_salary_count.get(),
+        arrived_count,
+        any_late: sources.iter().any(|s| s.late),
+        all_arrived: sources.iter().all(|s| s.arrived),
+        sources,
+    }
+}
+
+/// Predict arrival day-of-month from historical data.
+///
+/// Returns `(point, lower, upper)` clamped to `1..=max_day`.
+/// Uses ETS with ≥3 months of history, otherwise falls back to median/range.
+fn predict_arrival_day(
+    historical_days: &[f64],
+    max_day: u32,
+) -> (Option<u32>, Option<u32>, Option<u32>) {
+    if historical_days.is_empty() {
+        return (None, None, None);
+    }
+
+    let clamp = |v: f64| {
+        let rounded = v.round().max(1.0).min(f64::from(max_day));
+        // Safe: value is clamped to 1..=max_day (≤31)
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let day = rounded as u32;
+        day
+    };
+
+    if historical_days.len() >= 3 {
+        // Try ETS prediction
+        if let Some((point, lower, upper)) = try_ets_predict(historical_days) {
+            return (Some(clamp(point)), Some(clamp(lower)), Some(clamp(upper)));
+        }
+    }
+
+    // Fallback: median as point, min/max as bounds
+    let mut sorted = historical_days.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted[sorted.len() / 2];
+    let min = sorted.first().copied().unwrap_or(median);
+    let max = sorted.last().copied().unwrap_or(median);
+
+    (Some(clamp(median)), Some(clamp(min)), Some(clamp(max)))
+}
+
+/// Attempt ETS forecast for 1 step ahead with 80% prediction intervals.
+fn try_ets_predict(data: &[f64]) -> Option<(f64, f64, f64)> {
+    use augurs::Fit as _;
+    use augurs::Predict as _;
+    use augurs::ets::AutoETS;
+
+    let ets = AutoETS::new(1, "ZZN").ok()?;
+    let fitted = ets.fit(data).ok()?;
+    let forecast = fitted.predict(1, 0.80).ok()?;
+    let point = *forecast.point.first()?;
+    let intervals = forecast.intervals.as_ref()?;
+    let lower = *intervals.lower.first()?;
+    let upper = *intervals.upper.first()?;
+    Some((point, lower, upper))
 }
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -3916,5 +4118,220 @@ mod tests {
         assert_eq!(points.len(), 3);
         assert_eq!(points[0].cumulative, dec!(100));
         assert_eq!(points[2].cumulative, dec!(100));
+    }
+
+    // -----------------------------------------------------------------------
+    // predict_salary_arrivals
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn salary_prediction_no_salary_categories() {
+        let categories = vec![food_category()];
+        let transactions = vec![];
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 16), nz(1));
+        assert!(status.sources.is_empty());
+        assert!(status.all_arrived);
+        assert!(!status.any_late);
+    }
+
+    #[test]
+    fn salary_prediction_single_source_arrived() {
+        let categories = vec![salary_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 14),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 3, 15),
+            ),
+        ];
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 16), nz(1));
+        assert_eq!(status.arrived_count, 1);
+        assert!(status.all_arrived);
+        assert!(!status.any_late);
+        assert_eq!(status.sources.len(), 1);
+        assert!(status.sources[0].arrived);
+        assert_eq!(status.sources[0].arrived_date, Some(date(2025, 3, 15)));
+    }
+
+    #[test]
+    fn salary_prediction_sufficient_history() {
+        let categories = vec![salary_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 10, 25),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 11, 25),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 12, 24),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 25),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 25),
+            ),
+        ];
+        // March 10 — salary not yet arrived
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 10), nz(1));
+        assert_eq!(status.arrived_count, 0);
+        assert!(!status.all_arrived);
+        let src = &status.sources[0];
+        assert!(!src.arrived);
+        assert!(src.predicted_day.is_some());
+        // With consistent ~25th arrivals, prediction should be around 24-26
+        let day = src.predicted_day.unwrap();
+        assert!(day >= 20 && day <= 31, "predicted day {day} out of range");
+    }
+
+    #[test]
+    fn salary_prediction_late() {
+        let categories = vec![salary_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 10, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 11, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2024, 12, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 14),
+            ),
+        ];
+        // March 28 — well past predicted upper bound (~15-16)
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 28), nz(1));
+        assert!(!status.all_arrived);
+        assert!(status.any_late);
+        assert!(status.sources[0].late);
+    }
+
+    #[test]
+    fn salary_prediction_multiple_sources_partial() {
+        let salary2 = Category {
+            budget: BudgetConfig::Salary,
+            ..make_category(2, "Government", None)
+        };
+        let cat2_id = CategoryId::from_uuid(uuid::Uuid::from_u128(2));
+        let categories = vec![salary_category(), salary2];
+        let transactions = vec![
+            // Source 1 arrived in March
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 15),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 3, 14),
+            ),
+            // Source 2 not arrived in March
+            make_txn(
+                Categorization::Manual(cat2_id),
+                dec!(500),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(cat2_id),
+                dec!(500),
+                date(2025, 2, 20),
+            ),
+        ];
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 16), nz(2));
+        assert_eq!(status.expected_count, 2);
+        assert_eq!(status.arrived_count, 1);
+        assert!(!status.all_arrived);
+        assert_eq!(status.sources.len(), 2);
+        let arrived: Vec<_> = status.sources.iter().filter(|s| s.arrived).collect();
+        let pending: Vec<_> = status.sources.iter().filter(|s| !s.arrived).collect();
+        assert_eq!(arrived.len(), 1);
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn salary_prediction_insufficient_history_fallback() {
+        let categories = vec![salary_category()];
+        // Only 2 months of history — below ETS threshold of 3
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 2, 22),
+            ),
+        ];
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 3, 10), nz(1));
+        let src = &status.sources[0];
+        assert!(!src.arrived);
+        // Fallback to median/range
+        assert!(src.predicted_day.is_some());
+        let day = src.predicted_day.unwrap();
+        assert!(day >= 20 && day <= 22, "fallback predicted day {day}");
+        assert_eq!(src.predicted_day_lower, Some(20));
+        assert_eq!(src.predicted_day_upper, Some(22));
+    }
+
+    #[test]
+    fn salary_prediction_ets_failure_graceful() {
+        let categories = vec![salary_category()];
+        // Single month — no ETS possible, should fall back
+        let transactions = vec![make_txn(
+            Categorization::Manual(salary_cat_id()),
+            dec!(3000),
+            date(2025, 1, 15),
+        )];
+        let status = predict_salary_arrivals(&transactions, &categories, date(2025, 2, 10), nz(1));
+        let src = &status.sources[0];
+        assert!(!src.arrived);
+        // Single data point → median fallback
+        assert_eq!(src.predicted_day, Some(15));
+        assert_eq!(src.predicted_day_lower, Some(15));
+        assert_eq!(src.predicted_day_upper, Some(15));
     }
 }

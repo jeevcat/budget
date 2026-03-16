@@ -23,6 +23,7 @@ import {
   formatDateFull,
   formatDateRange,
   formatDateShort,
+  formatOrdinal,
   formatRemittanceInfo,
   paceBadge,
   paceColor,
@@ -447,6 +448,32 @@ function NetSummary({ ledger }) {
       <div class="net-summary-side">
         <span class="net-summary-label text-light">Out</span>
         <span class="net-summary-value" style="color:var(--danger)">${formatAmount(ledger.total_out, { decimals: 0 })}</span>
+      </div>
+    </div>
+  `;
+}
+
+function SalaryStatusBar({ salaryStatus, isCurrentMonth }) {
+  if (!isCurrentMonth || !salaryStatus || salaryStatus.all_arrived) return null;
+  const variant = salaryStatus.any_late ? "warning" : "default";
+  return html`
+    <div role="alert" data-variant=${variant} style="margin-bottom:0.75rem">
+      <div class="hstack gap-2" style="align-items:center;flex-wrap:wrap">
+        <strong>Salary ${salaryStatus.arrived_count}/${salaryStatus.expected_count}</strong>
+        ${salaryStatus.sources.map(
+          (s) => html`
+            ${
+              s.arrived
+                ? html`<span class="badge success">\u2713 ${s.category_name}</span>`
+                : s.late
+                  ? html`<span class="badge danger">${s.category_name} late</span>`
+                  : s.predicted_day_lower != null &&
+                      s.predicted_day_upper != null
+                    ? html`<span class="badge secondary">${s.category_name} ~${formatOrdinal(s.predicted_day_lower)}${s.predicted_day_lower !== s.predicted_day_upper ? `\u2013${formatOrdinal(s.predicted_day_upper)}` : ""}</span>`
+                    : html`<span class="badge secondary">${s.category_name} pending</span>`
+            }
+          `,
+        )}
       </div>
     </div>
   `;
@@ -1201,6 +1228,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
             >\u203A</button>
           </div>
         </div>
+        <${SalaryStatusBar} salaryStatus=${statusResp.salary_status} isCurrentMonth=${isCurrentMonth} />
         <${NetSummary} ledger=${monthlyLedger} />
         ${
           monthlyLedger

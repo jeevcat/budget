@@ -8,10 +8,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use budget_core::budget::{
-    DailySpendPoint, budget_year_months, build_daily_cumulative_series, collect_budget_subtree,
-    collect_category_subtree, compute_budget_status, compute_project_child_breakdowns,
-    detect_budget_month_boundaries, effective_budget_mode, filter_for_budget, filter_for_project,
-    is_in_budget_month, salary_category_ids,
+    DailySpendPoint, SalaryStatus, budget_year_months, build_daily_cumulative_series,
+    collect_budget_subtree, collect_category_subtree, compute_budget_status,
+    compute_project_child_breakdowns, detect_budget_month_boundaries, effective_budget_mode,
+    filter_for_budget, filter_for_project, is_in_budget_month, predict_salary_arrivals,
+    salary_category_ids,
 };
 use budget_core::models::{
     BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, BudgetType, Category, CategoryId,
@@ -128,6 +129,8 @@ struct StatusResponse {
     project_transactions: Vec<Transaction>,
     /// The budget year (calendar year of the January-anchored start).
     budget_year: i32,
+    /// Salary arrival prediction (only present for the current open month).
+    salary_status: Option<SalaryStatus>,
 }
 
 /// Build the budgets sub-router.
@@ -746,6 +749,17 @@ async fn status(
         build_ledgers(&statuses, &classified, &categories, year_months.len());
     let project_summary = compute_project_group_summary(&projects);
 
+    let salary_status = if month.end_date.is_none() {
+        Some(predict_salary_arrivals(
+            &transactions,
+            &categories,
+            Utc::now().date_naive(),
+            state.expected_salary_count,
+        ))
+    } else {
+        None
+    };
+
     Ok(Json(StatusResponse {
         month: month.clone(),
         statuses,
@@ -757,6 +771,7 @@ async fn status(
         annual_transactions: classified.annual,
         project_transactions: classified.project,
         budget_year: classified.budget_year,
+        salary_status,
     }))
 }
 

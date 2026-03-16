@@ -124,6 +124,27 @@ data class TransactionEntry(
 )
 
 @Serializable
+data class SalarySourceStatus(
+    @SerialName("category_id") val categoryId: String,
+    @SerialName("category_name") val categoryName: String,
+    val arrived: Boolean,
+    @SerialName("arrived_date") val arrivedDate: String? = null,
+    @SerialName("predicted_day") val predictedDay: Int? = null,
+    @SerialName("predicted_day_lower") val predictedDayLower: Int? = null,
+    @SerialName("predicted_day_upper") val predictedDayUpper: Int? = null,
+    val late: Boolean = false,
+)
+
+@Serializable
+data class SalaryStatus(
+    @SerialName("expected_count") val expectedCount: Int,
+    @SerialName("arrived_count") val arrivedCount: Int,
+    val sources: List<SalarySourceStatus> = emptyList(),
+    @SerialName("any_late") val anyLate: Boolean = false,
+    @SerialName("all_arrived") val allArrived: Boolean = false,
+)
+
+@Serializable
 data class StatusResponse(
     val month: BudgetMonth,
     val statuses: List<BudgetStatus>,
@@ -137,4 +158,5 @@ data class StatusResponse(
     @SerialName("project_transactions")
     val projectTransactions: List<TransactionEntry> = emptyList(),
     @SerialName("budget_year") val budgetYear: Int = 0,
+    @SerialName("salary_status") val salaryStatus: SalaryStatus? = null,
 )
