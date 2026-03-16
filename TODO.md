@@ -2,7 +2,6 @@
 
 ## API Design
 
-- [ ] **JSON error responses**: Migrate `AppError` from plain text body to JSON (`{"error": "message"}`) with appropriate status codes. Currently errors return `(StatusCode, String)` as plain text
 - [ ] **Cursor-based pagination**: Migrate `/transactions` from offset-based (`limit`/`offset`/`total`) to cursor-based pagination (`cursor`/`limit` request, `next_cursor` response). Update `TransactionPage`, the DB query, and the frontend
 
 ## Bugs

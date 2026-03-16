@@ -56,8 +56,14 @@ const api = {
         : undefined,
     });
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${res.status}: ${text}`);
+      let msg;
+      try {
+        const body = await res.json();
+        msg = body.error || JSON.stringify(body);
+      } catch {
+        msg = await res.text();
+      }
+      throw new Error(`${res.status}: ${msg}`);
     }
     if (res.status === 204 || res.status === 202) return null;
     return res.json();
