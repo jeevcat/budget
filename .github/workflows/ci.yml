@@ -91,14 +91,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run build
-      - name: Migrations
-        run: |
-          cargo fetch --quiet
-          for f in migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
-          APALIS_DIR=$(find ~/.cargo/registry/src -maxdepth 2 -name 'apalis-postgres-*' -type d -print -quit 2>/dev/null)
-          if [ -n "$APALIS_DIR" ]; then for f in "$APALIS_DIR"/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done; fi
       - name: Build server
         run: cargo build
+        env:
+          SQLX_OFFLINE: "true"
       - name: Install Playwright browsers
         run: bun run playwright install --with-deps chromium
       - name: Run E2E tests
