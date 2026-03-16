@@ -84,6 +84,7 @@ jobs:
           - 5432:5432
     env:
       DATABASE_URL: postgresql://budget:budget@localhost:5432/budget
+      PGPASSWORD: budget
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
