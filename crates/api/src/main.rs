@@ -279,6 +279,8 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         ))
         .split_for_parts();
 
+    let openapi_json = openapi.clone();
+
     let static_service = ServeDir::new(frontend_dir)
         .append_index_html_on_directories(true)
         .fallback(tower_http::services::ServeFile::new(
@@ -287,6 +289,10 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route(
+            "/api/docs/openapi.json",
+            get(move || async move { Json(openapi_json) }),
+        )
         .merge(routes::connections::callback_router())
         .nest("/api", auth::router().merge(api_router))
         .merge(utoipa_scalar::Scalar::with_url("/api/docs", openapi))

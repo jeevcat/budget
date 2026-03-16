@@ -31,6 +31,7 @@ scripts/api --test -X POST -d '{"name":"Checking","account_type":"checking","cur
 
 - Browse interactively: `http://localhost:3001/api/docs` (Scalar UI)
 - Fetch the spec via script: `scripts/api /docs` (production) or `scripts/api --test /docs` (temp server)
+- Fetch the raw OpenAPI JSON: `scripts/api /docs/openapi.json` or `scripts/api --test /docs/openapi.json`
 - All handlers are annotated with `#[utoipa::path]`; schemas are auto-generated from types via `#[derive(ToSchema)]`
 - Cross-crate schemas gated behind the `openapi` cargo feature flag
 
