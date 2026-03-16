@@ -887,6 +887,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
+  const [netWorth, setNetWorth] = useState(null);
   const [error, setError] = useState(null);
 
   const selectedMonthId = monthId;
@@ -903,11 +904,13 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       api.get(statusUrl),
       api.get("/categories"),
       api.get("/budgets/months"),
+      api.get("/accounts/net-worth"),
     ])
-      .then(([s, c, m]) => {
+      .then(([s, c, m, nw]) => {
         setStatusResp(s);
         setCategories(c);
         setMonths(m);
+        setNetWorth(nw);
       })
       .catch(setError);
   }, []);
@@ -1306,6 +1309,34 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       `
       }
     </ot-tabs>
+
+    ${
+      netWorth &&
+      netWorth.accounts.length > 0 &&
+      html`
+      <a href="#/balances" class="card" style="display:block;padding:var(--space-4);margin-top:1rem;text-decoration:none;color:inherit">
+        <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+          <h3 style="margin:0">Net Worth</h3>
+          <span class="text-light text-body" style="margin-left:auto">\u203A</span>
+        </div>
+        <span style="font-size:var(--text-2);font-weight:700;color:${Number(netWorth.total) >= 0 ? "var(--success)" : "var(--danger)"}">
+          ${formatAmount(netWorth.total, { decimals: 0 })}
+        </span>
+        <div class="hstack gap-3" style="margin-top:0.75rem;flex-wrap:wrap">
+          ${netWorth.accounts.map(
+            (a) => html`
+            <div key=${a.account_id} style="min-width:0">
+              <div class="text-light text-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.account_name}</div>
+              <div class="mono text-body" style="color:${Number(a.balance) >= 0 ? "var(--success)" : "var(--danger)"}">
+                ${formatAmount(a.balance, { decimals: 0 })}
+              </div>
+            </div>
+          `,
+          )}
+        </div>
+      </a>
+    `
+    }
 
     <article class="card" style="padding:var(--space-4);margin-top:1rem">
       <div

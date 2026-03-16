@@ -13,8 +13,6 @@
 - [ ] **Late/missing salary UX**: Verify the previous budget month stays open indefinitely and surface a clear signal when expected salaries haven't arrived
 
 ### Frontend
-- [ ] **Balances page**: New page for all asset/balance visibility. Move net worth projection chart from Insights to Balances. Add net worth summary card (total + per-account breakdown via `GET /accounts/net-worth`), per-account balance history (expandable, via `GET /accounts/{id}/balances`), and manual balance recording button for manual accounts (`POST /accounts/{id}/balances`)
-- [ ] **Dashboard net worth card**: Show current net worth at a glance using `GET /accounts/net-worth` with per-account breakdown and link to Balances page
 - [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
 - [ ] **Amazon account rename**: Add click-to-edit label on Amazon account cards using `PATCH /amazon/accounts/{id}`. Currently requires delete + recreate
 - [ ] **Amazon matches list**: Show which transactions matched which Amazon orders on the Connections page using `GET /amazon/matches`. Currently matches are only visible one-at-a-time in the transaction detail panel
