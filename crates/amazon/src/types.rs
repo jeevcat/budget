@@ -27,21 +27,29 @@ pub struct AmazonTransaction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AmazonOrder {
     pub order_id: String,
     pub order_date: Option<NaiveDate>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub grand_total: Option<Decimal>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub subtotal: Option<Decimal>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub shipping: Option<Decimal>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub vat: Option<Decimal>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub promotion: Option<Decimal>,
     pub items: Vec<AmazonItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AmazonItem {
     pub title: String,
     pub asin: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub price: Option<Decimal>,
     pub quantity: u32,
     pub seller: Option<String>,
@@ -49,6 +57,7 @@ pub struct AmazonItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AmazonCookie {
     pub name: String,
     pub value: String,

@@ -3,6 +3,9 @@ name = "budget-providers"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 budget-core = { workspace = true }
 chrono = { workspace = true }
@@ -17,6 +20,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 trait-variant = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -1,10 +1,10 @@
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
 use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use budget_core::budget::{
@@ -21,28 +21,30 @@ use budget_core::models::{
 use crate::routes::AppError;
 use crate::state::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct StatusQuery {
     month_id: Option<Uuid>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ChildCategoryInfo {
     category_id: CategoryId,
     category_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct StatusEntry {
     #[serde(flatten)]
+    #[schema(inline)]
     status: BudgetStatus,
     children: Vec<ChildCategoryInfo>,
     has_children: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ProjectStatusEntry {
     #[serde(flatten)]
+    #[schema(inline)]
     status: BudgetStatus,
     children: Vec<ProjectChildSpending>,
     has_children: bool,
@@ -51,20 +53,25 @@ struct ProjectStatusEntry {
     finished: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct BudgetGroupSummary {
+    #[schema(value_type = String)]
     total_budget: Decimal,
+    #[schema(value_type = String)]
     total_spent: Decimal,
+    #[schema(value_type = String)]
     remaining: Decimal,
     over_budget_count: usize,
+    #[schema(value_type = String)]
     bar_max: Decimal,
 }
 
 /// A single line item in a cash-flow section, grouped by category.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct CashFlowItem {
     category_id: Option<CategoryId>,
     label: String,
+    #[schema(value_type = String)]
     amount: Decimal,
     transaction_count: usize,
     transactions: Vec<Transaction>,
@@ -74,30 +81,38 @@ struct CashFlowItem {
 ///
 /// Replaces the old `BudgetGroupSummary` (for monthly/annual) + `CashFlowSummary` pair.
 /// Budgeted category rows stay in `statuses[]` — they already carry pace/spent/budget/remaining.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct LedgerSummary {
     /// Salary income + positive unbudgeted transactions ("money in").
     income: Vec<CashFlowItem>,
+    #[schema(value_type = String)]
     total_in: Decimal,
     /// Negative unbudgeted / uncategorized transactions.
     unbudgeted: Vec<CashFlowItem>,
     /// Budgeted spending + unbudgeted spending.
+    #[schema(value_type = String)]
     total_out: Decimal,
     /// `total_in - total_out`
+    #[schema(value_type = String)]
     net: Decimal,
     /// Salary income minus `total_out`.
+    #[schema(value_type = String)]
     saved: Decimal,
     /// `max(spent, budget)` across budgeted categories (for bar scaling).
+    #[schema(value_type = String)]
     bar_max: Decimal,
     /// Year-to-date monthly-budgeted total budget, included in `total_out`.
+    #[schema(value_type = String)]
     monthly_budget: Decimal,
     /// Year-to-date monthly-budgeted spending, included in `total_out`.
+    #[schema(value_type = String)]
     monthly_spent: Decimal,
     /// `monthly_budget - monthly_spent`
+    #[schema(value_type = String)]
     monthly_remaining: Decimal,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct StatusResponse {
     month: BudgetMonth,
     statuses: Vec<StatusEntry>,
@@ -124,11 +139,11 @@ struct StatusResponse {
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/status", get(status))
-        .route("/months", get(list_months))
-        .route("/burndown", get(burndown))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(status))
+        .routes(routes!(list_months))
+        .routes(routes!(burndown))
 }
 
 /// Derive budget months by fetching only salary-category transactions.
@@ -641,6 +656,7 @@ fn seasonal_context_for(
 ///
 /// Returns 404 if the requested budget month does not exist.
 /// Returns `AppError` if any database query fails.
+#[utoipa::path(get, path = "/status", tag = "budgets", params(StatusQuery), responses((status = 200, body = StatusResponse)), security(("bearer_token" = [])))]
 async fn status(
     State(state): State<AppState>,
     Query(query): Query<StatusQuery>,
@@ -749,31 +765,34 @@ async fn status(
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/months", tag = "budgets", responses((status = 200, body = Vec<BudgetMonth>)), security(("bearer_token" = [])))]
 async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMonth>>, AppError> {
     let categories = state.db.list_categories().await?;
     let months = derive_months(&state, &categories).await?;
     Ok(Json(months))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct BurndownQuery {
     category_id: Uuid,
     month_id: Option<Uuid>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct BurndownMonthSeries {
     start_date: NaiveDate,
     total_days: u16,
     points: Vec<DailySpendPoint>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct BurndownResponse {
     category_name: String,
+    #[schema(value_type = String)]
     budget_amount: Decimal,
     current: BurndownMonthSeries,
     prior: Vec<BurndownMonthSeries>,
+    #[schema(value_type = Option<String>)]
     predicted_landing: Option<Decimal>,
 }
 
@@ -784,6 +803,7 @@ struct BurndownResponse {
 ///
 /// Returns 404 if the category or budget month doesn't exist.
 /// Returns 400 if the category is not a monthly-mode variable budget.
+#[utoipa::path(get, path = "/burndown", tag = "budgets", params(BurndownQuery), responses((status = 200, body = BurndownResponse)), security(("bearer_token" = [])))]
 async fn burndown(
     State(state): State<AppState>,
     Query(query): Query<BurndownQuery>,

@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get};
+use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use budget_core::models::{
@@ -40,12 +41,12 @@ fn generate_state_token() -> String {
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct AspspsQuery {
     pub country: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AuthorizeRequest {
     pub aspsp_name: String,
     pub aspsp_country: String,
@@ -63,12 +64,12 @@ fn default_psu_type() -> String {
     "personal".to_owned()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct AuthorizeResponse {
     authorization_url: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct CallbackQuery {
     pub code: Option<String>,
     pub state: String,
@@ -88,12 +89,12 @@ struct StateTokenData {
 // ---------------------------------------------------------------------------
 
 /// Build the connections sub-router (authenticated endpoints).
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list))
-        .route("/aspsps", get(search_aspsps))
-        .route("/authorize", axum::routing::post(authorize))
-        .route("/{id}", delete(revoke))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(search_aspsps))
+        .routes(routes!(authorize))
+        .routes(routes!(revoke))
 }
 
 /// Build the callback router (unauthenticated).
@@ -102,6 +103,7 @@ pub fn callback_router() -> Router<AppState> {
 }
 
 /// GET /api/connections/aspsps?country=XX
+#[utoipa::path(get, path = "/aspsps", tag = "connections", params(AspspsQuery), responses((status = 200, body = Vec<AspspEntry>)), security(("bearer_token" = [])))]
 async fn search_aspsps(
     State(state): State<AppState>,
     Query(query): Query<AspspsQuery>,
@@ -118,6 +120,7 @@ async fn search_aspsps(
 }
 
 /// POST /api/connections/authorize
+#[utoipa::path(post, path = "/authorize", tag = "connections", request_body = AuthorizeRequest, responses((status = 200, body = AuthorizeResponse)), security(("bearer_token" = [])))]
 async fn authorize(
     State(state): State<AppState>,
     Json(body): Json<AuthorizeRequest>,
@@ -179,6 +182,7 @@ async fn authorize(
 }
 
 /// GET /api/connections/callback?code=X&state=Y  (unauthenticated)
+#[utoipa::path(get, path = "/api/connections/callback", tag = "connections", params(CallbackQuery), responses((status = 201, body = Connection)))]
 async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
@@ -297,12 +301,14 @@ fn parse_cash_account_type(cash_type: Option<&str>) -> AccountType {
 }
 
 /// GET /api/connections
+#[utoipa::path(get, path = "/", tag = "connections", responses((status = 200, body = Vec<Connection>)), security(("bearer_token" = [])))]
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Connection>>, AppError> {
     let connections = state.db.list_connections().await?;
     Ok(Json(connections))
 }
 
 /// DELETE /api/connections/{id}
+#[utoipa::path(delete, path = "/{id}", tag = "connections", params(("id" = ConnectionId, Path, description = "Connection UUID")), responses((status = 204)), security(("bearer_token" = [])))]
 async fn revoke(
     State(state): State<AppState>,
     Path(id): Path<ConnectionId>,

@@ -13,6 +13,7 @@ pub struct AmazonEnrichment {
 
 /// Aggregate statistics for Amazon enrichment.
 #[derive(Debug, serde::Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AmazonEnrichmentStats {
     pub total_transactions: i64,
     pub matched_transactions: i64,

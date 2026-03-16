@@ -177,6 +177,7 @@ impl<'de> Deserialize<'de> for BudgetConfig {
 // ---------------------------------------------------------------------------
 
 /// A correlation link to another transaction (transfer or reimbursement).
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Correlation {
     pub partner_id: TransactionId,
@@ -195,6 +196,8 @@ const MAX_CATEGORY_NAME_LEN: usize = 100;
 /// - No colons — hierarchy is expressed via `parent_id`, not embedded in names
 /// - At most [`MAX_CATEGORY_NAME_LEN`] UTF-8 bytes
 /// - No control characters (U+0000–U+001F, U+007F–U+009F)
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct CategoryName(String);
@@ -327,6 +330,7 @@ impl AccountOrigin {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
@@ -337,6 +341,7 @@ pub struct Account {
     pub account_type: AccountType,
     pub currency: CurrencyCode,
     #[serde(rename = "connection_id", with = "account_origin_serde")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, format = "uuid"))]
     pub origin: AccountOrigin,
 }
 
@@ -360,6 +365,7 @@ mod account_origin_serde {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub id: ConnectionId,
@@ -370,6 +376,7 @@ pub struct Connection {
     pub status: ConnectionStatus,
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Category {
     pub id: CategoryId,
@@ -378,6 +385,7 @@ pub struct Category {
     /// Budget configuration (mode + mode-specific parameters).
     /// Serializes as flat fields for API compatibility.
     #[serde(flatten)]
+    #[cfg_attr(feature = "openapi", schema(value_type = openapi_schemas::BudgetConfigSchema, inline))]
     pub budget: BudgetConfig,
 }
 
@@ -529,6 +537,7 @@ mod correlation_serde {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub id: TransactionId,
@@ -536,8 +545,11 @@ pub struct Transaction {
     /// Categorization state: uncategorized, or categorized by manual/rule/LLM.
     /// Serialized as flat `category_id` + `category_method` fields.
     #[serde(flatten, with = "categorization_serde")]
+    #[cfg_attr(feature = "openapi", schema(value_type = openapi_schemas::CategorizationSchema, inline))]
     pub categorization: Categorization,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub amount: Decimal,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub original_amount: Option<Decimal>,
     pub original_currency: Option<CurrencyCode>,
     pub merchant_name: String,
@@ -549,6 +561,7 @@ pub struct Transaction {
     /// Correlation link to a partner transaction (transfer or reimbursement).
     /// Serialized as flat `correlation_id` + `correlation_type` fields.
     #[serde(flatten, with = "correlation_serde")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<openapi_schemas::CorrelationSchema>, inline))]
     pub correlation: Option<Correlation>,
     pub suggested_category: Option<String>,
     pub counterparty_name: Option<String>,
@@ -593,15 +606,18 @@ pub struct Transaction {
     pub note: Option<String>,
     /// Account balance after this transaction (amount component).
     /// Source: Enable Banking `balance_after_transaction.amount`
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub balance_after_transaction: Option<Decimal>,
     /// Currency of the balance after transaction (usually same as account currency).
     /// Source: Enable Banking `balance_after_transaction.currency`
     pub balance_after_transaction_currency: Option<CurrencyCode>,
     /// Non-IBAN creditor account IDs: JSONB array of `{identification, scheme_name, issuer}`.
     /// Source: Enable Banking `creditor_account_additional_identification`
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub creditor_account_additional_id: Option<serde_json::Value>,
     /// Non-IBAN debtor account IDs: JSONB array of `{identification, scheme_name, issuer}`.
     /// Source: Enable Banking `debtor_account_additional_identification`
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub debtor_account_additional_id: Option<serde_json::Value>,
     /// Amazon item titles from matched orders (not persisted; enrichment-only).
     #[serde(skip)]
@@ -648,6 +664,7 @@ impl Default for Transaction {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleCondition {
     pub field: MatchField,
@@ -687,10 +704,12 @@ impl RuleTarget {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub id: RuleId,
     #[serde(flatten, with = "rule_target_serde")]
+    #[cfg_attr(feature = "openapi", schema(value_type = openapi_schemas::RuleTargetSchema, inline))]
     pub target: RuleTarget,
     pub conditions: Vec<RuleCondition>,
     pub priority: Priority,
@@ -735,6 +754,7 @@ mod rule_target_serde {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetMonth {
     pub id: BudgetMonthId,
@@ -818,20 +838,26 @@ pub fn parse_qualified_name(name: &str) -> Option<(&str, &str)> {
 }
 
 /// Spending breakdown for a direct child of a project category.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectChildSpending {
     pub category_id: CategoryId,
     pub category_name: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub spent: Decimal,
 }
 
 /// Result of computing budget status for a category in a budget month
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
     pub category_id: CategoryId,
     pub category_name: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub budget_amount: Decimal,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub spent: Decimal,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub remaining: Decimal,
     /// Time remaining in the budget period. `None` for open-ended projects.
     /// Unit: days for Monthly/Project, months for Annual.
@@ -839,6 +865,7 @@ pub struct BudgetStatus {
     pub pace: PaceIndicator,
     /// Signed deviation from pro-rata expected spend (`spent - expected`).
     /// Positive = over pace, negative = under pace.
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub pace_delta: Decimal,
     pub budget_mode: BudgetMode,
     /// Seasonal multiplier vs. mean historical spend (e.g. 1.15 = 15% above average).
@@ -853,22 +880,68 @@ pub struct BudgetStatus {
 ///
 /// Captured automatically during bank sync or entered manually for accounts
 /// without bank connections (brokerage, pension, etc.).
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSnapshot {
     pub id: BalanceSnapshotId,
     pub account_id: AccountId,
     /// Booked (current) balance.
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub current: Decimal,
     /// Available balance — nullable for manual entries that only have one figure.
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub available: Option<Decimal>,
     pub currency: CurrencyCode,
     pub snapshot_at: DateTime<Utc>,
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AmazonAccount {
     pub id: AmazonAccountId,
     pub label: String,
+}
+
+#[cfg(feature = "openapi")]
+#[allow(dead_code)]
+pub mod openapi_schemas {
+    use chrono::NaiveDate;
+
+    use super::super::enums::{BudgetMode, BudgetType, CategoryMethod, CorrelationType, RuleType};
+    use super::super::id::{CategoryId, TransactionId};
+
+    /// Flat JSON representation of `BudgetConfig` for `OpenAPI` docs.
+    #[derive(utoipa::ToSchema)]
+    pub struct BudgetConfigSchema {
+        pub budget_mode: Option<BudgetMode>,
+        pub budget_type: Option<BudgetType>,
+        #[schema(value_type = Option<String>)]
+        pub budget_amount: Option<String>,
+        pub project_start_date: Option<NaiveDate>,
+        pub project_end_date: Option<NaiveDate>,
+    }
+
+    /// Flat JSON representation of `Categorization` for `OpenAPI` docs.
+    #[derive(utoipa::ToSchema)]
+    pub struct CategorizationSchema {
+        pub category_id: Option<CategoryId>,
+        pub category_method: Option<CategoryMethod>,
+    }
+
+    /// Flat JSON representation of `Option<Correlation>` for `OpenAPI` docs.
+    #[derive(utoipa::ToSchema)]
+    pub struct CorrelationSchema {
+        pub correlation_id: Option<TransactionId>,
+        pub correlation_type: Option<CorrelationType>,
+    }
+
+    /// Flat JSON representation of `RuleTarget` for `OpenAPI` docs.
+    #[derive(utoipa::ToSchema)]
+    pub struct RuleTargetSchema {
+        pub rule_type: RuleType,
+        pub target_category_id: Option<CategoryId>,
+        pub target_correlation_type: Option<CorrelationType>,
+    }
 }
 
 #[cfg(test)]

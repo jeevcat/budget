@@ -10,6 +10,7 @@ use super::{ApalisPool, JOBS_TABLE};
 
 /// A single job record from the apalis queue.
 #[derive(Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct JobRecord {
     pub id: String,
     pub job_type: String,
@@ -22,6 +23,7 @@ pub struct JobRecord {
 
 /// Aggregate queue depth for one job type.
 #[derive(Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct QueueCount {
     pub job_type: String,
     pub active: i64,

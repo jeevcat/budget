@@ -397,9 +397,11 @@ pub fn build_monthly_spending_series(
         .collect()
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize)]
 pub struct DailySpendPoint {
     pub day: u16,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub cumulative: Decimal,
 }
 

@@ -6,8 +6,12 @@ use axum::http::{Request, StatusCode};
 use axum::middleware;
 use sqlx::PgPool;
 use tower::ServiceExt;
+use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_scalar::Servable;
 
 use api::auth;
+use api::openapi::ApiDoc;
 use api::routes;
 use api::state::AppState;
 use budget_jobs::{JobStorage, PipelineStorage};
@@ -62,23 +66,29 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         },
     };
 
-    let api_routes = Router::new()
-        .nest("/accounts", routes::accounts::router())
+    let (api_routes, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .nest(
+            "/accounts",
+            routes::accounts::router().merge(routes::import::router()),
+        )
         .nest("/transactions", routes::transactions::router())
         .nest("/categories", routes::categories::router())
         .nest("/rules", routes::rules::router())
         .nest("/budgets", routes::budgets::router())
         .nest("/jobs", routes::jobs::router())
         .nest("/connections", routes::connections::router())
+        .nest("/amazon", routes::amazon::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,
-        ));
+        ))
+        .split_for_parts();
 
     let app = Router::new()
         .route("/health", axum::routing::get(health))
         .merge(routes::connections::callback_router())
         .nest("/api", auth::router().merge(api_routes))
+        .merge(utoipa_scalar::Scalar::with_url("/api/docs", openapi))
         .with_state(state);
 
     (app, db)
@@ -1496,4 +1506,77 @@ async fn balance_snapshot_list_with_limit(pool: PgPool) {
     let snapshots: Vec<budget_core::models::BalanceSnapshot> =
         serde_json::from_slice(&body).expect("parse list");
     assert_eq!(snapshots.len(), 2);
+}
+
+// ===========================================================================
+// OpenAPI
+// ===========================================================================
+
+#[sqlx::test]
+async fn openapi_spec_is_valid_and_complete(pool: PgPool) {
+    let (app, _db) = setup(pool).await;
+
+    let (status, body) = send(app, get_unauthenticated("/api/docs")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let html = String::from_utf8(body).expect("valid utf-8");
+    let json_start = html
+        .find(r#"type="application/json">"#)
+        .expect("spec in page")
+        + r#"type="application/json">"#.len();
+    let json_end = html[json_start..]
+        .find("</script>")
+        .expect("closing script")
+        + json_start;
+    let spec: serde_json::Value =
+        serde_json::from_str(html[json_start..json_end].trim()).expect("valid JSON");
+
+    assert_eq!(spec["openapi"], "3.1.0");
+    assert_eq!(spec["info"]["title"], "Budget API");
+
+    let paths = spec["paths"].as_object().expect("paths object");
+    assert!(
+        paths.len() >= 35,
+        "expected at least 35 paths, got {}",
+        paths.len()
+    );
+
+    // Spot-check a few key endpoints exist
+    assert!(paths.contains_key("/accounts"), "missing /accounts");
+    assert!(paths.contains_key("/transactions"), "missing /transactions");
+    assert!(paths.contains_key("/categories"), "missing /categories");
+    assert!(paths.contains_key("/rules"), "missing /rules");
+    assert!(
+        paths.contains_key("/budgets/status"),
+        "missing /budgets/status"
+    );
+    assert!(
+        paths.contains_key("/amazon/accounts"),
+        "missing /amazon/accounts"
+    );
+
+    let schemas = spec["components"]["schemas"]
+        .as_object()
+        .expect("schemas object");
+    assert!(
+        schemas.len() >= 50,
+        "expected at least 50 schemas, got {}",
+        schemas.len()
+    );
+
+    // Spot-check key schemas
+    assert!(schemas.contains_key("Account"), "missing Account schema");
+    assert!(
+        schemas.contains_key("Transaction"),
+        "missing Transaction schema"
+    );
+    assert!(schemas.contains_key("Category"), "missing Category schema");
+    assert!(schemas.contains_key("Rule"), "missing Rule schema");
+
+    // Security scheme is defined
+    let security_schemes = &spec["components"]["securitySchemes"];
+    assert!(
+        security_schemes["bearer_token"].is_object(),
+        "missing bearer_token security scheme"
+    );
 }

@@ -1,10 +1,10 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::{
     CategoryId, CategoryMethod, CorrelationType, MatchField, Priority, Rule, RuleCondition, RuleId,
@@ -17,14 +17,14 @@ use crate::routes::AppError;
 use crate::state::AppState;
 
 /// A single condition in a rule request body.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ConditionRequest {
     pub field: MatchField,
     pub pattern: String,
 }
 
 /// Request body for creating or updating a rule.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRule {
     pub rule_type: RuleType,
     pub conditions: Vec<ConditionRequest>,
@@ -56,9 +56,10 @@ impl CreateRule {
 /// Request body for previewing a rule, extending `CreateRule` with an optional
 /// transaction ID to always include in the match set (even if it is no longer
 /// rule-eligible, e.g. because the user just manually categorized it).
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PreviewRule {
     #[serde(flatten)]
+    #[schema(inline)]
     pub rule: CreateRule,
     pub include_transaction_id: Option<TransactionId>,
 }
@@ -75,12 +76,12 @@ pub struct PreviewRule {
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list).post(create))
-        .route("/{id}", axum::routing::put(update).delete(remove))
-        .route("/apply", axum::routing::post(apply))
-        .route("/preview", axum::routing::post(preview))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(update, remove))
+        .routes(routes!(apply))
+        .routes(routes!(preview))
 }
 
 /// Convert a `CreateRule` body into a domain `Rule`, reusing the shared logic
@@ -118,6 +119,7 @@ fn into_rule(body: CreateRule, id: RuleId) -> Result<Rule, AppError> {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/", tag = "rules", responses((status = 200, body = Vec<Rule>)), security(("bearer_token" = [])))]
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Rule>>, AppError> {
     let rules = state.db.list_rules().await?;
     Ok(Json(rules))
@@ -129,6 +131,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Rule>>, AppError
 ///
 /// Returns 400 if any field value is invalid.
 /// Returns `AppError` if the database insert fails.
+#[utoipa::path(post, path = "/", tag = "rules", request_body = CreateRule, responses((status = 201, body = Rule)), security(("bearer_token" = [])))]
 async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateRule>,
@@ -152,6 +155,7 @@ async fn create(
 ///
 /// Returns 400 if the ID or any field value is invalid.
 /// Returns `AppError` if the database update fails.
+#[utoipa::path(put, path = "/{id}", tag = "rules", params(("id" = RuleId, Path, description = "Rule UUID")), request_body = CreateRule, responses((status = 200, body = Rule)), security(("bearer_token" = [])))]
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<RuleId>,
@@ -168,6 +172,7 @@ async fn update(
 ///
 /// Returns 400 if the ID is not a valid UUID.
 /// Returns `AppError` if the database delete fails.
+#[utoipa::path(delete, path = "/{id}", tag = "rules", params(("id" = RuleId, Path, description = "Rule UUID")), responses((status = 204)), security(("bearer_token" = [])))]
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<RuleId>,
@@ -180,7 +185,7 @@ async fn remove(
 // Apply
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ApplyRulesResponse {
     categorized_count: u32,
 }
@@ -193,6 +198,7 @@ struct ApplyRulesResponse {
 /// # Errors
 ///
 /// Returns `AppError` on database failures.
+#[utoipa::path(post, path = "/apply", tag = "rules", responses((status = 200, body = ApplyRulesResponse)), security(("bearer_token" = [])))]
 async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>, AppError> {
     let raw_rules = state
         .db
@@ -253,15 +259,16 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
 // Preview
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct PreviewMatch {
     id: String,
     merchant_name: String,
     posted_date: NaiveDate,
+    #[schema(value_type = String)]
     amount: Decimal,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct PreviewResponse {
     match_count: u32,
     sample: Vec<PreviewMatch>,
@@ -274,6 +281,7 @@ struct PreviewResponse {
 ///
 /// Returns 400 if the rule body is invalid or the pattern fails to compile.
 /// Returns `AppError` on database failures.
+#[utoipa::path(post, path = "/preview", tag = "rules", request_body = PreviewRule, responses((status = 200, body = PreviewResponse)), security(("bearer_token" = [])))]
 async fn preview(
     State(state): State<AppState>,
     Json(body): Json<PreviewRule>,

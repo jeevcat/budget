@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use budget_amazon::{AmazonCookie, CookieStore};
@@ -27,35 +27,32 @@ use crate::state::AppState;
 /// - `POST /accounts/{id}/sync` -- trigger sync for account
 /// - `GET /enrichment/{transaction_id}` -- Amazon enrichment for a bank transaction
 /// - `GET /matches` -- list matched bank transactions with Amazon details
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/accounts", get(list_accounts).post(create_account))
-        .route(
-            "/accounts/{id}",
-            axum::routing::delete(delete_account).patch(update_account),
-        )
-        .route("/accounts/{id}/cookies", post(upload_cookies))
-        .route("/accounts/{id}/status", get(account_status))
-        .route("/accounts/{id}/sync", post(trigger_sync))
-        .route("/enrichment/{transaction_id}", get(get_enrichment))
-        .route("/matches", get(list_matches))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_accounts, create_account))
+        .routes(routes!(delete_account, update_account))
+        .routes(routes!(upload_cookies))
+        .routes(routes!(account_status))
+        .routes(routes!(trigger_sync))
+        .routes(routes!(get_enrichment))
+        .routes(routes!(list_matches))
 }
 
 // ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateAccountRequest {
     label: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct UpdateAccountRequest {
     label: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct AccountStatus {
     account: AmazonAccount,
     cookies_valid: Option<bool>,
@@ -64,13 +61,13 @@ struct AccountStatus {
     stats: Option<AmazonEnrichmentStats>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct MatchedTransaction {
     bank_transaction_id: Uuid,
     orders: Vec<budget_amazon::AmazonOrder>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CookiesPayload {
     cookies: CookiesInput,
 }
@@ -83,6 +80,19 @@ enum CookiesInput {
     /// Raw text — auto-detected as JSON array or Netscape cookies.txt.
     Raw(String),
 }
+
+impl utoipa::PartialSchema for CookiesInput {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        // Accepts either a JSON array of cookie objects or a raw string
+        utoipa::openapi::schema::ObjectBuilder::new()
+            .description(Some(
+                "Pre-parsed JSON array of cookies or raw Netscape cookies.txt string",
+            ))
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for CookiesInput {}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -98,6 +108,7 @@ fn cookies_path_for(dir: &Path, account_id: AmazonAccountId) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 /// List all Amazon accounts.
+#[utoipa::path(get, path = "/accounts", tag = "amazon", responses((status = 200, body = Vec<AmazonAccount>)), security(("bearer_token" = [])))]
 async fn list_accounts(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AmazonAccount>>, AppError> {
@@ -106,6 +117,7 @@ async fn list_accounts(
 }
 
 /// Create a new Amazon account.
+#[utoipa::path(post, path = "/accounts", tag = "amazon", request_body = CreateAccountRequest, responses((status = 201, body = AmazonAccount)), security(("bearer_token" = [])))]
 async fn create_account(
     State(state): State<AppState>,
     Json(body): Json<CreateAccountRequest>,
@@ -119,6 +131,7 @@ async fn create_account(
 }
 
 /// Delete an Amazon account and all its data.
+#[utoipa::path(delete, path = "/accounts/{id}", tag = "amazon", params(("id" = AmazonAccountId, Path, description = "Amazon account UUID")), responses((status = 204)), security(("bearer_token" = [])))]
 async fn delete_account(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
@@ -140,6 +153,7 @@ async fn delete_account(
 }
 
 /// Update an Amazon account's label.
+#[utoipa::path(patch, path = "/accounts/{id}", tag = "amazon", params(("id" = AmazonAccountId, Path, description = "Amazon account UUID")), request_body = UpdateAccountRequest, responses((status = 200, body = AmazonAccount)), security(("bearer_token" = [])))]
 async fn update_account(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
@@ -172,6 +186,7 @@ async fn update_account(
 // ---------------------------------------------------------------------------
 
 /// Upload Amazon cookies for a specific account.
+#[utoipa::path(post, path = "/accounts/{id}/cookies", tag = "amazon", params(("id" = AmazonAccountId, Path, description = "Amazon account UUID")), request_body = CookiesPayload, responses((status = 200, body = serde_json::Value)), security(("bearer_token" = [])))]
 async fn upload_cookies(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
@@ -220,6 +235,7 @@ async fn upload_cookies(
 }
 
 /// Get Amazon account status: cookie validity and enrichment stats.
+#[utoipa::path(get, path = "/accounts/{id}/status", tag = "amazon", params(("id" = AmazonAccountId, Path, description = "Amazon account UUID")), responses((status = 200, body = AccountStatus)), security(("bearer_token" = [])))]
 async fn account_status(
     State(app): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
@@ -256,6 +272,7 @@ async fn account_status(
 /// Enqueue an Amazon enrichment sync for a specific account.
 ///
 /// Returns 202 Accepted immediately; the sync runs asynchronously via the job queue.
+#[utoipa::path(post, path = "/accounts/{id}/sync", tag = "amazon", params(("id" = AmazonAccountId, Path, description = "Amazon account UUID")), responses((status = 202)), security(("bearer_token" = [])))]
 async fn trigger_sync(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<AmazonAccountId>,
@@ -305,6 +322,7 @@ async fn trigger_sync(
 // ---------------------------------------------------------------------------
 
 /// List bank transactions that have been matched to Amazon transactions.
+#[utoipa::path(get, path = "/matches", tag = "amazon", responses((status = 200, body = Vec<MatchedTransaction>)), security(("bearer_token" = [])))]
 async fn list_matches(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<MatchedTransaction>>, AppError> {
@@ -324,6 +342,7 @@ async fn list_matches(
 }
 
 /// Get Amazon enrichment details for a specific bank transaction.
+#[utoipa::path(get, path = "/enrichment/{transaction_id}", tag = "amazon", params(("transaction_id" = Uuid, Path, description = "Bank transaction UUID")), responses((status = 200, body = MatchedTransaction)), security(("bearer_token" = [])))]
 async fn get_enrichment(
     State(state): State<AppState>,
     AxumPath(transaction_id): AxumPath<Uuid>,

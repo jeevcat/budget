@@ -8,11 +8,11 @@ name = "budget"
 path = "src/main.rs"
 
 [dependencies]
-budget-amazon = { workspace = true }
-budget-core = { workspace = true }
-budget-db = { workspace = true }
-budget-jobs = { workspace = true }
-budget-providers = { workspace = true }
+budget-amazon = { workspace = true, features = ["openapi"] }
+budget-core = { workspace = true, features = ["openapi"] }
+budget-db = { workspace = true, features = ["openapi"] }
+budget-jobs = { workspace = true, features = ["openapi"] }
+budget-providers = { workspace = true, features = ["openapi"] }
 tokio = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
@@ -23,6 +23,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tower-http = { workspace = true }
 uuid = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-scalar = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true }

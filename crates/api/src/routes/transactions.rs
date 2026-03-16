@@ -1,8 +1,8 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::{
     Categorization, CategoryId, CategoryMethod, RuleType, Transaction, TransactionId,
@@ -15,7 +15,7 @@ use crate::routes::AppError;
 use crate::state::AppState;
 
 /// Request body for categorizing a transaction.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CategorizeRequest {
     /// The category UUID to assign.
     pub category_id: CategoryId,
@@ -33,18 +33,19 @@ pub struct CategorizeRequest {
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list))
-        .route("/uncategorized", get(uncategorized))
-        .route("/{id}", get(get_one))
-        .route("/{id}/categorize", post(categorize).delete(uncategorize))
-        .route("/{id}/generate-rule", post(generate_rule))
-        .route("/{id}/skip-correlation", post(skip_correlation))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(uncategorized))
+        .routes(routes!(get_one))
+        .routes(routes!(categorize, uncategorize))
+        .routes(routes!(generate_rule))
+        .routes(routes!(skip_correlation))
 }
 
 /// Page size for transaction listing (1–200, default 50).
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+#[schema(value_type = i64)]
 #[serde(transparent)]
 struct PageLimit(i64);
 
@@ -83,7 +84,8 @@ impl<'de> Deserialize<'de> for PageLimit {
 }
 
 /// Row offset for transaction listing (>= 0, default 0).
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+#[schema(value_type = i64)]
 #[serde(transparent)]
 struct PageOffset(i64);
 
@@ -108,7 +110,7 @@ impl<'de> Deserialize<'de> for PageOffset {
 }
 
 /// Query parameters for paginated transaction listing.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct ListQuery {
     #[serde(default)]
     limit: PageLimit,
@@ -121,7 +123,7 @@ struct ListQuery {
 }
 
 /// Paginated response wrapper for transaction listings.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct TransactionPage {
     items: Vec<Transaction>,
     total: i64,
@@ -142,6 +144,7 @@ struct TransactionPage {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/", tag = "transactions", params(ListQuery), responses((status = 200, body = TransactionPage)), security(("bearer_token" = [])))]
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
@@ -178,6 +181,7 @@ async fn list(
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/uncategorized", tag = "transactions", responses((status = 200, body = Vec<Transaction>)), security(("bearer_token" = [])))]
 async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transaction>>, AppError> {
     let transactions = state.db.get_uncategorized_transactions().await?;
     Ok(Json(transactions))
@@ -189,6 +193,7 @@ async fn uncategorized(State(state): State<AppState>) -> Result<Json<Vec<Transac
 ///
 /// Returns 400 if the ID is not a valid UUID.
 /// Returns 404 if no transaction exists with the given ID.
+#[utoipa::path(get, path = "/{id}", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), responses((status = 200, body = Transaction)), security(("bearer_token" = [])))]
 async fn get_one(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,
@@ -207,6 +212,7 @@ async fn get_one(
 ///
 /// Returns 400 if the transaction ID or category ID is not a valid UUID.
 /// Returns `AppError` if the database update fails.
+#[utoipa::path(post, path = "/{id}/categorize", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), request_body = CategorizeRequest, responses((status = 204)), security(("bearer_token" = [])))]
 async fn categorize(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,
@@ -233,6 +239,7 @@ async fn categorize(
 ///
 /// Returns 400 if the transaction ID is not a valid UUID.
 /// Returns `AppError` if the database update fails.
+#[utoipa::path(delete, path = "/{id}/categorize", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), responses((status = 204)), security(("bearer_token" = [])))]
 async fn uncategorize(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,
@@ -252,7 +259,7 @@ async fn uncategorize(
 // ---------------------------------------------------------------------------
 
 /// Request body for the skip-correlation endpoint.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SkipCorrelationRequest {
     pub skip: bool,
 }
@@ -263,6 +270,7 @@ pub struct SkipCorrelationRequest {
 ///
 /// Returns 400 if the ID is not a valid UUID.
 /// Returns `AppError` if the database update fails.
+#[utoipa::path(post, path = "/{id}/skip-correlation", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), request_body = SkipCorrelationRequest, responses((status = 204)), security(("bearer_token" = [])))]
 async fn skip_correlation(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,
@@ -276,14 +284,14 @@ async fn skip_correlation(
 // Generate Rule
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct GenerateRuleProposal {
     match_field: String,
     match_pattern: String,
     explanation: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct GenerateRuleResponse {
     target_category_id: String,
     category_name: String,
@@ -301,6 +309,7 @@ struct GenerateRuleResponse {
 /// Returns 404 if the transaction does not exist.
 /// Returns 400 if the transaction is uncategorized or was categorized by a rule.
 /// Returns `AppError` on database or LLM failures.
+#[utoipa::path(post, path = "/{id}/generate-rule", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), responses((status = 200, body = GenerateRuleResponse)), security(("bearer_token" = [])))]
 async fn generate_rule(
     State(state): State<AppState>,
     Path(id): Path<TransactionId>,

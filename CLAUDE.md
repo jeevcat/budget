@@ -17,6 +17,23 @@ scripts/api -X POST /rules/apply                     # POST
 scripts/api -X POST -d '{"key":"val"}' /some/endpoint  # POST with body
 ```
 
+### Test mode
+
+`scripts/api --test` spins up a temp database and ephemeral dev server, runs the request, then tears everything down. Useful for testing endpoints against a clean database without touching production data.
+
+```bash
+scripts/api --test /accounts                         # GET against empty database
+scripts/api --test /docs                             # fetch OpenAPI/Scalar docs page
+scripts/api --test -X POST -d '{"name":"Checking","account_type":"checking","currency":"EUR"}' /accounts
+```
+
+## API Documentation
+
+- Browse interactively: `http://localhost:3001/api/docs` (Scalar UI)
+- Fetch the spec via script: `scripts/api /docs` (production) or `scripts/api --test /docs` (temp server)
+- All handlers are annotated with `#[utoipa::path]`; schemas are auto-generated from types via `#[derive(ToSchema)]`
+- Cross-crate schemas gated behind the `openapi` cargo feature flag
+
 ## Config
 
 Path is determined by `confy` via the `directories` crate. Run `cargo run -- config` to print the resolved path. On this machine: `~/.config/budget/default-config.toml`.

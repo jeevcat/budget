@@ -3,6 +3,9 @@ name = "budget-db"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 budget-amazon = { workspace = true }
 budget-core = { workspace = true, features = ["sqlx"] }
@@ -12,6 +15,7 @@ rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

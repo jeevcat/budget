@@ -3,6 +3,9 @@ name = "budget-jobs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 apalis = { workspace = true }
 apalis-postgres = { workspace = true }
@@ -17,6 +20,7 @@ serde = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

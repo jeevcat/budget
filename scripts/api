@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 # Wrapper for authenticated calls to the local budget API.
 # Token is read from secrets and never printed to stdout.
+#
+# Modes:
+#   scripts/api /path          -- hit the production server (port 3001)
+#   scripts/api --test /path   -- spin up a temp database + dev server, run the
+#                                 request, then tear everything down
 set -euo pipefail
 
-PORT="${BUDGET_PORT:-3001}"
-BASE="http://localhost:${PORT}/api"
-
-TOKEN=$(awk '/\[budget\]/{found=1} found && /secret_key/{gsub(/.*= *"|"/, ""); print; exit}' ~/nix/secrets/secrets.toml)
-
-if [ -z "$TOKEN" ]; then
-  echo "error: could not read secret_key from ~/nix/secrets/secrets.toml" >&2
-  exit 1
-fi
-
+TEST_MODE=0
 METHOD="GET"
 BODY=""
 CONTENT_TYPE="application/json"
@@ -20,21 +16,27 @@ EXTRA_CURL_ARGS=()
 
 usage() {
   cat >&2 <<EOF
-Usage: scripts/api [-X METHOD] [-H HEADER] [-d BODY] [--data-binary @FILE] PATH
+Usage: scripts/api [--test] [-X METHOD] [-H HEADER] [-d BODY] [--data-binary @FILE] PATH
+
+Modes:
+  (default)  Hit the production server on port \$BUDGET_PORT (default 3001)
+  --test     Build, create a temp database, start a dev server, run the
+             request, then clean up. Useful for testing endpoints against
+             a clean database without touching production data.
 
 Examples:
   scripts/api /health
   scripts/api /budgets/status
   scripts/api -X POST /rules/apply
   scripts/api -X POST -d '{"key":"value"}' /some/endpoint
-  scripts/api -X PUT -d @file.json /some/endpoint
-  scripts/api -X POST -H 'Content-Type: text/csv' --data-binary @data.csv /import
+  scripts/api --test /docs                    # get OpenAPI spec page
 EOF
   exit 1
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --test) TEST_MODE=1; shift ;;
     -X) METHOD="$2"; shift 2 ;;
     -H) # Allow overriding Content-Type or adding headers
         if [[ "$2" == Content-Type:* ]]; then
@@ -55,6 +57,76 @@ done
 if [ -z "${PATH_ARG:-}" ]; then
   usage
 fi
+
+# ---------------------------------------------------------------------------
+# Test mode: temp database + ephemeral dev server
+# ---------------------------------------------------------------------------
+
+if [ "$TEST_MODE" = 1 ]; then
+  PORT=3099
+  TOKEN="test-secret-key"
+  BASE="http://localhost:${PORT}/api"
+  DB_NAME="budget_api_test_$$"
+  SERVER_PID=""
+
+  cleanup() {
+    if [ -n "$SERVER_PID" ]; then
+      kill "$SERVER_PID" 2>/dev/null || true
+      wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    dropdb -U budget -h localhost --if-exists "$DB_NAME" 2>/dev/null || true
+  }
+  trap cleanup EXIT
+
+  echo "building..." >&2
+  cargo build --quiet 2>&1 >&2
+
+  echo "creating temp database: $DB_NAME" >&2
+  createdb -U budget -h localhost "$DB_NAME"
+
+  DATABASE_URL="postgresql://budget@localhost:5432/${DB_NAME}" \
+    BUDGET_PORT="$PORT" \
+    BUDGET_SECRET_KEY="$TOKEN" \
+    ./target/debug/budget >/dev/null 2>&1 &
+  SERVER_PID=$!
+
+  # Wait for the server to become ready
+  for i in $(seq 1 30); do
+    if curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "error: server process died during startup" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+
+  if ! curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1; then
+    echo "error: server did not become ready" >&2
+    exit 1
+  fi
+  echo "server ready on port $PORT" >&2
+
+# ---------------------------------------------------------------------------
+# Production mode: hit the running server
+# ---------------------------------------------------------------------------
+
+else
+  PORT="${BUDGET_PORT:-3001}"
+  BASE="http://localhost:${PORT}/api"
+
+  TOKEN=$(awk '/\[budget\]/{found=1} found && /secret_key/{gsub(/.*= *"|"/, ""); print; exit}' ~/nix/secrets/secrets.toml)
+
+  if [ -z "$TOKEN" ]; then
+    echo "error: could not read secret_key from ~/nix/secrets/secrets.toml" >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Make the request
+# ---------------------------------------------------------------------------
 
 CURL_ARGS=(
   -s

@@ -20,6 +20,9 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_scalar::Servable;
 
 use api::auth;
 use api::routes;
@@ -258,7 +261,7 @@ fn init_tracing(config: &budget_core::Config) {
 
 /// Build the axum router with all API routes, auth middleware, and static file serving.
 fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
-    let api_routes = Router::new()
+    let (api_router, openapi) = OpenApiRouter::with_openapi(api::openapi::ApiDoc::openapi())
         .nest(
             "/accounts",
             routes::accounts::router().merge(routes::import::router()),
@@ -273,7 +276,8 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,
-        ));
+        ))
+        .split_for_parts();
 
     let static_service = ServeDir::new(frontend_dir)
         .append_index_html_on_directories(true)
@@ -284,7 +288,8 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(routes::connections::callback_router())
-        .nest("/api", auth::router().merge(api_routes))
+        .nest("/api", auth::router().merge(api_router))
+        .merge(utoipa_scalar::Scalar::with_url("/api/docs", openapi))
         .fallback_service(static_service)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

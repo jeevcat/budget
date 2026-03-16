@@ -1,8 +1,8 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::{BudgetConfig, Category, CategoryId, CategoryName};
 
@@ -13,7 +13,7 @@ use crate::state::AppState;
 ///
 /// All fields are parsed at deserialization time — no manual string parsing
 /// needed in handlers.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateCategory {
     /// Category display name (validated by `CategoryName`).
     pub name: CategoryName,
@@ -21,11 +21,12 @@ pub struct CreateCategory {
     pub parent_id: Option<CategoryId>,
     /// Budget configuration. Deserialized from flat fields via `BudgetConfig`.
     #[serde(flatten)]
+    #[schema(value_type = budget_core::models::openapi_schemas::BudgetConfigSchema, inline)]
     pub budget: BudgetConfig,
 }
 
 /// A single entry in the LLM suggestion histogram.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SuggestionEntry {
     pub category_name: String,
     pub count: i64,
@@ -43,17 +44,18 @@ pub struct SuggestionEntry {
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list).post(create))
-        .route("/suggestions", get(suggestions))
-        .route("/{id}", axum::routing::put(update).delete(remove))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(suggestions))
+        .routes(routes!(update, remove))
 }
 
 /// A category with its transaction count.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct CategoryWithCount {
     #[serde(flatten)]
+    #[schema(inline)]
     category: Category,
     transaction_count: i64,
 }
@@ -63,6 +65,7 @@ struct CategoryWithCount {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/", tag = "categories", responses((status = 200, body = Vec<CategoryWithCount>)), security(("bearer_token" = [])))]
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<CategoryWithCount>>, AppError> {
     let (categories, direct_counts) = tokio::try_join!(
         state.db.list_categories(),
@@ -102,6 +105,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<CategoryWithCoun
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/suggestions", tag = "categories", responses((status = 200, body = Vec<SuggestionEntry>)), security(("bearer_token" = [])))]
 async fn suggestions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SuggestionEntry>>, AppError> {
@@ -123,6 +127,7 @@ async fn suggestions(
 /// Returns 400 if the request body fails deserialization (invalid name,
 /// UUID, enum, decimal, or date).
 /// Returns `AppError` if the database insert fails.
+#[utoipa::path(post, path = "/", tag = "categories", request_body = CreateCategory, responses((status = 201, body = Category)), security(("bearer_token" = [])))]
 async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateCategory>,
@@ -144,6 +149,7 @@ async fn create(
 ///
 /// Returns 400 if the ID is not a valid UUID or the body fails deserialization.
 /// Returns `AppError` if the database update fails.
+#[utoipa::path(put, path = "/{id}", tag = "categories", params(("id" = CategoryId, Path, description = "Category UUID")), request_body = CreateCategory, responses((status = 200, body = Category)), security(("bearer_token" = [])))]
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<CategoryId>,
@@ -166,6 +172,7 @@ async fn update(
 ///
 /// Returns 400 if the ID is not a valid UUID.
 /// Returns `AppError` if the database delete fails.
+#[utoipa::path(delete, path = "/{id}", tag = "categories", params(("id" = CategoryId, Path, description = "Category UUID")), responses((status = 204)), security(("bearer_token" = [])))]
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<CategoryId>,

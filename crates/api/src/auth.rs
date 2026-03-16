@@ -75,8 +75,9 @@ pub async fn require_bearer_token(
     unauthorized("missing_token")
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct LoginRequest {
+    #[schema(value_type = String)]
     token: SecretKey,
 }
 
@@ -92,6 +93,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Validate the provided token and set an `HttpOnly` session cookie.
+#[utoipa::path(post, path = "/login", tag = "auth", request_body = LoginRequest, responses((status = 200)))]
 async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> Response {
     if state.secret_key.as_ref().is_empty() {
         return unauthorized("not_configured");
@@ -113,6 +115,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) ->
 }
 
 /// Clear the auth cookie.
+#[utoipa::path(post, path = "/logout", tag = "auth", responses((status = 200)))]
 async fn logout() -> Response {
     let cookie = format!("{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     (

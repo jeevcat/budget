@@ -55,6 +55,8 @@ macro_rules! impl_sqlx_text {
 /// Invariants:
 /// - Exactly 3 characters
 /// - All uppercase ASCII letters (A–Z)
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct CurrencyCode(String);
@@ -121,6 +123,8 @@ impl_sqlx_text!(CurrencyCode);
 /// - First 2 characters are uppercase ASCII letters (country code)
 /// - Characters 3–4 are ASCII digits (check digits)
 /// - Remaining characters are alphanumeric
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Iban(String);
@@ -187,6 +191,8 @@ impl_sqlx_text!(Iban);
 ///
 /// Invariants:
 /// - 8 or 11 uppercase alphanumeric characters
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Bic(String);
@@ -247,6 +253,8 @@ impl_sqlx_text!(Bic);
 ///
 /// Invariants:
 /// - Exactly 4 ASCII digits
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct MerchantCategoryCode(String);
@@ -305,6 +313,8 @@ impl_sqlx_text!(MerchantCategoryCode);
 /// Invariants:
 /// - Non-empty
 /// - Uppercase ASCII alphanumeric only (A–Z, 0–9)
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct DomainCode(String);
@@ -368,6 +378,8 @@ impl_sqlx_text!(DomainCode);
 /// - Non-empty
 /// - Uppercase ASCII alphanumeric and hyphens only (A–Z, 0–9, `-`)
 /// - No leading or trailing hyphens
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SubFamilyCode(String);
@@ -428,6 +440,7 @@ impl_sqlx_text!(SubFamilyCode);
 // ---------------------------------------------------------------------------
 
 /// FX rate type used in currency exchange transactions.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExchangeRateType {
     /// Agreed/contract rate
@@ -472,6 +485,7 @@ impl std::str::FromStr for ExchangeRateType {
 ///
 /// The known variants come from Enable Banking. Since the set may expand,
 /// unrecognised values are captured in `Other` rather than rejected.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReferenceNumberSchema {
     /// Belgian structured reference
@@ -572,6 +586,8 @@ macro_rules! impl_sqlx_int {
 ///
 /// Higher values indicate higher priority. Rules are evaluated in descending
 /// priority order; the first match wins.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = i32))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct Priority(i32);
@@ -617,6 +633,8 @@ impl_sqlx_int!(Priority, i32);
 // ---------------------------------------------------------------------------
 
 /// A validated authorization validity period in days (1–365).
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = u32))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ValidDays(u32);

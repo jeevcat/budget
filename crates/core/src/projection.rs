@@ -12,13 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::models::{AccountId, BalanceSnapshot};
 
 /// A single day's aggregated net worth.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetWorthPoint {
     pub date: NaiveDate,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub value: Decimal,
 }
 
 /// A single forecasted data point with confidence bounds.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForecastPoint {
     pub date: NaiveDate,
@@ -28,6 +31,7 @@ pub struct ForecastPoint {
 }
 
 /// Combined historical series and forward projection.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetWorthProjection {
     pub history: Vec<NetWorthPoint>,

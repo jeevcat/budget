@@ -1,17 +1,17 @@
 //! CSV import endpoint for accounts without API access (e.g. Amex EU).
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::post;
-use axum::{Json, Router};
 use serde::Serialize;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::AccountId;
 
 use crate::routes::AppError;
 use crate::state::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ImportResponse {
     imported: usize,
     duplicates: usize,
@@ -22,14 +22,15 @@ struct ImportResponse {
 ///
 /// Mounts:
 /// - `POST /{id}/import` — import a CSV file for the given account
-pub fn router() -> Router<AppState> {
-    Router::new().route("/{id}/import", post(import_csv))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(import_csv))
 }
 
 /// Import an Amex CSV export for a specific account.
 ///
 /// Expects `Content-Type: text/csv` with the raw CSV body.
 /// Deduplication is handled by the database upsert on `provider_transaction_id`.
+#[utoipa::path(post, path = "/{id}/import", tag = "import", params(("id" = AccountId, Path, description = "Account UUID")), request_body(content = String, content_type = "text/csv"), responses((status = 200, body = ImportResponse)), security(("bearer_token" = [])))]
 async fn import_csv(
     State(state): State<AppState>,
     Path(id): Path<AccountId>,

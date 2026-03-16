@@ -14,6 +14,8 @@ use super::ApalisPool;
 
 /// Whether a schedule run tracks a bank or Amazon account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(as = JobAccountType))]
 pub enum AccountType {
     Bank,
     Amazon,
@@ -41,6 +43,7 @@ impl FromStr for AccountType {
 
 /// Status of a schedule run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum RunStatus {
     Pending,
     Running,
@@ -74,6 +77,7 @@ impl FromStr for RunStatus {
 
 /// Reason a schedule run was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum TriggerReason {
     Scheduled,
     Retry,
@@ -120,6 +124,7 @@ pub struct ScheduleRun {
 
 /// Per-account schedule summary for the API response.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AccountScheduleStatus {
     pub account_id: Uuid,
     pub account_name: String,

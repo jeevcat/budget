@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountType {
@@ -44,6 +45,7 @@ impl std::str::FromStr for AccountType {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleType {
@@ -72,6 +74,7 @@ impl std::str::FromStr for RuleType {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchField {
@@ -118,6 +121,7 @@ impl std::str::FromStr for MatchField {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetMode {
@@ -155,6 +159,7 @@ impl std::str::FromStr for BudgetMode {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CorrelationType {
@@ -183,6 +188,7 @@ impl std::str::FromStr for CorrelationType {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionStatus {
@@ -214,6 +220,7 @@ impl std::str::FromStr for ConnectionStatus {
     }
 }
 
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CategoryMethod {
@@ -249,6 +256,7 @@ impl std::str::FromStr for CategoryMethod {
 ///
 /// Fixed expenses (rent, mortgage) hit the budget predictably in a lump sum.
 /// Variable expenses (groceries, dining) are spread over the period.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetType {
@@ -283,6 +291,7 @@ impl std::str::FromStr for BudgetType {
 ///
 /// Fixed categories can only produce: `Pending`, `OnTrack`, `OverBudget`.
 /// Variable categories can only produce: `UnderBudget`, `OnTrack`, `AbovePace`, `OverBudget`.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaceIndicator {

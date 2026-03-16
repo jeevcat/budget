@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::AccountId;
 use budget_jobs::queries::{JobRecord, QueueCount};
@@ -25,15 +25,15 @@ use crate::state::AppState;
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list_jobs))
-        .route("/counts", get(queue_counts))
-        .route("/schedule", get(schedule_status))
-        .route("/sync/{account_id}", post(trigger_sync))
-        .route("/categorize", post(trigger_categorize))
-        .route("/correlate", post(trigger_correlate))
-        .route("/pipeline/{account_id}", post(trigger_pipeline))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_jobs))
+        .routes(routes!(queue_counts))
+        .routes(routes!(schedule_status))
+        .routes(routes!(trigger_sync))
+        .routes(routes!(trigger_categorize))
+        .routes(routes!(trigger_correlate))
+        .routes(routes!(trigger_pipeline))
 }
 
 /// List all jobs ordered by most recent first.
@@ -41,6 +41,7 @@ pub fn router() -> Router<AppState> {
 /// # Errors
 ///
 /// Returns `AppError` on database failure.
+#[utoipa::path(get, path = "/", tag = "jobs", responses((status = 200, body = Vec<JobRecord>)), security(("bearer_token" = [])))]
 async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>, AppError> {
     let jobs = budget_jobs::queries::list_jobs(&state.apalis_pool)
         .await
@@ -58,6 +59,7 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<JobRecord>>
 /// # Errors
 ///
 /// Returns `AppError` on database failure.
+#[utoipa::path(get, path = "/counts", tag = "jobs", responses((status = 200, body = Vec<QueueCount>)), security(("bearer_token" = [])))]
 async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCount>>, AppError> {
     let counts = budget_jobs::queries::queue_counts(&state.apalis_pool)
         .await
@@ -75,6 +77,7 @@ async fn queue_counts(State(state): State<AppState>) -> Result<Json<Vec<QueueCou
 /// # Errors
 ///
 /// Returns `AppError` on database failure.
+#[utoipa::path(get, path = "/schedule", tag = "jobs", responses((status = 200, body = Vec<AccountScheduleStatus>)), security(("bearer_token" = [])))]
 async fn schedule_status(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountScheduleStatus>>, AppError> {
@@ -96,6 +99,7 @@ async fn schedule_status(
 /// # Errors
 ///
 /// Returns `AppError` if the job cannot be enqueued.
+#[utoipa::path(post, path = "/sync/{account_id}", tag = "jobs", params(("account_id" = AccountId, Path, description = "Account UUID")), responses((status = 202)), security(("bearer_token" = [])))]
 async fn trigger_sync(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -115,6 +119,7 @@ async fn trigger_sync(
 /// # Errors
 ///
 /// Returns `AppError` if the job cannot be enqueued.
+#[utoipa::path(post, path = "/categorize", tag = "jobs", responses((status = 202)), security(("bearer_token" = [])))]
 async fn trigger_categorize(State(state): State<AppState>) -> Result<StatusCode, AppError> {
     state
         .categorize_storage
@@ -131,6 +136,7 @@ async fn trigger_categorize(State(state): State<AppState>) -> Result<StatusCode,
 /// # Errors
 ///
 /// Returns `AppError` if the job cannot be enqueued.
+#[utoipa::path(post, path = "/correlate", tag = "jobs", responses((status = 202)), security(("bearer_token" = [])))]
 async fn trigger_correlate(State(state): State<AppState>) -> Result<StatusCode, AppError> {
     state
         .correlate_storage
@@ -148,6 +154,7 @@ async fn trigger_correlate(State(state): State<AppState>) -> Result<StatusCode, 
 /// # Errors
 ///
 /// Returns `AppError` if the pipeline cannot be enqueued.
+#[utoipa::path(post, path = "/pipeline/{account_id}", tag = "jobs", params(("account_id" = AccountId, Path, description = "Account UUID")), responses((status = 202)), security(("bearer_token" = [])))]
 async fn trigger_pipeline(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,

@@ -35,6 +35,9 @@ thiserror = "2"
 trait-variant = "0.1"
 augurs = { version = "0.10", features = ["prophet", "prophet-wasmstan", "mstl", "ets"] }
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+utoipa = { version = "5.4", features = ["chrono", "uuid"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 # Internal crates
 budget-amazon = { path = "crates/amazon" }

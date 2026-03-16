@@ -3,6 +3,9 @@ name = "budget-amazon"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 chrono = { workspace = true }
 regex = { workspace = true }
@@ -14,6 +17,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

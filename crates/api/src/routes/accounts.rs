@@ -1,10 +1,10 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use budget_core::models::{
     Account, AccountId, AccountOrigin, AccountType, BalanceSnapshot, BalanceSnapshotId,
@@ -16,7 +16,7 @@ use crate::routes::AppError;
 use crate::state::AppState;
 
 /// Request body for creating a new account.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateAccount {
     /// Identifier from the bank provider (opaque string).
     pub provider_account_id: String,
@@ -40,13 +40,13 @@ pub struct CreateAccount {
 /// # Errors
 ///
 /// Individual handlers return `AppError` on failure.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list).post(create))
-        .route("/net-worth", get(net_worth))
-        .route("/net-worth/projection", get(net_worth_projection))
-        .route("/{id}", get(get_by_id).patch(update_nickname))
-        .route("/{id}/balances", get(list_balances).post(create_balance))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(net_worth))
+        .routes(routes!(net_worth_projection))
+        .routes(routes!(get_by_id, update_nickname))
+        .routes(routes!(list_balances, create_balance))
 }
 
 /// List all accounts.
@@ -54,6 +54,7 @@ pub fn router() -> Router<AppState> {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/", tag = "accounts", responses((status = 200, body = Vec<Account>)), security(("bearer_token" = [])))]
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Account>>, AppError> {
     let accounts = state.db.list_accounts().await?;
     Ok(Json(accounts))
@@ -67,6 +68,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Account>>, AppEr
 /// # Errors
 ///
 /// Returns `AppError` if the account type is invalid or the database write fails.
+#[utoipa::path(post, path = "/", tag = "accounts", request_body = CreateAccount, responses((status = 201, body = Account)), security(("bearer_token" = [])))]
 async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateAccount>,
@@ -92,6 +94,7 @@ async fn create(
 ///
 /// Returns 400 if the ID is not a valid UUID, or 404 if the account
 /// does not exist.
+#[utoipa::path(get, path = "/{id}", tag = "accounts", params(("id" = AccountId, Path, description = "Account UUID")), responses((status = 200, body = Account)), security(("bearer_token" = [])))]
 async fn get_by_id(
     State(state): State<AppState>,
     Path(id): Path<AccountId>,
@@ -106,7 +109,7 @@ async fn get_by_id(
 }
 
 /// Request body for updating an account nickname.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateNickname {
     /// New nickname, or null to clear it.
     pub nickname: Option<String>,
@@ -118,6 +121,7 @@ pub struct UpdateNickname {
 ///
 /// Returns 400 if the ID is not a valid UUID, or 404 if the account
 /// does not exist.
+#[utoipa::path(patch, path = "/{id}", tag = "accounts", params(("id" = AccountId, Path, description = "Account UUID")), request_body = UpdateNickname, responses((status = 200, body = Account)), security(("bearer_token" = [])))]
 async fn update_nickname(
     State(state): State<AppState>,
     Path(id): Path<AccountId>,
@@ -150,19 +154,21 @@ async fn update_nickname(
 // ---------------------------------------------------------------------------
 
 /// Per-account balance entry in the net worth response.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct AccountBalance {
     account_id: AccountId,
     account_name: String,
     account_type: AccountType,
+    #[schema(value_type = String)]
     current: Decimal,
     currency: CurrencyCode,
     snapshot_at: DateTime<Utc>,
 }
 
 /// Aggregated net worth across all accounts.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct NetWorth {
+    #[schema(value_type = String)]
     total: Decimal,
     currency: CurrencyCode,
     accounts: Vec<AccountBalance>,
@@ -176,6 +182,7 @@ struct NetWorth {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/net-worth", tag = "accounts", responses((status = 200, body = NetWorth)), security(("bearer_token" = [])))]
 async fn net_worth(State(state): State<AppState>) -> Result<Json<NetWorth>, AppError> {
     let snapshots = state.db.get_latest_balance_per_account().await?;
     let accounts_by_id: std::collections::HashMap<AccountId, Account> = state
@@ -225,7 +232,7 @@ async fn net_worth(State(state): State<AppState>) -> Result<Json<NetWorth>, AppE
 // ---------------------------------------------------------------------------
 
 /// Query parameters for net worth projection.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct ProjectionParams {
     /// Forecast horizon in months (default 12, max 24).
     pub months: Option<u32>,
@@ -234,7 +241,7 @@ pub struct ProjectionParams {
 }
 
 /// Response body for net worth projection.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ProjectionResponse {
     history: Vec<NetWorthPoint>,
     forecast: Vec<ForecastPoint>,
@@ -250,6 +257,7 @@ struct ProjectionResponse {
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/net-worth/projection", tag = "accounts", params(ProjectionParams), responses((status = 200, body = ProjectionResponse)), security(("bearer_token" = [])))]
 async fn net_worth_projection(
     State(state): State<AppState>,
     Query(params): Query<ProjectionParams>,
@@ -278,16 +286,18 @@ async fn net_worth_projection(
 // ---------------------------------------------------------------------------
 
 /// Request body for creating a manual balance snapshot.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateBalanceSnapshot {
+    #[schema(value_type = String)]
     pub current: Decimal,
+    #[schema(value_type = Option<String>)]
     pub available: Option<Decimal>,
     pub currency: Option<CurrencyCode>,
     pub snapshot_at: Option<DateTime<Utc>>,
 }
 
 /// Query parameters for listing balance snapshots.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct ListBalancesParams {
     pub limit: Option<i64>,
 }
@@ -297,6 +307,7 @@ pub struct ListBalancesParams {
 /// # Errors
 ///
 /// Returns 404 if the account does not exist.
+#[utoipa::path(post, path = "/{id}/balances", tag = "accounts", params(("id" = AccountId, Path, description = "Account UUID")), request_body = CreateBalanceSnapshot, responses((status = 201, body = BalanceSnapshot)), security(("bearer_token" = [])))]
 async fn create_balance(
     State(state): State<AppState>,
     Path(id): Path<AccountId>,
@@ -326,6 +337,7 @@ async fn create_balance(
 /// # Errors
 ///
 /// Returns `AppError` if the database query fails.
+#[utoipa::path(get, path = "/{id}/balances", tag = "accounts", params(("id" = AccountId, Path, description = "Account UUID"), ListBalancesParams), responses((status = 200, body = Vec<BalanceSnapshot>)), security(("bearer_token" = [])))]
 async fn list_balances(
     State(state): State<AppState>,
     Path(id): Path<AccountId>,

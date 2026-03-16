@@ -79,6 +79,7 @@ pub struct AspspsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AspspEntry {
     pub name: String,
     pub country: String,
@@ -89,6 +90,7 @@ pub struct AspspEntry {
     #[serde(default)]
     pub beta: Option<bool>,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub sandbox: Option<serde_json::Value>,
 }
 
