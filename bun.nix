@@ -17,6 +17,10 @@
     url = "https://registry.npmjs.org/@knadh/oat/-/oat-0.4.2.tgz";
     hash = "sha512-+mQnuJP11TKasrtiHKwyrFLXFyb1hxmKzbLALBjUlJHbS2bPV+YPkGN9/5QNRU/3nvM7zZHRVqtWaASFaFC3IA==";
   };
+  "@playwright/test@1.58.2" = fetchurl {
+    url = "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz";
+    hash = "sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==";
+  };
   "@someshkar/oat-chips@1.0.1" = fetchurl {
     url = "https://registry.npmjs.org/@someshkar/oat-chips/-/oat-chips-1.0.1.tgz";
     hash = "sha512-CSX1deVlTX7Kgh7Kd8nJw0oATi7hQEnBx4aLvKE9wsLzM2kIvj8IKkQTw3yt8gIzb/Q0Hng4Kkg724xZCVaZEg==";
@@ -25,6 +29,10 @@
     url = "https://registry.npmjs.org/bun2nix/-/bun2nix-2.0.8.tgz";
     hash = "sha512-pwq35hA81X1Kjsi5Xo69Aii9aY3zZHhWXwqF1QRz/uB35KzKbwJZ16WrhadiG9/T6bjOsRrPZtzuAyqmlXopLw==";
   };
+  "fsevents@2.3.2" = fetchurl {
+    url = "https://registry.npmjs.org/fsevents/-/fsevents-2.3.2.tgz";
+    hash = "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==";
+  };
   "htm@3.1.1" = fetchurl {
     url = "https://registry.npmjs.org/htm/-/htm-3.1.1.tgz";
     hash = "sha512-983Vyg8NwUE7JkZ6NmOqpCZ+sh1bKv2iYTlUkzlWmA5JD2acKoxd4KVxbMmxX/85mtfdnDmTFoNKcg5DGAvxNQ==";
@@ -32,6 +40,14 @@
   "mri@1.2.0" = fetchurl {
     url = "https://registry.npmjs.org/mri/-/mri-1.2.0.tgz";
     hash = "sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA==";
+  };
+  "playwright-core@1.58.2" = fetchurl {
+    url = "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz";
+    hash = "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==";
+  };
+  "playwright@1.58.2" = fetchurl {
+    url = "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz";
+    hash = "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==";
   };
   "preact@10.29.0" = fetchurl {
     url = "https://registry.npmjs.org/preact/-/preact-10.29.0.tgz";

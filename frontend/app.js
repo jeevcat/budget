@@ -4275,17 +4275,231 @@ function NetWorthChart({ data }) {
   `;
 }
 
-function Insights() {
+// ---------------------------------------------------------------------------
+// Budget burndown chart
+// ---------------------------------------------------------------------------
+
+function BurndownChart({ data }) {
+  const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+  const width = 720;
+  const height = 340;
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+
+  const budget = Number(data.budget_amount);
+  const current = data.current;
+  const prior = data.prior || [];
+  const predicted =
+    data.predicted_landing != null ? Number(data.predicted_landing) : null;
+
+  if (!current?.points?.length)
+    return html`<p class="text-light">No spending data yet.</p>`;
+
+  // Find max total_days across all series for X-axis normalization
+  const maxTotalDays = Math.max(
+    current.total_days,
+    ...prior.map((s) => s.total_days),
+  );
+
+  // Y range: max of budget, current cumulative, predicted, and prior peaks
+  const currentMax = Math.max(
+    ...current.points.map((p) => Number(p.cumulative)),
+  );
+  const priorMax =
+    prior.length > 0
+      ? Math.max(
+          ...prior.flatMap((s) => s.points.map((p) => Number(p.cumulative))),
+        )
+      : 0;
+  const maxVal =
+    Math.max(budget, currentMax, priorMax, predicted || 0) * 1.1 || 1;
+  const minVal = 0;
+  const valRange = maxVal - minVal;
+
+  const x = (fraction) => padding.left + fraction * innerW;
+  const y = (v) => padding.top + (1 - (v - minVal) / valRange) * innerH;
+
+  // Normalize a series to 0-1 fraction of its own total_days
+  const seriesPath = (points, totalDays) =>
+    points
+      .map((p, i) => {
+        const frac = (p.day - 1) / (totalDays - 1 || 1);
+        return `${i === 0 ? "M" : "L"}${x(frac)},${y(Number(p.cumulative))}`;
+      })
+      .join(" ");
+
+  const currentLine = seriesPath(current.points, current.total_days);
+
+  // Predicted dashed line from last current point to end
+  const lastCurrent = current.points[current.points.length - 1];
+  const lastFrac = (lastCurrent.day - 1) / (current.total_days - 1 || 1);
+  const predictedLine =
+    predicted != null
+      ? `M${x(lastFrac)},${y(Number(lastCurrent.cumulative))} L${x(1)},${y(predicted)}`
+      : "";
+
+  // Ghost lines (prior months)
+  const ghostLines = prior.map((s) => seriesPath(s.points, s.total_days));
+  const ghostOpacities = [0.5, 0.35, 0.2];
+
+  // Y-axis ticks
+  const yTickCount = 5;
+  const yTicks = Array.from({ length: yTickCount + 1 }, (_, i) => {
+    const v = minVal + (valRange * i) / yTickCount;
+    return { value: v, y: y(v) };
+  });
+
+  // X-axis ticks (day numbers)
+  const dayLabels = [1];
+  for (let d = 5; d <= maxTotalDays; d += 5) dayLabels.push(d);
+  if (dayLabels[dayLabels.length - 1] !== maxTotalDays)
+    dayLabels.push(maxTotalDays);
+  const xTicks = dayLabels.map((d) => ({
+    day: d,
+    x: x((d - 1) / (current.total_days - 1 || 1)),
+  }));
+
+  // Hover state
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
+  const onMouseMove = useCallback(
+    (e) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width) * width;
+      const frac = (mx - padding.left) / innerW;
+
+      // Find closest current point
+      let closest = null;
+      let closestDist = Infinity;
+      for (const p of current.points) {
+        const pFrac = (p.day - 1) / (current.total_days - 1 || 1);
+        const dist = Math.abs(pFrac - frac);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = p;
+        }
+      }
+      if (closest) setHover(closest);
+    },
+    [current],
+  );
+
+  const onMouseLeave = useCallback(() => setHover(null), []);
+
+  return html`
+    <svg
+      ref=${svgRef}
+      viewBox="0 0 ${width} ${height}"
+      class="bd-chart"
+      onMouseMove=${onMouseMove}
+      onMouseLeave=${onMouseLeave}
+    >
+      ${yTicks.map(
+        (t) => html`
+          <line
+            x1=${padding.left}
+            y1=${t.y}
+            x2=${width - padding.right}
+            y2=${t.y}
+            class="bd-grid-line"
+          />
+        `,
+      )}
+      <line
+        x1=${padding.left}
+        y1=${y(budget)}
+        x2=${width - padding.right}
+        y2=${y(budget)}
+        class="bd-line-budget"
+      />
+      ${ghostLines.map(
+        (path, i) => html`
+          <path d=${path} class="bd-line-ghost" style="opacity:${ghostOpacities[i] || 0.2};stroke-width:1.5" />
+        `,
+      )}
+      ${currentLine && html`<path d=${currentLine} class="bd-line-current" />`}
+      ${predictedLine && html`<path d=${predictedLine} class="bd-line-predicted" />`}
+      ${yTicks.map(
+        (t) => html`
+          <text x=${padding.left - 8} y=${t.y + 4} class="bd-axis-label" text-anchor="end">
+            ${formatAmount(t.value, { decimals: 0 })}
+          </text>
+        `,
+      )}
+      ${xTicks.map(
+        (t) => html`
+          <text x=${t.x} y=${height - 8} class="bd-axis-label" text-anchor="middle">
+            Day ${t.day}
+          </text>
+        `,
+      )}
+      ${
+        hover &&
+        html`
+        <line
+          x1=${x((hover.day - 1) / (current.total_days - 1 || 1))}
+          y1=${padding.top}
+          x2=${x((hover.day - 1) / (current.total_days - 1 || 1))}
+          y2=${padding.top + innerH}
+          class="bd-crosshair"
+        />
+        <circle
+          cx=${x((hover.day - 1) / (current.total_days - 1 || 1))}
+          cy=${y(Number(hover.cumulative))}
+          r="4"
+          class="bd-dot-current"
+        />
+      `
+      }
+    </svg>
+    ${
+      hover &&
+      html`
+      <div class="bd-tooltip hstack gap-4">
+        <span class="text-light">Day ${hover.day}</span>
+        <span style="font-weight:600">${formatAmount(hover.cumulative, { decimals: 2 })}</span>
+        ${
+          budget > 0 &&
+          html`
+          <span class="text-light" style="font-size:var(--text-8)">
+            ${((Number(hover.cumulative) / budget) * 100).toFixed(0)}% of budget
+          </span>
+        `
+        }
+      </div>
+    `
+    }
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Insights page
+// ---------------------------------------------------------------------------
+
+function Insights({ categoryId: routeCategoryId }) {
   const [projection, setProjection] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Burndown state
+  const [categories, setCategories] = useState(null);
+  const [selectedCat, setSelectedCat] = useState(routeCategoryId || "");
+  const [burndown, setBurndown] = useState(null);
+  const [bdLoading, setBdLoading] = useState(false);
+  const [bdError, setBdError] = useState(null);
+
   useEffect(() => {
     setLoading(true);
-    api
-      .get("/accounts/net-worth/projection?months=12&interval_width=0.8")
-      .then((data) => {
-        setProjection(data);
+    Promise.all([
+      api.get("/accounts/net-worth/projection?months=12&interval_width=0.8"),
+      api.get("/categories"),
+    ])
+      .then(([proj, cats]) => {
+        setProjection(proj);
+        setCategories(cats);
         setLoading(false);
       })
       .catch((err) => {
@@ -4293,6 +4507,47 @@ function Insights() {
         setLoading(false);
       });
   }, []);
+
+  // Filter to monthly variable categories
+  const catMap = useMemo(() => {
+    if (!categories) return {};
+    const map = {};
+    for (const c of categories) map[c.id] = c;
+    return map;
+  }, [categories]);
+
+  const monthlyCats = useMemo(() => {
+    if (!categories) return [];
+    return categories.filter((c) => {
+      const mode = categoryBudgetMode(catMap, c.id);
+      const type = categoryBudgetType(catMap, c.id);
+      return mode === "monthly" && type === "variable";
+    });
+  }, [categories, catMap]);
+
+  // Auto-select first category if none selected and route didn't specify one
+  useEffect(() => {
+    if (!selectedCat && monthlyCats.length > 0) {
+      setSelectedCat(monthlyCats[0].id);
+    }
+  }, [monthlyCats, selectedCat]);
+
+  // Fetch burndown data when category changes
+  useEffect(() => {
+    if (!selectedCat) return;
+    setBdLoading(true);
+    setBdError(null);
+    api
+      .get(`/budgets/burndown?category_id=${selectedCat}`)
+      .then((data) => {
+        setBurndown(data);
+        setBdLoading(false);
+      })
+      .catch((err) => {
+        setBdError(err.message);
+        setBdLoading(false);
+      });
+  }, [selectedCat]);
 
   const latestNetWorth = useMemo(() => {
     if (!projection?.history?.length) return null;
@@ -4326,6 +4581,69 @@ function Insights() {
   return html`
     <div class="vstack gap-4">
       <h2>Insights</h2>
+
+      ${
+        monthlyCats.length > 0 &&
+        html`
+        <div class="card" style="padding:1.25rem">
+          <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
+            <h3 style="margin:0">Budget Burndown</h3>
+            <div style="min-width:220px">
+              <${CategorySelect}
+                value=${selectedCat}
+                onChange=${(id) => {
+                  setSelectedCat(id);
+                  navigateReplace(`/insights/${id}`);
+                }}
+                categories=${monthlyCats}
+                catMap=${catMap}
+                placeholder="Select category"
+              />
+            </div>
+          </div>
+
+          ${bdLoading && html`<progress></progress>`}
+          ${bdError && html`<p class="text-light">${bdError}</p>`}
+          ${
+            burndown &&
+            !bdLoading &&
+            html`
+            <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
+              <div class="vstack gap-0">
+                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Budget</span>
+                <span style="font-size:var(--text-4);font-weight:600">
+                  ${formatAmount(burndown.budget_amount, { decimals: 0 })}
+                </span>
+              </div>
+              ${
+                burndown.current?.points?.length > 0 &&
+                html`
+                <div class="vstack gap-0">
+                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Spent</span>
+                  <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.current.points[burndown.current.points.length - 1].cumulative) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--foreground)"}">
+                    ${formatAmount(burndown.current.points[burndown.current.points.length - 1].cumulative, { decimals: 0 })}
+                  </span>
+                </div>
+              `
+              }
+              ${
+                burndown.predicted_landing != null &&
+                html`
+                <div class="vstack gap-0">
+                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Predicted</span>
+                  <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.predicted_landing) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--success)"}">
+                    ${formatAmount(burndown.predicted_landing, { decimals: 0 })}
+                  </span>
+                </div>
+              `
+              }
+            </div>
+            <${BurndownChart} data=${burndown} />
+          `
+          }
+        </div>
+      `
+      }
 
       <div class="card" style="padding:1.25rem">
         <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
@@ -4448,7 +4766,8 @@ function App() {
     if (s0 === "transactions") return html`<${Transactions} />`;
     if (s0 === "categories") return html`<${Categories} />`;
     if (s0 === "rules") return html`<${Rules} />`;
-    if (s0 === "insights") return html`<${Insights} />`;
+    if (s0 === "insights")
+      return html`<${Insights} categoryId=${s1 || null} />`;
     if (s0 === "connections") return html`<${Connections} />`;
     if (s0 === "jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;

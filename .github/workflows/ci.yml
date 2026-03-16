@@ -61,6 +61,48 @@ jobs:
         run: biome check frontend/
       - name: Build
         run: bun run build
+      - name: Unit tests
+        run: bun test frontend/
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    needs: [rust, frontend]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: budget
+          POSTGRES_PASSWORD: budget
+          POSTGRES_DB: budget
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://budget:budget@localhost:5432/budget
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run build
+      - name: Build server
+        run: cargo build
+      - name: Install Playwright browsers
+        run: bun run playwright install --with-deps chromium
+      - name: Run E2E tests
+        run: bun run e2e
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
 
   mobile:
     name: Mobile

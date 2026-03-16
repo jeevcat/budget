@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use budget_core::budget::{
-    budget_year_months, collect_category_subtree, compute_budget_status,
-    compute_project_child_breakdowns, detect_budget_month_boundaries, effective_budget_mode,
-    filter_for_budget, filter_for_project, is_in_budget_month, salary_category_ids,
+    DailySpendPoint, budget_year_months, build_daily_cumulative_series, collect_budget_subtree,
+    collect_category_subtree, compute_budget_status, compute_project_child_breakdowns,
+    detect_budget_month_boundaries, effective_budget_mode, filter_for_budget, filter_for_project,
+    is_in_budget_month, salary_category_ids,
 };
 use budget_core::models::{
-    BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, Category, CategoryId, PaceIndicator,
-    ProjectChildSpending, Transaction,
+    BudgetConfig, BudgetMode, BudgetMonth, BudgetStatus, BudgetType, Category, CategoryId,
+    PaceIndicator, ProjectChildSpending, Transaction,
 };
 
 use crate::routes::AppError;
@@ -127,6 +128,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/status", get(status))
         .route("/months", get(list_months))
+        .route("/burndown", get(burndown))
 }
 
 /// Derive budget months by fetching only salary-category transactions.
@@ -751,6 +753,149 @@ async fn list_months(State(state): State<AppState>) -> Result<Json<Vec<BudgetMon
     let categories = state.db.list_categories().await?;
     let months = derive_months(&state, &categories).await?;
     Ok(Json(months))
+}
+
+#[derive(Deserialize)]
+struct BurndownQuery {
+    category_id: Uuid,
+    month_id: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+struct BurndownMonthSeries {
+    start_date: NaiveDate,
+    total_days: u16,
+    points: Vec<DailySpendPoint>,
+}
+
+#[derive(Serialize)]
+struct BurndownResponse {
+    category_name: String,
+    budget_amount: Decimal,
+    current: BurndownMonthSeries,
+    prior: Vec<BurndownMonthSeries>,
+    predicted_landing: Option<Decimal>,
+}
+
+/// Return daily cumulative spend for a category over the current (or specified)
+/// budget month, plus up to 3 prior closed months for comparison.
+///
+/// # Errors
+///
+/// Returns 404 if the category or budget month doesn't exist.
+/// Returns 400 if the category is not a monthly-mode variable budget.
+async fn burndown(
+    State(state): State<AppState>,
+    Query(query): Query<BurndownQuery>,
+) -> Result<Json<BurndownResponse>, AppError> {
+    let categories = state.db.list_categories().await?;
+    let mut budget_months = derive_months(&state, &categories).await?;
+    budget_months.sort_by_key(|bm| bm.start_date);
+
+    let category_id = CategoryId::from_uuid(query.category_id);
+    let category = categories
+        .iter()
+        .find(|c| c.id == category_id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "category not found".to_owned()))?;
+
+    // Validate: must be monthly-mode variable
+    let mode = effective_budget_mode(category, &categories);
+    if mode != Some(BudgetMode::Monthly) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "burndown only supports monthly-mode categories".to_owned(),
+        ));
+    }
+    if category.budget.budget_type() == Some(BudgetType::Fixed) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "burndown only supports variable-type categories".to_owned(),
+        ));
+    }
+
+    let target_month = if let Some(id) = query.month_id {
+        budget_months
+            .iter()
+            .find(|bm| *bm.id.as_uuid() == id)
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "budget month not found".to_owned()))?
+    } else {
+        budget_months
+            .iter()
+            .find(|bm| bm.end_date.is_none())
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no current budget month".to_owned()))?
+    };
+
+    let target_idx = budget_months
+        .iter()
+        .position(|bm| bm.id == target_month.id)
+        .unwrap_or(0);
+
+    // Fetch transactions going back far enough for prior months
+    let prior_start_idx = target_idx.saturating_sub(3);
+    let earliest = budget_months[prior_start_idx].start_date;
+    let transactions = state.db.list_transactions_since(earliest).await?;
+    let filtered = filter_for_budget(&transactions, &categories);
+    let subtree = collect_budget_subtree(category_id, &categories);
+
+    let today = Utc::now().date_naive();
+
+    // Current month series
+    let current_points = build_daily_cumulative_series(&filtered, &subtree, target_month, today);
+    let total_days_current = target_month.end_date.map_or_else(
+        || (today - target_month.start_date).num_days() + 1,
+        |end| (end - target_month.start_date).num_days() + 1,
+    );
+    let current = BurndownMonthSeries {
+        start_date: target_month.start_date,
+        total_days: u16::try_from(total_days_current).unwrap_or(u16::MAX),
+        points: current_points,
+    };
+
+    // Prior closed months (up to 3)
+    let prior: Vec<BurndownMonthSeries> = budget_months[prior_start_idx..target_idx]
+        .iter()
+        .rev()
+        .filter(|bm| bm.end_date.is_some())
+        .take(3)
+        .map(|bm| {
+            let end = bm.end_date.expect("filtered to closed months");
+            let points = build_daily_cumulative_series(&filtered, &subtree, bm, end);
+            let total = (end - bm.start_date).num_days() + 1;
+            BurndownMonthSeries {
+                start_date: bm.start_date,
+                total_days: u16::try_from(total).unwrap_or(u16::MAX),
+                points,
+            }
+        })
+        .collect();
+
+    // Predicted landing via linear extrapolation
+    let predicted_landing = if target_month.end_date.is_none() {
+        let elapsed = (today - target_month.start_date).num_days().max(1);
+        let total = total_days_current.max(1);
+        let spent = current
+            .points
+            .last()
+            .map_or(Decimal::ZERO, |p| p.cumulative);
+        if spent > Decimal::ZERO && elapsed > 0 {
+            let factor = Decimal::from(total) / Decimal::from(elapsed);
+            Some(spent * factor)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
+
+    Ok(Json(BurndownResponse {
+        category_name: category.name.to_string(),
+        budget_amount,
+        current,
+        prior,
+        predicted_landing,
+    }))
 }
 
 #[cfg(test)]

@@ -14,10 +14,7 @@
 ## Insights & Analytics
 
 ### Features
-- [ ] **Budget burndown charts**: Daily cumulative spend curve for variable-mode categories with predicted end-of-month landing. Overlay 3 previous months as ghost lines for comparison. Lives on insights page as drill-down from dashboard categories
 - [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
-### Integration
-- [ ] **Insights page**: Add burndown drill-downs to the existing insights page. Keep lightweight — most intelligence surfaces on the existing dashboard via enhanced pace indicators and anomaly badges
 
 ## Blocked Upstream
 

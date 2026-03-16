@@ -46,6 +46,7 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - When reviewing or modifying frontend code, actively look for opportunities to replace existing custom CSS with Oat equivalents
 - **Use Biome for linting/formatting** — run `bun run check`, fix with `bun run fix`. Never use node/python hacks for syntax checks.
 - **Frontend tests** — `bun test frontend/` (bun's built-in test runner). Pure helpers live in `frontend/helpers.js`, tested by `frontend/helpers.test.js`. Pre-commit hook runs tests automatically.
+- **E2E tests** — `bun run e2e` (Playwright). Creates an isolated temp database, starts the server via `webServer`, authenticates via `storageState`. Requires PostgreSQL running and `chromium` on `PATH` (provided by the Nix dev shell). Stale databases from crashed runs are cleaned up automatically on next run.
 
 ## Mobile
 

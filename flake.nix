@@ -265,6 +265,7 @@
               packages = [
                 pkgs.biome
                 pkgs.bun
+                pkgs.chromium
                 pkgs.jdk21_headless
                 androidSdk
               ];

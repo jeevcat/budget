@@ -1,5 +1,6 @@
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
+use serde::Serialize;
 use uuid::Uuid;
 
 use std::collections::HashSet;
@@ -293,7 +294,8 @@ pub fn detect_budget_month_boundaries(
 /// Children that declare their own explicit budget mode different from
 /// `root_mode` are excluded (along with their subtrees), because they are
 /// tracked under a separate budget entry.
-fn collect_budget_subtree(category_id: CategoryId, categories: &[Category]) -> Vec<CategoryId> {
+#[must_use]
+pub fn collect_budget_subtree(category_id: CategoryId, categories: &[Category]) -> Vec<CategoryId> {
     let mut result = vec![category_id];
     let mut stack = vec![category_id];
 
@@ -393,6 +395,55 @@ pub fn build_monthly_spending_series(
             spent.to_string().parse::<f64>().unwrap_or(0.0)
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DailySpendPoint {
+    pub day: u16,
+    pub cumulative: Decimal,
+}
+
+/// Build a daily cumulative spending series for a category within a budget month.
+///
+/// Walks day-by-day from the budget month start through `through_date` (or the
+/// month's end date), accumulating spending. Returns one point per day.
+#[must_use]
+pub fn build_daily_cumulative_series(
+    filtered_txns: &[&Transaction],
+    subtree: &[CategoryId],
+    budget_month: &BudgetMonth,
+    through_date: NaiveDate,
+) -> Vec<DailySpendPoint> {
+    let end = budget_month.end_date.unwrap_or(through_date);
+    let end = end.min(through_date);
+
+    let mut points = Vec::new();
+    let mut cumulative = Decimal::ZERO;
+    let mut current = budget_month.start_date;
+    let mut day: u16 = 1;
+
+    while current <= end {
+        let day_spend: Decimal = filtered_txns
+            .iter()
+            .filter(|t| {
+                t.posted_date == current
+                    && t.categorization
+                        .category_id()
+                        .is_some_and(|cid| subtree.contains(&cid))
+            })
+            .fold(Decimal::ZERO, |acc, t| acc - t.amount);
+
+        cumulative += day_spend;
+        points.push(DailySpendPoint { day, cumulative });
+
+        current = match current.succ_opt() {
+            Some(next) => next,
+            None => break,
+        };
+        day += 1;
+    }
+
+    points
 }
 
 /// Compute pace indicator and delta for a budget category.
@@ -3759,5 +3810,109 @@ mod tests {
 
         let spending = compute_category_spending(&transactions, food.id, &months[0], &categories);
         assert_eq!(spending, dec!(40)); // 25 + 15
+    }
+
+    // -----------------------------------------------------------------------
+    // build_daily_cumulative_series tests
+    // -----------------------------------------------------------------------
+
+    fn food_cat_id() -> CategoryId {
+        CategoryId::from_uuid(uuid::Uuid::from_u128(100))
+    }
+
+    #[test]
+    fn daily_cumulative_empty_transactions() {
+        let month = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: Some(date(2025, 4, 13)),
+            salary_transactions_detected: 1,
+        };
+        let txns: Vec<&Transaction> = vec![];
+        let subtree = vec![food_cat_id()];
+
+        let points = build_daily_cumulative_series(&txns, &subtree, &month, date(2025, 4, 13));
+        assert_eq!(points.len(), 30);
+        for p in &points {
+            assert_eq!(p.cumulative, Decimal::ZERO);
+        }
+    }
+
+    #[test]
+    fn daily_cumulative_single_transaction_on_day_3() {
+        let month = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: Some(date(2025, 3, 19)),
+            salary_transactions_detected: 1,
+        };
+        let txn = make_txn(
+            Categorization::Manual(food_cat_id()),
+            dec!(-50),
+            date(2025, 3, 17),
+        );
+        let txns: Vec<&Transaction> = vec![&txn];
+        let subtree = vec![food_cat_id()];
+
+        let points = build_daily_cumulative_series(&txns, &subtree, &month, date(2025, 3, 19));
+        assert_eq!(points.len(), 5);
+        // Days 1-2: zero
+        assert_eq!(points[0].cumulative, Decimal::ZERO);
+        assert_eq!(points[1].cumulative, Decimal::ZERO);
+        // Day 3 onward: 50
+        assert_eq!(points[2].cumulative, dec!(50));
+        assert_eq!(points[3].cumulative, dec!(50));
+        assert_eq!(points[4].cumulative, dec!(50));
+    }
+
+    #[test]
+    fn daily_cumulative_multiple_transactions_same_day() {
+        let month = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: Some(date(2025, 3, 17)),
+            salary_transactions_detected: 1,
+        };
+        let t1 = make_txn(
+            Categorization::Manual(food_cat_id()),
+            dec!(-30),
+            date(2025, 3, 16),
+        );
+        let t2 = make_txn(
+            Categorization::Manual(food_cat_id()),
+            dec!(-20),
+            date(2025, 3, 16),
+        );
+        let txns: Vec<&Transaction> = vec![&t1, &t2];
+        let subtree = vec![food_cat_id()];
+
+        let points = build_daily_cumulative_series(&txns, &subtree, &month, date(2025, 3, 17));
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0].cumulative, Decimal::ZERO);
+        assert_eq!(points[1].cumulative, dec!(50));
+        assert_eq!(points[2].cumulative, dec!(50));
+    }
+
+    #[test]
+    fn daily_cumulative_open_month_uses_through_date() {
+        let month = BudgetMonth {
+            id: BudgetMonthId::new(),
+            start_date: date(2025, 3, 15),
+            end_date: None,
+            salary_transactions_detected: 1,
+        };
+        let txn = make_txn(
+            Categorization::Manual(food_cat_id()),
+            dec!(-100),
+            date(2025, 3, 15),
+        );
+        let txns: Vec<&Transaction> = vec![&txn];
+        let subtree = vec![food_cat_id()];
+
+        let points = build_daily_cumulative_series(&txns, &subtree, &month, date(2025, 3, 17));
+        // Should only go through through_date (3 days)
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0].cumulative, dec!(100));
+        assert_eq!(points[2].cumulative, dec!(100));
     }
 }

@@ -31,7 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return dispatch_subcommand(&cmd);
     }
 
-    let config = budget_core::load_config()?;
+    let mut config = budget_core::load_config()?;
+    apply_env_overrides(&mut config);
     init_tracing(&config);
     tracing::info!(
         port = config.server_port,
@@ -132,6 +133,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::error!("main loop exited — shutting down (this should not happen)");
     Ok(())
+}
+
+/// Override config fields from environment variables when set.
+fn apply_env_overrides(config: &mut budget_core::Config) {
+    if let Ok(val) = std::env::var("DATABASE_URL")
+        && let Ok(url) = budget_core::models::DatabaseUrl::new(val)
+    {
+        config.database_url = url;
+    }
+    if let Ok(val) = std::env::var("BUDGET_PORT")
+        && let Ok(port) = val.parse::<u16>()
+    {
+        config.server_port = port;
+    }
+    if let Ok(val) = std::env::var("BUDGET_SECRET_KEY")
+        && let Ok(key) = budget_core::models::SecretKey::new(val)
+    {
+        config.secret_key = key;
+    }
 }
 
 fn dispatch_subcommand(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {

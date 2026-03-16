@@ -7,6 +7,7 @@
     "test": "bun test frontend/",
     "check": "biome check frontend/",
     "fix": "biome check --write frontend/",
+    "e2e": "playwright test",
     "postinstall": "bun2nix -o bun.nix"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
     "@someshkar/oat-chips": "^1.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "bun2nix": "^2.0.8"
   }
 }

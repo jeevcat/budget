@@ -991,3 +991,63 @@ dialog > form > div {
   margin-top: 0.5rem;
   align-items: center;
 }
+
+/* Budget burndown chart (SVG) */
+.bd-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.bd-grid-line {
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+.bd-line-current {
+  fill: none;
+  stroke: var(--kw-crystal-blue);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bd-line-ghost {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bd-line-predicted {
+  fill: none;
+  stroke: var(--kw-oni-violet);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bd-line-budget {
+  stroke: var(--kw-autumn-yellow);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
+}
+.bd-axis-label {
+  fill: var(--muted-foreground);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.bd-crosshair {
+  stroke: var(--foreground);
+  stroke-width: 0.5;
+  opacity: 0.3;
+}
+.bd-dot-current {
+  fill: var(--kw-crystal-blue);
+}
+.bd-dot-predicted {
+  fill: var(--kw-oni-violet);
+}
+.bd-tooltip {
+  padding: 0.4rem 0.75rem;
+  font-size: var(--text-7);
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  align-items: center;
+}
