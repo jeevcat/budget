@@ -949,8 +949,8 @@ function Dashboard({ tab = "monthly", monthId = null }) {
   const [error, setError] = useState(null);
 
   const selectedMonthId = monthId;
-  function setSelectedMonthId(id) {
-    navigateReplace(`/monthly/${id}`);
+  function setSelectedMonthId(id, targetTab) {
+    navigateReplace(`/${targetTab || tab}/${id}`);
   }
 
   const statusUrl = selectedMonthId
@@ -1075,6 +1075,27 @@ function Dashboard({ tab = "monthly", monthId = null }) {
   const annualBudgetTxns = statusResp.annual_transactions;
   const projectBudgetTxns = statusResp.project_transactions;
   const budgetYear = statusResp.budget_year;
+
+  // Year navigation: find the first month in the previous/next year
+  const monthsByYear = {};
+  for (const m of sortedMonths) {
+    const y = parseInt(m.start_date.slice(0, 4), 10);
+    if (!monthsByYear[y]) monthsByYear[y] = m;
+  }
+  const years = Object.keys(monthsByYear)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const yearIdx = years.indexOf(budgetYear);
+  const hasPrevYear = yearIdx > 0;
+  const hasNextYear = yearIdx < years.length - 1;
+  function goPrevYear() {
+    if (!hasPrevYear) return;
+    setSelectedMonthId(monthsByYear[years[yearIdx - 1]].id, "annual");
+  }
+  function goNextYear() {
+    if (!hasNextYear) return;
+    setSelectedMonthId(monthsByYear[years[yearIdx + 1]].id, "annual");
+  }
 
   const monthlyLedger = statusResp.monthly_ledger;
   const annualLedger = statusResp.annual_ledger;
@@ -1283,10 +1304,24 @@ function Dashboard({ tab = "monthly", monthId = null }) {
         }
       </div>
       <div role="tabpanel">
-        <div class="hstack" style="margin-bottom:1.25rem;align-items:center">
-          <div style="text-align:center">
-            <strong>${budgetYear}</strong>
-            ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
+        <div class="hstack" style="margin-bottom:1.25rem">
+          <div class="hstack gap-2" style="align-items:center">
+            <button
+              onClick=${goPrevYear}
+              disabled=${!hasPrevYear}
+              style="padding:0.25rem 0.5rem"
+              aria-label="Previous year"
+            >\u2039</button>
+            <div style="text-align:center">
+              <strong>${budgetYear}</strong>
+              ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
+            </div>
+            <button
+              onClick=${goNextYear}
+              disabled=${!hasNextYear}
+              style="padding:0.25rem 0.5rem"
+              aria-label="Next year"
+            >\u203A</button>
           </div>
         </div>
         <${NetSummary} ledger=${annualLedger} />
@@ -5381,10 +5416,10 @@ function App() {
     const segments = route.split("/").filter(Boolean);
     const [s0, s1] = segments;
 
-    // Budget routes: /, /monthly, /monthly/:id, /annual, /projects
+    // Budget routes: /, /monthly, /monthly/:id, /annual, /annual/:id, /projects
     if (!s0 || s0 === "monthly" || s0 === "annual" || s0 === "projects") {
       const tab = s0 || "monthly";
-      const monthId = tab === "monthly" && s1 ? s1 : null;
+      const monthId = (tab === "monthly" || tab === "annual") && s1 ? s1 : null;
       return html`<${Dashboard} tab=${tab} monthId=${monthId} />`;
     }
     if (s0 === "transactions") return html`<${Transactions} />`;

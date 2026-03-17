@@ -354,10 +354,7 @@ fn classify_transactions(
         .cloned()
         .collect();
 
-    let budget_year = year_months.first().map_or_else(
-        || chrono::Datelike::year(&month.start_date),
-        |bm| chrono::Datelike::year(&bm.start_date),
-    );
+    let budget_year = chrono::Datelike::year(&month.start_date);
 
     let salary_cats = salary_category_ids(categories);
     let income = collect_income_transactions(
