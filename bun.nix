@@ -13,9 +13,9 @@
   ...
 }:
 {
-  "@knadh/oat@0.4.2" = fetchurl {
-    url = "https://registry.npmjs.org/@knadh/oat/-/oat-0.4.2.tgz";
-    hash = "sha512-+mQnuJP11TKasrtiHKwyrFLXFyb1hxmKzbLALBjUlJHbS2bPV+YPkGN9/5QNRU/3nvM7zZHRVqtWaASFaFC3IA==";
+  "@knadh/oat@0.5.0" = fetchurl {
+    url = "https://registry.npmjs.org/@knadh/oat/-/oat-0.5.0.tgz";
+    hash = "sha512-SnT9VhmFgK3K3rGSXLSK4q3R41LSsuEZB7Q6iFcnCb1VhKqOEpG4uzT67AvjqzR955GKq1gQOQ4m0u3hxJSmZw==";
   };
   "@playwright/test@1.58.2" = fetchurl {
     url = "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz";
