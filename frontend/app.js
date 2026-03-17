@@ -1096,7 +1096,13 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       return "open-ended";
     return `${entry.time_left}${unit} left`;
   };
-  const monthlyTimeLabel = timeLeft(monthly, "d");
+  const monthlyDaysLeft = monthly[0]?.time_left;
+  const monthlyTimeLabel =
+    statusResp.salary_status?.any_late &&
+    monthlyDaysLeft != null &&
+    monthlyDaysLeft <= 0
+      ? "waiting for salary"
+      : timeLeft(monthly, "d");
 
   const hasProjects = allProjects.length > 0;
 
