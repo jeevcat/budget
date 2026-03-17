@@ -4481,9 +4481,9 @@ const SUBCAT_COLORS = [
 ];
 
 function BurndownChart({ data }) {
-  const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+  const padding = { top: 16, right: 20, bottom: 32, left: 60 };
   const width = 720;
-  const height = 340;
+  const height = 300;
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
 
@@ -4665,23 +4665,19 @@ function BurndownChart({ data }) {
     ${
       hover &&
       html`
-      <div class="bd-tooltip hstack gap-4">
+      <small class="bd-tooltip hstack gap-4">
         <span class="text-light">Day ${hover.day}</span>
-        <span style="font-weight:600">${formatAmount(hover.cumulative, { decimals: 2 })}</span>
+        <strong>${formatAmount(hover.cumulative, { decimals: 2 })}</strong>
         ${
           budget > 0 &&
-          html`
-          <span class="text-light" style="font-size:var(--text-8)">
-            ${((Number(hover.cumulative) / budget) * 100).toFixed(0)}% of budget
-          </span>
-        `
+          html`<span class="text-lighter">${((Number(hover.cumulative) / budget) * 100).toFixed(0)}% of budget</span>`
         }
         ${(data.subcategories || []).map((sub, i) => {
           const subPt = sub.current?.points?.find((p) => p.day === hover.day);
           if (!subPt) return null;
-          return html`<span style="color:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]};font-size:var(--text-8)">${sub.category_name}: ${formatAmount(subPt.cumulative, { decimals: 0 })}</span>`;
+          return html`<span style="color:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}">${sub.category_name}: ${formatAmount(subPt.cumulative, { decimals: 0 })}</span>`;
         })}
-      </div>
+      </small>
     `
     }
   `;
@@ -4742,52 +4738,84 @@ function BurndownSparkline({ data }) {
 }
 
 function BurndownDetail({ burndown }) {
+  const monthLabel = burndown.current?.start_date
+    ? (() => {
+        const d = new Date(`${burndown.current.start_date}T00:00:00`);
+        return d.toLocaleDateString(undefined, {
+          month: "long",
+          year: "numeric",
+        });
+      })()
+    : null;
+
   return html`
-    <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
-      <div class="vstack gap-0">
-        <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Budget</span>
-        <span style="font-size:var(--text-4);font-weight:600">
-          ${formatAmount(burndown.budget_amount, { decimals: 0 })}
-        </span>
-      </div>
-      ${
-        burndown.current?.points?.length > 0 &&
-        html`
-        <div class="vstack gap-0">
-          <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Spent</span>
-          <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.current.points[burndown.current.points.length - 1].cumulative) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--foreground)"}">
-            ${formatAmount(burndown.current.points[burndown.current.points.length - 1].cumulative, { decimals: 0 })}
-          </span>
+    <div class="hstack gap-4 mb-2" style="align-items:flex-end">
+      ${monthLabel && html`<small class="text-light">${monthLabel}</small>`}
+      <div class="hstack gap-4" style="margin-left:auto">
+        <div class="vstack" style="gap:0;align-items:flex-end">
+          <small class="text-light bd-label">Budget</small>
+          <h4 style="margin:0">${formatAmount(burndown.budget_amount, { decimals: 0 })}</h4>
         </div>
-      `
-      }
+        ${
+          burndown.current?.points?.length > 0 &&
+          html`
+          <div class="vstack" style="gap:0;align-items:flex-end">
+            <small class="text-light bd-label">Spent</small>
+            <h4 style="margin:0;color:${Number(burndown.current.points[burndown.current.points.length - 1].cumulative) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--foreground)"}">
+              ${formatAmount(burndown.current.points[burndown.current.points.length - 1].cumulative, { decimals: 0 })}
+            </h4>
+          </div>
+        `
+        }
+        ${
+          burndown.predicted_landing != null &&
+          html`
+          <div class="vstack" style="gap:0;align-items:flex-end">
+            <small class="text-light bd-label">Predicted</small>
+            <h4 style="margin:0;color:${Number(burndown.predicted_landing) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--success)"}">
+              ${formatAmount(burndown.predicted_landing, { decimals: 0 })}
+            </h4>
+          </div>
+        `
+        }
+      </div>
+    </div>
+    <div class="hstack mb-2">
+      <small class="hstack gap-1">
+        <span class="bd-legend-line" style="border-color:var(--kw-crystal-blue)"></span>
+        <span class="text-light">Spent</span>
+      </small>
+      <small class="hstack gap-1">
+        <span class="bd-legend-line bd-legend-dashed" style="border-color:var(--kw-autumn-yellow)"></span>
+        <span class="text-light">Budget</span>
+      </small>
       ${
         burndown.predicted_landing != null &&
         html`
-        <div class="vstack gap-0">
-          <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Predicted</span>
-          <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.predicted_landing) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--success)"}">
-            ${formatAmount(burndown.predicted_landing, { decimals: 0 })}
-          </span>
-        </div>
+        <small class="hstack gap-1">
+          <span class="bd-legend-line bd-legend-dashed" style="border-color:var(--kw-oni-violet)"></span>
+          <span class="text-light">Predicted</span>
+        </small>
       `
       }
+      ${
+        (burndown.prior || []).length > 0 &&
+        html`
+        <small class="hstack gap-1">
+          <span class="bd-legend-line" style="border-color:var(--muted-foreground);opacity:0.4"></span>
+          <span class="text-light">Prior months</span>
+        </small>
+      `
+      }
+      ${(burndown.subcategories || []).map(
+        (sub, i) => html`
+        <small class="hstack gap-1">
+          <span class="bd-legend-swatch" style="background:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}"></span>
+          <span class="text-light">${sub.category_name}</span>
+        </small>
+      `,
+      )}
     </div>
-    ${
-      (burndown.subcategories || []).length > 0 &&
-      html`
-      <div class="hstack gap-3" style="flex-wrap:wrap;margin-bottom:0.75rem">
-        ${burndown.subcategories.map(
-          (sub, i) => html`
-          <span class="hstack gap-1" style="font-size:var(--text-8);align-items:center">
-            <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}"></span>
-            <span class="text-light">${sub.category_name}</span>
-          </span>
-        `,
-        )}
-      </div>
-    `
-    }
     <${BurndownChart} data=${burndown} />
   `;
 }
@@ -4841,11 +4869,10 @@ function Insights({ categoryId: routeCategoryId }) {
       }
     }
 
-    // Ungrouped categories
-    for (const c of monthlyCats) {
-      if (!placed.has(c.id)) {
-        result.push({ label: null, cats: [c] });
-      }
+    // Ungrouped categories — collect into a single group
+    const ungrouped = monthlyCats.filter((c) => !placed.has(c.id));
+    if (ungrouped.length > 0) {
+      result.push({ label: null, cats: ungrouped });
     }
     return result;
   }, [monthlyCats, catMap]);
@@ -4889,28 +4916,39 @@ function Insights({ categoryId: routeCategoryId }) {
     const overBudget = predicted != null && predicted > budget;
     return html`
       <div
-        class="card"
+        class="card p-4"
         key=${c.id}
-        style="padding:0.75rem;cursor:pointer"
+        style="cursor:pointer"
         onClick=${() => {
           setExpandedCat(c.id);
           navigateReplace("/insights/" + c.id);
         }}
       >
-        <div class="hstack" style="justify-content:space-between;align-items:baseline;margin-bottom:0.25rem">
-          <span style="font-weight:600;font-size:var(--text-7)">${categoryName(catMap, c.id)}</span>
-          <span class="mono" style="font-size:var(--text-8);color:${overBudget ? "var(--danger)" : "var(--muted-foreground)"}">
+        <div class="hstack justify-between mb-2">
+          <strong><small>${categoryName(catMap, c.id)}</small></strong>
+          <small class="mono" style="color:${overBudget ? "var(--danger)" : "var(--muted-foreground)"}">
             ${formatAmount(spent, { decimals: 0 })} / ${formatAmount(budget, { decimals: 0 })}
-          </span>
+          </small>
         </div>
         <${BurndownSparkline} data=${bd} />
       </div>
     `;
   }
 
+  // Derive current month label from any loaded burndown
+  const currentMonthLabel = useMemo(() => {
+    const anyBd = Object.values(burndowns)[0];
+    if (!anyBd?.current?.start_date) return null;
+    const d = new Date(`${anyBd.current.start_date}T00:00:00`);
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }, [burndowns]);
+
   return html`
     <div class="vstack gap-4">
-      <h2>Insights</h2>
+      <div class="hstack" style="align-items:baseline">
+        <h2 style="margin:0">Insights</h2>
+        ${currentMonthLabel && !expanded && html`<small class="text-light">${currentMonthLabel}</small>`}
+      </div>
 
       ${
         monthlyCats.length === 0
@@ -4919,8 +4957,8 @@ function Insights({ categoryId: routeCategoryId }) {
             ? html`<progress></progress>`
             : expanded
               ? html`
-                <div class="card" style="padding:1.25rem">
-                  <div class="hstack gap-3" style="align-items:center;margin-bottom:1rem">
+                <div class="card p-4">
+                  <div class="hstack mb-2">
                     <button class="small outline" onClick=${() => {
                       setExpandedCat(null);
                       navigateReplace("/insights");
@@ -4935,7 +4973,7 @@ function Insights({ categoryId: routeCategoryId }) {
                   ${groups.map(
                     (g) => html`
                     <div>
-                      ${g.label && html`<div class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem">${g.label}</div>`}
+                      ${g.label && html`<small class="text-light bd-label mb-2">${g.label}</small>`}
                       <div class="burndown-grid">${g.cats.map(renderCard)}</div>
                     </div>
                   `,
