@@ -206,6 +206,7 @@
             bunDeps = bun2nixPkg.fetchBunDeps {
               bunNix = ./bun.nix;
             };
+            dontRunLifecycleScripts = true;
             doCheck = false;
             buildPhase = ''
               bun build frontend/index.html --outdir frontend/dist --minify
