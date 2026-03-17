@@ -2067,6 +2067,132 @@ async fn budgets_burndown_with_data(pool: PgPool) {
     assert_eq!(resp["budget_amount"], "500.00");
     assert!(resp["current"]["points"].is_array());
     assert!(resp["current"]["total_days"].as_u64().expect("u64") > 0);
+    assert!(resp["subcategories"].is_array());
+}
+
+#[sqlx::test]
+async fn budgets_burndown_subcategories(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Subcat Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Salary category
+    let salary_cat = Category {
+        budget: BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
+    db.insert_category(&salary_cat).await.expect("salary cat");
+
+    // Parent: Food (monthly variable, budget=1000)
+    let food = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Food").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(100_000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&food).await.expect("food");
+
+    // Child: Groceries (budget-less, inherits from Food)
+    let groceries = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Groceries").expect("valid"),
+        parent_id: Some(food.id),
+        budget: BudgetConfig::None,
+    };
+    db.insert_category(&groceries).await.expect("groceries");
+
+    // Child: Restaurants (budget-less, inherits from Food)
+    let restaurants = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Restaurants").expect("valid"),
+        parent_id: Some(food.id),
+        budget: BudgetConfig::None,
+    };
+    db.insert_category(&restaurants).await.expect("restaurants");
+
+    let today = chrono::Utc::now().date_naive();
+
+    // Salary transaction
+    let mut salary_txn = make_txn(account.id, "EMPLOYER", 1);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&salary_txn, Some("salary-sc"))
+        .await
+        .expect("salary txn");
+
+    // Spending in Groceries
+    let mut groc_txn = make_txn(account.id, "SUPERMARKET", 1);
+    groc_txn.categorization = Categorization::Manual(groceries.id);
+    groc_txn.amount = rust_decimal::Decimal::new(-8000, 2);
+    groc_txn.posted_date = today - chrono::Duration::days(3);
+    db.upsert_transaction(&groc_txn, Some("groc-sc"))
+        .await
+        .expect("groc txn");
+    db.update_transaction_category(
+        groc_txn.id,
+        groceries.id,
+        budget_core::models::CategoryMethod::Manual,
+        None,
+    )
+    .await
+    .expect("categorize groceries");
+
+    // Spending in Restaurants
+    let mut rest_txn = make_txn(account.id, "RESTAURANT", 1);
+    rest_txn.categorization = Categorization::Manual(restaurants.id);
+    rest_txn.amount = rust_decimal::Decimal::new(-3000, 2);
+    rest_txn.posted_date = today - chrono::Duration::days(2);
+    db.upsert_transaction(&rest_txn, Some("rest-sc"))
+        .await
+        .expect("rest txn");
+    db.update_transaction_category(
+        rest_txn.id,
+        restaurants.id,
+        budget_core::models::CategoryMethod::Manual,
+        None,
+    )
+    .await
+    .expect("categorize restaurants");
+
+    let (status, body) = send(
+        app,
+        get(&format!(
+            "/api/budgets/burndown?category_id={}",
+            food.id.as_uuid()
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+    assert_eq!(resp["category_name"], "Food");
+
+    let subs = resp["subcategories"]
+        .as_array()
+        .expect("subcategories array");
+    assert_eq!(subs.len(), 2);
+
+    let names: Vec<&str> = subs
+        .iter()
+        .map(|s| s["category_name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"Groceries"));
+    assert!(names.contains(&"Restaurants"));
+
+    // Each subcategory has a current series with points
+    for sub in subs {
+        assert!(
+            !sub["current"]["points"]
+                .as_array()
+                .expect("points")
+                .is_empty()
+        );
+    }
 }
 
 // ===========================================================================

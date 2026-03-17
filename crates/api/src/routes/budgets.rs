@@ -809,6 +809,13 @@ struct BurndownMonthSeries {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+struct SubcategorySeries {
+    category_id: CategoryId,
+    category_name: String,
+    current: BurndownMonthSeries,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
 struct BurndownResponse {
     category_name: String,
     #[schema(value_type = String)]
@@ -817,6 +824,92 @@ struct BurndownResponse {
     prior: Vec<BurndownMonthSeries>,
     #[schema(value_type = Option<String>)]
     predicted_landing: Option<Decimal>,
+    subcategories: Vec<SubcategorySeries>,
+}
+
+/// Build burndown series for up to 3 prior closed months.
+fn build_prior_series(
+    prior_months: &[BudgetMonth],
+    filtered: &[&Transaction],
+    subtree: &[CategoryId],
+) -> Vec<BurndownMonthSeries> {
+    prior_months
+        .iter()
+        .rev()
+        .filter(|bm| bm.end_date.is_some())
+        .take(3)
+        .map(|bm| {
+            let end = bm.end_date.expect("filtered to closed months");
+            let points = build_daily_cumulative_series(filtered, subtree, bm, end);
+            let total = (end - bm.start_date).num_days() + 1;
+            BurndownMonthSeries {
+                start_date: bm.start_date,
+                total_days: u16::try_from(total).unwrap_or(u16::MAX),
+                points,
+            }
+        })
+        .collect()
+}
+
+/// Predict end-of-month landing via linear extrapolation of current spend.
+fn predict_landing(
+    month: &BudgetMonth,
+    current: &BurndownMonthSeries,
+    total_days: i64,
+    today: NaiveDate,
+) -> Option<Decimal> {
+    if month.end_date.is_some() {
+        return None;
+    }
+    let elapsed = (today - month.start_date).num_days().max(1);
+    let total = total_days.max(1);
+    let spent = current
+        .points
+        .last()
+        .map_or(Decimal::ZERO, |p| p.cumulative);
+    if spent > Decimal::ZERO && elapsed > 0 {
+        let factor = Decimal::from(total) / Decimal::from(elapsed);
+        Some(spent * factor)
+    } else {
+        None
+    }
+}
+
+/// Build per-subcategory burndown series for budget-less direct children.
+fn build_subcategory_series(
+    parent_id: CategoryId,
+    categories: &[Category],
+    subtree: &[CategoryId],
+    filtered: &[&Transaction],
+    month: &BudgetMonth,
+    today: NaiveDate,
+    total_days: i64,
+) -> Vec<SubcategorySeries> {
+    let total_days_u16 = u16::try_from(total_days).unwrap_or(u16::MAX);
+    categories
+        .iter()
+        .filter(|c| c.parent_id == Some(parent_id) && subtree.contains(&c.id))
+        .filter_map(|child| {
+            let child_subtree = collect_budget_subtree(child.id, categories);
+            let child_points =
+                build_daily_cumulative_series(filtered, &child_subtree, month, today);
+            let has_spending = child_points
+                .last()
+                .is_some_and(|p| p.cumulative != Decimal::ZERO);
+            if !has_spending {
+                return None;
+            }
+            Some(SubcategorySeries {
+                category_id: child.id,
+                category_name: child.name.to_string(),
+                current: BurndownMonthSeries {
+                    start_date: month.start_date,
+                    total_days: total_days_u16,
+                    points: child_points,
+                },
+            })
+        })
+        .collect()
 }
 
 /// Return daily cumulative spend for a category over the current (or specified)
@@ -894,43 +987,25 @@ async fn burndown(
         points: current_points,
     };
 
-    // Prior closed months (up to 3)
-    let prior: Vec<BurndownMonthSeries> = budget_months[prior_start_idx..target_idx]
-        .iter()
-        .rev()
-        .filter(|bm| bm.end_date.is_some())
-        .take(3)
-        .map(|bm| {
-            let end = bm.end_date.expect("filtered to closed months");
-            let points = build_daily_cumulative_series(&filtered, &subtree, bm, end);
-            let total = (end - bm.start_date).num_days() + 1;
-            BurndownMonthSeries {
-                start_date: bm.start_date,
-                total_days: u16::try_from(total).unwrap_or(u16::MAX),
-                points,
-            }
-        })
-        .collect();
+    let prior = build_prior_series(
+        &budget_months[prior_start_idx..target_idx],
+        &filtered,
+        &subtree,
+    );
 
-    // Predicted landing via linear extrapolation
-    let predicted_landing = if target_month.end_date.is_none() {
-        let elapsed = (today - target_month.start_date).num_days().max(1);
-        let total = total_days_current.max(1);
-        let spent = current
-            .points
-            .last()
-            .map_or(Decimal::ZERO, |p| p.cumulative);
-        if spent > Decimal::ZERO && elapsed > 0 {
-            let factor = Decimal::from(total) / Decimal::from(elapsed);
-            Some(spent * factor)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let predicted_landing = predict_landing(target_month, &current, total_days_current, today);
 
     let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
+
+    let subcategories = build_subcategory_series(
+        category_id,
+        &categories,
+        &subtree,
+        &filtered,
+        target_month,
+        today,
+        total_days_current,
+    );
 
     Ok(Json(BurndownResponse {
         category_name: category.name.to_string(),
@@ -938,6 +1013,7 @@ async fn burndown(
         current,
         prior,
         predicted_landing,
+        subcategories,
     }))
 }
 

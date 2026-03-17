@@ -4463,6 +4463,15 @@ function NetWorthChart({ data }) {
 // Budget burndown chart
 // ---------------------------------------------------------------------------
 
+const SUBCAT_COLORS = [
+  "var(--kw-spring-green)",
+  "var(--kw-wave-aqua)",
+  "var(--kw-surimi-orange)",
+  "var(--kw-sakura-pink)",
+  "var(--kw-carp-yellow)",
+  "var(--kw-wave-blue)",
+];
+
 function BurndownChart({ data }) {
   const padding = { top: 20, right: 20, bottom: 40, left: 60 };
   const width = 720;
@@ -4604,6 +4613,12 @@ function BurndownChart({ data }) {
           <path d=${path} class="bd-line-ghost" style="opacity:${ghostOpacities[i] || 0.2};stroke-width:1.5" />
         `,
       )}
+      ${(data.subcategories || []).map((sub, i) => {
+        const subPts = sub.current?.points;
+        if (!subPts?.length) return null;
+        const subPath = seriesPath(subPts, sub.current.total_days);
+        return html`<path d=${subPath} fill="none" stroke="${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />`;
+      })}
       ${currentLine && html`<path d=${currentLine} class="bd-line-current" />`}
       ${predictedLine && html`<path d=${predictedLine} class="bd-line-predicted" />`}
       ${yTicks.map(
@@ -4653,6 +4668,11 @@ function BurndownChart({ data }) {
           </span>
         `
         }
+        ${(data.subcategories || []).map((sub, i) => {
+          const subPt = sub.current?.points?.find((p) => p.day === hover.day);
+          if (!subPt) return null;
+          return html`<span style="color:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]};font-size:var(--text-8)">${sub.category_name}: ${formatAmount(subPt.cumulative, { decimals: 0 })}</span>`;
+        })}
       </div>
     `
     }
@@ -4696,6 +4716,17 @@ function BurndownSparkline({ data }) {
   return html`
     <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:60px;display:block">
       <line x1=${pad} y1=${y(budget)} x2=${w - pad} y2=${y(budget)} stroke="var(--kw-autumn-yellow)" stroke-width="1" stroke-dasharray="4 2" opacity="0.6" />
+      ${(data.subcategories || []).map((sub, i) => {
+        const subPts = sub.current?.points;
+        if (!subPts?.length) return null;
+        const subLine = subPts
+          .map(
+            (p, j) =>
+              `${j === 0 ? "M" : "L"}${x(p.day)},${y(Number(p.cumulative))}`,
+          )
+          .join(" ");
+        return html`<path d=${subLine} fill="none" stroke="${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" />`;
+      })}
       <path d=${line} fill="none" stroke="var(--kw-crystal-blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
       ${predLine && html`<path d=${predLine} fill="none" stroke="var(--kw-oni-violet)" stroke-width="1.5" stroke-dasharray="4 2" stroke-linecap="round" />`}
     </svg>
@@ -4734,6 +4765,21 @@ function BurndownDetail({ burndown }) {
       `
       }
     </div>
+    ${
+      (burndown.subcategories || []).length > 0 &&
+      html`
+      <div class="hstack gap-3" style="flex-wrap:wrap;margin-bottom:0.75rem">
+        ${burndown.subcategories.map(
+          (sub, i) => html`
+          <span class="hstack gap-1" style="font-size:var(--text-8);align-items:center">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${SUBCAT_COLORS[i % SUBCAT_COLORS.length]}"></span>
+            <span class="text-light">${sub.category_name}</span>
+          </span>
+        `,
+        )}
+      </div>
+    `
+    }
     <${BurndownChart} data=${burndown} />
   `;
 }
@@ -4758,14 +4804,43 @@ function Insights({ categoryId: routeCategoryId }) {
     return map;
   }, [categories]);
 
+  // Only categories that own a monthly variable budget (not inherited)
   const monthlyCats = useMemo(() => {
     if (!categories) return [];
-    return categories.filter((c) => {
-      const mode = categoryBudgetMode(catMap, c.id);
-      const type = categoryBudgetType(catMap, c.id);
-      return mode === "monthly" && type === "variable";
-    });
-  }, [categories, catMap]);
+    return categories.filter(
+      (c) => c.budget_mode === "monthly" && c.budget_type === "variable",
+    );
+  }, [categories]);
+
+  // Group by parent for visual hierarchy
+  const groups = useMemo(() => {
+    if (!monthlyCats.length) return [];
+    const catIds = new Set(monthlyCats.map((c) => c.id));
+    const result = [];
+    const placed = new Set();
+
+    // Group children under their parent if the parent is also in the list
+    for (const c of monthlyCats) {
+      if (c.parent_id && catIds.has(c.parent_id) && !placed.has(c.parent_id)) {
+        const parent = catMap[c.parent_id];
+        const children = monthlyCats.filter((mc) => mc.parent_id === parent.id);
+        result.push({
+          label: parent.name,
+          cats: [parent, ...children],
+        });
+        placed.add(parent.id);
+        for (const ch of children) placed.add(ch.id);
+      }
+    }
+
+    // Ungrouped categories
+    for (const c of monthlyCats) {
+      if (!placed.has(c.id)) {
+        result.push({ label: null, cats: [c] });
+      }
+    }
+    return result;
+  }, [monthlyCats, catMap]);
 
   useEffect(() => {
     if (monthlyCats.length === 0) return;
@@ -4793,6 +4868,38 @@ function Insights({ categoryId: routeCategoryId }) {
 
   const expanded = expandedCat && burndowns[expandedCat];
 
+  function renderCard(c) {
+    const bd = burndowns[c.id];
+    if (!bd) return null;
+    const spent =
+      bd.current?.points?.length > 0
+        ? Number(bd.current.points[bd.current.points.length - 1].cumulative)
+        : 0;
+    const budget = Number(bd.budget_amount);
+    const predicted =
+      bd.predicted_landing != null ? Number(bd.predicted_landing) : null;
+    const overBudget = predicted != null && predicted > budget;
+    return html`
+      <div
+        class="card"
+        key=${c.id}
+        style="padding:0.75rem;cursor:pointer"
+        onClick=${() => {
+          setExpandedCat(c.id);
+          navigateReplace("/insights/" + c.id);
+        }}
+      >
+        <div class="hstack" style="justify-content:space-between;align-items:baseline;margin-bottom:0.25rem">
+          <span style="font-weight:600;font-size:var(--text-7)">${categoryName(catMap, c.id)}</span>
+          <span class="mono" style="font-size:var(--text-8);color:${overBudget ? "var(--danger)" : "var(--muted-foreground)"}">
+            ${formatAmount(spent, { decimals: 0 })} / ${formatAmount(budget, { decimals: 0 })}
+          </span>
+        </div>
+        <${BurndownSparkline} data=${bd} />
+      </div>
+    `;
+  }
+
   return html`
     <div class="vstack gap-4">
       <h2>Insights</h2>
@@ -4816,42 +4923,15 @@ function Insights({ categoryId: routeCategoryId }) {
                 </div>
               `
               : html`
-                <div class="burndown-grid">
-                  ${monthlyCats.map((c) => {
-                    const bd = burndowns[c.id];
-                    if (!bd) return null;
-                    const spent =
-                      bd.current?.points?.length > 0
-                        ? Number(
-                            bd.current.points[bd.current.points.length - 1]
-                              .cumulative,
-                          )
-                        : 0;
-                    const budget = Number(bd.budget_amount);
-                    const predicted =
-                      bd.predicted_landing != null
-                        ? Number(bd.predicted_landing)
-                        : null;
-                    const overBudget = predicted != null && predicted > budget;
-                    return html`
-                      <div
-                        class="card burndown-card"
-                        key=${c.id}
-                        onClick=${() => {
-                          setExpandedCat(c.id);
-                          navigateReplace("/insights/" + c.id);
-                        }}
-                      >
-                        <div class="hstack" style="justify-content:space-between;align-items:baseline;margin-bottom:0.25rem">
-                          <span style="font-weight:600;font-size:var(--text-7)">${categoryName(catMap, c.id)}</span>
-                          <span class="mono" style="font-size:var(--text-8);color:${overBudget ? "var(--danger)" : "var(--muted-foreground)"}">
-                            ${formatAmount(spent, { decimals: 0 })} / ${formatAmount(budget, { decimals: 0 })}
-                          </span>
-                        </div>
-                        <${BurndownSparkline} data=${bd} />
-                      </div>
-                    `;
-                  })}
+                <div class="vstack gap-4">
+                  ${groups.map(
+                    (g) => html`
+                    <div>
+                      ${g.label && html`<div class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem">${g.label}</div>`}
+                      <div class="burndown-grid">${g.cats.map(renderCard)}</div>
+                    </div>
+                  `,
+                  )}
                 </div>
               `
       }

@@ -13,6 +13,12 @@
   --kw-autumn-green: #76946a;
   --kw-autumn-red: #c34043;
   --kw-autumn-yellow: #dca561;
+  --kw-spring-green: #98bb6c;
+  --kw-wave-aqua: #7aa89f;
+  --kw-surimi-orange: #ffa066;
+  --kw-sakura-pink: #d27e99;
+  --kw-carp-yellow: #e6c384;
+  --kw-wave-blue: #7fb4ca;
 }
 
 /* Map Kanagawa onto Oat semantic tokens */
@@ -1000,19 +1006,11 @@ dialog > form > div {
   align-items: center;
 }
 
-/* Burndown grid (Insights page) */
+/* Burndown grid (Insights page) — Oat has no auto-fill grid */
 .burndown-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 0.75rem;
-}
-.burndown-card {
-  padding: 0.75rem;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.burndown-card:hover {
-  background: var(--muted);
 }
 
 /* Budget burndown chart (SVG) */
