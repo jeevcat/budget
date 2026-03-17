@@ -483,6 +483,7 @@ function Ledger({
   selectedCategoryId,
   onCategoryClick,
   onMonthlyClick,
+  onProjectsClick,
   onBurndownClick,
   catMap,
   salaryStatus,
@@ -689,6 +690,19 @@ function Ledger({
             <span class="ledger-amount">${formatAmount(ledger.monthly_budget, { decimals: 0 })}</span>
             <span class="ledger-amount">${formatAmount(ledger.monthly_spent, { decimals: 0 })}</span>
             <span class="ledger-amount" style="color:${Number(ledger.monthly_remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(ledger.monthly_remaining, { decimals: 0, sign: true })}</span>
+          </div>
+        `
+        }
+        ${
+          Number(ledger.project_spent) > 0 &&
+          html`
+          <div class="ledger-divider"></div>
+          <div class="ledger-row clickable-row" onClick=${onProjectsClick} style="color:var(--muted-foreground)">
+            <span class="ledger-row-name">Projects</span>
+            <span></span>
+            <span class="ledger-amount">${formatAmount(ledger.project_budget, { decimals: 0 })}</span>
+            <span class="ledger-amount">${formatAmount(ledger.project_spent, { decimals: 0 })}</span>
+            <span class="ledger-amount" style="color:${Number(ledger.project_remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(ledger.project_remaining, { decimals: 0, sign: true })}</span>
           </div>
         `
         }
@@ -1333,6 +1347,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
               onMonthlyClick=${() => setActiveTab(0)}
+              onProjectsClick=${() => setActiveTab(2)}
               catMap=${catMap}
             />`
             : html`<p class="text-light">No annual budgets.</p>`
