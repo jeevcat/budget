@@ -483,6 +483,7 @@ function Ledger({
   selectedCategoryId,
   onCategoryClick,
   onMonthlyClick,
+  onBurndownClick,
   catMap,
   salaryStatus,
 }) {
@@ -583,6 +584,20 @@ function Ledger({
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
                 <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+                ${
+                  onBurndownClick &&
+                  s.budgetMode === "monthly" &&
+                  html`
+                  <span
+                    class="burndown-icon"
+                    onClick=${(e) => {
+                      e.stopPropagation();
+                      onBurndownClick(s.category_id);
+                    }}
+                    title="View burndown"
+                  >\u25A4</span>
+                `
+                }
               </span>
               <${BudgetBar}
                 pace=${s.pace}
@@ -1252,6 +1267,9 @@ function Dashboard({ tab = "monthly", monthId = null }) {
               ledger=${monthlyLedger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${handleCategoryClick}
+              onBurndownClick=${(id) => {
+                location.hash = "#/insights/" + id;
+              }}
               catMap=${catMap}
               salaryStatus=${isCurrentMonth ? statusResp.salary_status : null}
             />`
@@ -1358,7 +1376,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       netWorth &&
       netWorth.accounts.length > 0 &&
       html`
-      <a href="#/balances" class="card" style="display:block;padding:var(--space-4);margin-top:1rem;text-decoration:none;color:inherit">
+      <a href="#/net-worth" class="card" style="display:block;padding:var(--space-4);margin-top:1rem;text-decoration:none;color:inherit">
         <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
           <h3 style="margin:0">Net Worth</h3>
           ${(() => {
@@ -4734,7 +4752,7 @@ function Insights({ categoryId: routeCategoryId }) {
 }
 
 // ---------------------------------------------------------------------------
-// Balances
+// Net Worth
 // ---------------------------------------------------------------------------
 
 function Balances() {
@@ -4847,7 +4865,7 @@ function Balances() {
 
   return html`
     <div class="vstack gap-4">
-      <h2>Balances</h2>
+      <h2>Net Worth</h2>
 
       <!-- Net worth summary -->
       <div class="card" style="padding:1.25rem">
@@ -5129,7 +5147,7 @@ function App() {
     const segments = route.split("/").filter(Boolean);
     const [s0, s1] = segments;
 
-    // Dashboard routes: /, /monthly, /monthly/:id, /annual, /projects
+    // Budget routes: /, /monthly, /monthly/:id, /annual, /projects
     if (!s0 || s0 === "monthly" || s0 === "annual" || s0 === "projects") {
       const tab = s0 || "monthly";
       const monthId = tab === "monthly" && s1 ? s1 : null;
@@ -5140,7 +5158,7 @@ function App() {
     if (s0 === "rules") return html`<${Rules} />`;
     if (s0 === "insights")
       return html`<${Insights} categoryId=${s1 || null} />`;
-    if (s0 === "balances") return html`<${Balances} />`;
+    if (s0 === "net-worth") return html`<${Balances} />`;
     if (s0 === "connections") return html`<${Connections} />`;
     if (s0 === "jobs") return html`<${Jobs} />`;
     return html`<p class="text-light">Not found.</p>`;
@@ -5151,10 +5169,11 @@ function App() {
       <aside data-sidebar>
         <h1>Budget</h1>
         <nav>
-          <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Dashboard<//>
+          <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Budget<//>
           <${NavLink} href="/transactions">Transactions<//>
           <${NavLink} href="/insights">Insights<//>
-          <${NavLink} href="/balances">Balances<//>
+          <${NavLink} href="/net-worth">Net Worth<//>
+          <hr style="border:none;border-top:1px solid var(--border);opacity:0.3;margin:0.5rem 0" />
           <${NavLink} href="/categories">Categories<//>
           <${NavLink} href="/rules">Rules<//>
           <${NavLink} href="/connections">Connections<//>

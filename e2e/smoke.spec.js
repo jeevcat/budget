@@ -1,7 +1,7 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
 
-test("dashboard loads and shows Budget heading", async ({ page }) => {
+test("budget page loads and shows Budget heading", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("h1")).toHaveText("Budget", { timeout: 10_000 });
   await expect(page.locator("nav")).toBeVisible();

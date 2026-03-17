@@ -443,6 +443,14 @@ dialog > form > div {
 .ledger-row:hover {
   background: var(--muted);
 }
+.burndown-icon {
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: var(--text-8);
+}
+.ledger-row:hover .burndown-icon {
+  opacity: 0.8;
+}
 .ledger-row-over {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
