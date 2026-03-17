@@ -3,6 +3,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use serde::Serialize;
+
 use budget_core::models::AccountId;
 use budget_jobs::queries::{JobRecord, QueueCount};
 use budget_jobs::schedule_queries::AccountScheduleStatus;
@@ -21,6 +23,7 @@ use crate::state::AppState;
 /// - `POST /categorize` -- enqueue a categorization job
 /// - `POST /correlate` -- enqueue a correlation job
 /// - `POST /pipeline/{account_id}` -- enqueue a full-sync pipeline
+/// - `POST /resync` -- enqueue full-resync pipelines for all connected accounts
 ///
 /// # Errors
 ///
@@ -34,6 +37,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(trigger_categorize))
         .routes(routes!(trigger_correlate))
         .routes(routes!(trigger_pipeline))
+        .routes(routes!(trigger_resync_all))
 }
 
 /// List all jobs ordered by most recent first.
@@ -106,7 +110,10 @@ async fn trigger_sync(
 ) -> Result<StatusCode, AppError> {
     state
         .sync_storage
-        .push(SyncJob { account_id })
+        .push(SyncJob {
+            account_id,
+            full_resync: false,
+        })
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::ACCEPTED)
@@ -162,6 +169,7 @@ async fn trigger_pipeline(
     let ctx = PipelineContext {
         account_id,
         schedule_run_id: None,
+        full_resync: false,
     };
     state
         .pipeline_storage
@@ -169,4 +177,46 @@ async fn trigger_pipeline(
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Response body for the resync-all endpoint.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ResyncAllResponse {
+    /// Number of full-resync pipelines enqueued.
+    enqueued: usize,
+}
+
+/// Enqueue full-resync pipelines for all connected bank accounts.
+///
+/// Unlike a normal sync (which only fetches the last 7 days of overlap),
+/// a full resync re-fetches the entire provider history (typically 90 days),
+/// allowing newer fields to backfill into existing transaction rows.
+///
+/// Returns 202 Accepted with the number of pipelines enqueued.
+///
+/// # Errors
+///
+/// Returns `AppError` if listing accounts or enqueuing fails.
+#[utoipa::path(post, path = "/resync", tag = "jobs", responses((status = 202, body = ResyncAllResponse)), security(("bearer_token" = [])))]
+async fn trigger_resync_all(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<ResyncAllResponse>), AppError> {
+    let accounts = state.db.list_connected_accounts().await?;
+    let mut enqueued = 0;
+
+    for account in &accounts {
+        let ctx = PipelineContext {
+            account_id: account.id,
+            schedule_run_id: None,
+            full_resync: true,
+        };
+        state
+            .pipeline_storage
+            .push_start(ctx)
+            .await
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        enqueued += 1;
+    }
+
+    Ok((StatusCode::ACCEPTED, Json(ResyncAllResponse { enqueued })))
 }

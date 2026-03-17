@@ -277,6 +277,7 @@ async fn enqueue_pipeline(
     let ctx = PipelineContext {
         account_id: budget_core::models::AccountId::from_uuid(account_id),
         schedule_run_id: Some(run_id.to_string()),
+        full_resync: false,
     };
 
     if let Err(e) = pipeline_storage.push_start(ctx).await {

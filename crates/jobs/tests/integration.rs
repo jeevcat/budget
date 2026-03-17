@@ -195,6 +195,7 @@ async fn sync_valid_account_upserts_transactions(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
@@ -225,6 +226,7 @@ async fn sync_nonexistent_account_returns_error(pool: PgPool) {
     // Valid UUID but no matching row in the accounts table
     let job = SyncJob {
         account_id: AccountId::new(),
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(bank)).await;
@@ -247,6 +249,7 @@ async fn sync_deduplicates_on_rerun(pool: PgPool) {
     for _ in 0..2 {
         let job = SyncJob {
             account_id: account.id,
+            full_resync: false,
         };
         handle_sync_job(job, Data::new(db.clone()), Data::new(bank.clone()))
             .await
@@ -268,6 +271,7 @@ async fn sync_deduplicates_on_rerun(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
     handle_sync_job(job, Data::new(db.clone()), Data::new(bank))
         .await
@@ -303,6 +307,7 @@ async fn sync_with_active_connection_uses_factory(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -323,6 +328,7 @@ async fn sync_expired_connection_returns_error(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -344,6 +350,7 @@ async fn sync_revoked_connection_returns_error(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -378,6 +385,7 @@ async fn sync_unsupported_provider_returns_error(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -403,6 +411,7 @@ async fn sync_no_connection_no_fallback_returns_error(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     let result = handle_sync_job(job, Data::new(db.clone()), Data::new(factory)).await;
@@ -893,6 +902,7 @@ async fn sync_captures_balance_snapshot(pool: PgPool) {
 
     let job = SyncJob {
         account_id: account.id,
+        full_resync: false,
     };
 
     handle_sync_job(job, Data::new(db.clone()), Data::new(bank))

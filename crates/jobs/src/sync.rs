@@ -123,6 +123,7 @@ pub(crate) async fn sync_account(
     account_id: AccountId,
     db: &Db,
     factory: &BankProviderFactory,
+    full_resync: bool,
 ) -> Result<(), BoxDynError> {
     let account = db
         .get_account(account_id)
@@ -171,9 +172,16 @@ pub(crate) async fn sync_account(
 
     // Use the most recent transaction date as a starting point (with overlap),
     // or fetch all available history for the initial sync.
-    let latest = db.get_latest_transaction_date(account.id).await?;
-    let since = latest.map(|date| date - chrono::Duration::days(7));
-    tracing::debug!(since = ?since, latest_in_db = ?latest, provider_account_id = %account.provider_account_id, "fetching transactions");
+    // full_resync bypasses the overlap window to re-fetch everything the
+    // provider offers, allowing newer fields to backfill into existing rows.
+    let since = if full_resync {
+        tracing::info!("full resync requested, fetching all available history");
+        None
+    } else {
+        let latest = db.get_latest_transaction_date(account.id).await?;
+        latest.map(|date| date - chrono::Duration::days(7))
+    };
+    tracing::debug!(since = ?since, full_resync, provider_account_id = %account.provider_account_id, "fetching transactions");
     let provider_txns = bank.fetch_transactions(&provider_account_id, since).await?;
 
     let result = import_provider_transactions(account.id, &provider_txns, db).await?;
@@ -266,5 +274,5 @@ pub async fn handle_sync_job(
     db: Data<Db>,
     factory: Data<BankProviderFactory>,
 ) -> Result<(), BoxDynError> {
-    sync_account(job.account_id, &db, &factory).await
+    sync_account(job.account_id, &db, &factory, job.full_resync).await
 }

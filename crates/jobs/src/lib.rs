@@ -445,6 +445,11 @@ impl<T: budget_providers::LlmProvider + Sync> ErasedLlmProvider for T {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncJob {
     pub account_id: AccountId,
+    /// When true, ignore the 7-day overlap window and re-fetch the full
+    /// provider history (typically 90 days). Useful for backfilling fields
+    /// that only started appearing in newer API responses.
+    #[serde(default)]
+    pub full_resync: bool,
 }
 
 /// Run categorization rules and LLM on all uncategorized transactions.

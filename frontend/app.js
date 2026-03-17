@@ -4070,6 +4070,14 @@ function Jobs() {
         >
           ${syncAllBusy ? "..." : "Sync All"}
         </button>
+        <button
+          class="small outline"
+          onClick=${() => trigger("/jobs/resync", "resync-all", "Full resync queued for all accounts")}
+          disabled=${triggering.has("resync-all") || !schedule || schedule.length === 0}
+          title="Re-fetch full history (90 days) to backfill missing fields"
+        >
+          ${triggering.has("resync-all") ? "..." : "Resync All"}
+        </button>
         <span class="queue-card-desc">${card.desc}</span>
         ${
           schedule && schedule.length > 0

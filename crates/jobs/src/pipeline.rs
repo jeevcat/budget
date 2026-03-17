@@ -21,6 +21,10 @@ pub struct PipelineContext {
     pub account_id: AccountId,
     /// Set when the scheduler triggers the pipeline; `None` for manual triggers.
     pub schedule_run_id: Option<String>,
+    /// When true, re-fetch the full provider history instead of only the 7-day
+    /// overlap window.
+    #[serde(default)]
+    pub full_resync: bool,
 }
 
 /// Create a [`Workflow`] whose Backend type parameter is inferred from a
@@ -41,7 +45,7 @@ pub async fn step_sync(
     factory: Data<BankProviderFactory>,
     pool: Data<ApalisPool>,
 ) -> Result<PipelineContext, BoxDynError> {
-    match super::sync::sync_account(ctx.account_id, &db, &factory).await {
+    match super::sync::sync_account(ctx.account_id, &db, &factory, ctx.full_resync).await {
         Ok(()) => Ok(ctx),
         Err(e) => {
             fail_schedule_run(&pool, &ctx, &e).await;
