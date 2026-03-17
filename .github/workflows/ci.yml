@@ -57,6 +57,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: biomejs/setup-biome@v2
       - run: bun install
+      - name: Check bun.nix is up to date
+        run: git diff --exit-code bun.nix
       - name: Lint
         run: biome check frontend/
       - name: Build
