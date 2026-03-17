@@ -99,7 +99,7 @@ struct LedgerSummary {
     /// Salary income minus `total_out`.
     #[schema(value_type = String)]
     saved: Decimal,
-    /// `max(spent, budget)` across budgeted categories (for bar scaling).
+    /// `max(spent, budget)` across variable categories (for bar scaling).
     #[schema(value_type = String)]
     bar_max: Decimal,
     /// Year-to-date monthly-budgeted total budget, included in `total_out`.
@@ -500,11 +500,19 @@ fn build_ledger(
         .fold(Decimal::ZERO, |acc, t| acc + t.amount);
     let saved = salary_income - total_out;
 
-    // bar_max from budgeted category entries
+    // bar_max from variable category entries only (fixed categories render as
+    // checkmarks, not bars, so they shouldn't inflate the bar scale)
+    let cat_map: std::collections::HashMap<CategoryId, &Category> =
+        categories.iter().map(|c| (c.id, c)).collect();
     let mut bar_max = Decimal::ZERO;
     for entry in entries {
         let s = &entry.status;
-        bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
+        let is_fixed = cat_map
+            .get(&s.category_id)
+            .is_some_and(|c| c.budget.budget_type() == Some(BudgetType::Fixed));
+        if !is_fixed {
+            bar_max = bar_max.max(s.spent.abs()).max(s.budget_amount);
+        }
     }
 
     let monthly_remaining = monthly_budget - monthly_spent;
@@ -1543,6 +1551,40 @@ mod tests {
         let entries: Vec<&StatusEntry> = vec![&food_entry];
         let ledger = build_ledger(&entries, dec(0), dec(0), dec(0), &[], &[], &[]);
         assert_eq!(ledger.bar_max, dec(5000));
+    }
+
+    #[test]
+    fn ledger_bar_max_excludes_fixed_categories() {
+        // Rent is fixed at 1500, groceries is variable at 400
+        let rent_entry = make_entry(
+            make_status(1, "Rent", dec(1500), dec(1500), PaceIndicator::OnTrack),
+            vec![],
+        );
+        let groceries_entry = make_entry(
+            make_status(2, "Groceries", dec(400), dec(350), PaceIndicator::OnTrack),
+            vec![],
+        );
+        let rent_cat = make_category(
+            1,
+            "Rent",
+            BudgetConfig::Monthly {
+                amount: dec(1500),
+                budget_type: BudgetType::Fixed,
+            },
+        );
+        let groceries_cat = make_category(
+            2,
+            "Groceries",
+            BudgetConfig::Monthly {
+                amount: dec(400),
+                budget_type: BudgetType::Variable,
+            },
+        );
+        let entries: Vec<&StatusEntry> = vec![&rent_entry, &groceries_entry];
+        let categories = vec![rent_cat, groceries_cat];
+        let ledger = build_ledger(&entries, dec(0), dec(0), dec(0), &[], &[], &categories);
+        // bar_max should be 400 (groceries), not 1500 (rent)
+        assert_eq!(ledger.bar_max, dec(400));
     }
 
     // ── collect_unbudgeted tests ────────────────────────────────────
