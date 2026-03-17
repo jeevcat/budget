@@ -43,6 +43,7 @@ pub struct NetWorthProjection {
 pub enum ProjectionUnavailable {
     NoData,
     InsufficientData { have: usize, need: usize },
+    FitFailed(String),
 }
 
 impl std::fmt::Display for ProjectionUnavailable {
@@ -52,6 +53,7 @@ impl std::fmt::Display for ProjectionUnavailable {
             Self::InsufficientData { have, need } => {
                 write!(f, "need at least {need} data points, but only have {have}")
             }
+            Self::FitFailed(msg) => write!(f, "forecast model failed: {msg}"),
         }
     }
 }
@@ -195,36 +197,23 @@ pub fn forecast_net_worth(
     let optimizer = WasmstanOptimizer::new();
     let mut prophet = Prophet::new(opts, optimizer);
 
-    let training =
-        TrainingData::new(ds, y.clone()).map_err(|_| ProjectionUnavailable::InsufficientData {
-            have: series.len(),
-            need: 2,
-        })?;
+    let training = TrainingData::new(ds, y.clone())
+        .map_err(|e| ProjectionUnavailable::FitFailed(e.to_string()))?;
 
     prophet
         .fit(training, OptimizeOpts::default())
-        .map_err(|_| ProjectionUnavailable::InsufficientData {
-            have: series.len(),
-            need: 2,
-        })?;
+        .map_err(|e| ProjectionUnavailable::FitFailed(e.to_string()))?;
 
     let horizon = NonZeroU32::new(u32::try_from(horizon_days).unwrap_or(183))
         .unwrap_or(NonZeroU32::new(183).expect("183 is non-zero"));
 
     let prediction_data = prophet
         .make_future_dataframe(horizon, IncludeHistory::No)
-        .map_err(|_| ProjectionUnavailable::InsufficientData {
-            have: series.len(),
-            need: 2,
-        })?;
+        .map_err(|e| ProjectionUnavailable::FitFailed(e.to_string()))?;
 
-    let predictions =
-        prophet
-            .predict(prediction_data)
-            .map_err(|_| ProjectionUnavailable::InsufficientData {
-                have: series.len(),
-                need: 2,
-            })?;
+    let predictions = prophet
+        .predict(prediction_data)
+        .map_err(|e| ProjectionUnavailable::FitFailed(e.to_string()))?;
 
     let forecast: Vec<ForecastPoint> = predictions
         .yhat
