@@ -3822,6 +3822,24 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
   const [cookieText, setCookieText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState(account.label);
+
+  async function saveLabel() {
+    const trimmed = editLabel.trim();
+    if (!trimmed || trimmed === account.label) {
+      setEditing(false);
+      setEditLabel(account.label);
+      return;
+    }
+    try {
+      await api.patch(`/amazon/accounts/${account.id}`, { label: trimmed });
+      setEditing(false);
+      onReload();
+    } catch (e) {
+      ot.toast(e.message, "Rename failed", { variant: "danger" });
+    }
+  }
 
   async function uploadCookies() {
     setUploading(true);
@@ -3856,7 +3874,25 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
       <div class="hstack gap-3" style="align-items:start;justify-content:space-between">
         <div class="vstack gap-2" style="flex:1">
           <div class="hstack gap-2" style="align-items:center">
-            <strong>${account.label}</strong>
+            ${
+              editing
+                ? html`<input
+                  type="text"
+                  value=${editLabel}
+                  onInput=${(e) => setEditLabel(e.target.value)}
+                  onBlur=${saveLabel}
+                  onKeyDown=${(e) => {
+                    if (e.key === "Enter") e.target.blur();
+                    if (e.key === "Escape") {
+                      setEditing(false);
+                      setEditLabel(account.label);
+                    }
+                  }}
+                  ref=${(el) => el?.focus()}
+                  style="font-weight:700;padding:0 0.25rem;width:12rem"
+                />`
+                : html`<strong style="cursor:pointer" onClick=${() => setEditing(true)} title="Click to rename">${account.label}</strong>`
+            }
             ${
               status?.cookies_valid === true
                 ? html`<span class="chip success">Valid</span>`

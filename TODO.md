@@ -8,8 +8,6 @@
 
 ### Frontend
 - [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
-- [ ] **Amazon account rename**: Add click-to-edit label on Amazon account cards using `PATCH /amazon/accounts/{id}`. Currently requires delete + recreate
-- [ ] **Amazon matches list**: Show which transactions matched which Amazon orders on the Connections page using `GET /amazon/matches`. Currently matches are only visible one-at-a-time in the transaction detail panel
 
 ## Insights & Analytics
 
