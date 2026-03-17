@@ -14,7 +14,7 @@
   "dependencies": {
     "preact": "^10.25.4",
     "htm": "^3.1.1",
-    "@knadh/oat": "^0.4.2",
+    "@knadh/oat": "^0.5.0",
     "@someshkar/oat-chips": "^1.0.1"
   },
   "devDependencies": {
