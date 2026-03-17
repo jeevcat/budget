@@ -1381,8 +1381,8 @@ function Dashboard({ tab = "monthly", monthId = null }) {
             (a) => html`
             <div key=${a.account_id} style="min-width:0">
               <div class="text-light text-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.account_name}</div>
-              <div class="mono text-body" style="color:${Number(a.balance) >= 0 ? "var(--success)" : "var(--danger)"}">
-                ${formatAmount(a.balance, { decimals: 0 })}
+              <div class="mono text-body" style="color:${Number(a.current) >= 0 ? "var(--success)" : "var(--danger)"}">
+                ${formatAmount(a.current, { decimals: 0 })}
               </div>
             </div>
           `,
