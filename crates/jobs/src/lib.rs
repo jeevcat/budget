@@ -41,15 +41,17 @@ pub type ApalisPool = sqlx::postgres::PgPool;
 
 /// Connect to `PostgreSQL` with a pool sized for the worker fleet.
 ///
-/// Each of the 10 workers holds a persistent `LISTEN` connection, and the
-/// scheduler, reclaim loop, purge loop, and HTTP queries also need connections.
+/// Each worker holds a persistent `LISTEN` connection, and the scheduler,
+/// reclaim loop, purge loop, and HTTP queries also need connections.
+/// Workers are I/O-bound on external APIs (Gemini, Enable Banking), not DB,
+/// so a modest pool suffices.
 ///
 /// # Errors
 ///
 /// Returns an error if the database connection fails.
 pub async fn connect_pool(url: &str) -> Result<ApalisPool, sqlx::Error> {
     sqlx::postgres::PgPoolOptions::new()
-        .max_connections(100)
+        .max_connections(15)
         .connect(url)
         .await
 }
@@ -587,6 +589,7 @@ pub async fn run_workers(
         .backend(backend!(CategorizeTransactionJob))
         .data(db.clone())
         .data(llm.clone())
+        .concurrency(5)
         .build(handle_categorize_transaction_job);
 
     let correlate_txn_worker = WorkerBuilder::new("budget-correlate-txn")
