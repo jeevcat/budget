@@ -11,6 +11,9 @@
 
 ## Insights & Analytics
 
+### Data
+- [ ] **Import historical transactions**: Only 5 budget months of data exist — MSTL seasonality and trend detection need 24+ months. Import older bank transaction history (CSV or API backfill) so seasonal factors and trend arrows start working
+
 ### Features
 - [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
 

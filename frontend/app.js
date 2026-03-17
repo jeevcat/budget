@@ -4663,13 +4663,87 @@ function BurndownChart({ data }) {
 // Insights page
 // ---------------------------------------------------------------------------
 
+function BurndownSparkline({ data }) {
+  const w = 200;
+  const h = 60;
+  const pad = 4;
+  const budget = Number(data.budget_amount);
+  const pts = data.current?.points;
+  if (!pts?.length)
+    return html`<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:60px;display:block"><text x=${w / 2} y=${h / 2 + 4} text-anchor="middle" class="bd-axis-label">No data</text></svg>`;
+
+  const maxDays = data.current.total_days || 1;
+  const currentMax = Math.max(...pts.map((p) => Number(p.cumulative)));
+  const predicted =
+    data.predicted_landing != null ? Number(data.predicted_landing) : null;
+  const maxVal = Math.max(budget, currentMax, predicted || 0) * 1.1 || 1;
+
+  const x = (day) => pad + ((day - 1) / (maxDays - 1 || 1)) * (w - 2 * pad);
+  const y = (v) => pad + (1 - v / maxVal) * (h - 2 * pad);
+
+  const line = pts
+    .map(
+      (p, i) => `${i === 0 ? "M" : "L"}${x(p.day)},${y(Number(p.cumulative))}`,
+    )
+    .join(" ");
+  const lastPt = pts[pts.length - 1];
+  const lastFrac = x(lastPt.day);
+  const predLine =
+    predicted != null
+      ? `M${lastFrac},${y(Number(lastPt.cumulative))} L${x(maxDays)},${y(predicted)}`
+      : "";
+
+  return html`
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:60px;display:block">
+      <line x1=${pad} y1=${y(budget)} x2=${w - pad} y2=${y(budget)} stroke="var(--kw-autumn-yellow)" stroke-width="1" stroke-dasharray="4 2" opacity="0.6" />
+      <path d=${line} fill="none" stroke="var(--kw-crystal-blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      ${predLine && html`<path d=${predLine} fill="none" stroke="var(--kw-oni-violet)" stroke-width="1.5" stroke-dasharray="4 2" stroke-linecap="round" />`}
+    </svg>
+  `;
+}
+
+function BurndownDetail({ burndown }) {
+  return html`
+    <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
+      <div class="vstack gap-0">
+        <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Budget</span>
+        <span style="font-size:var(--text-4);font-weight:600">
+          ${formatAmount(burndown.budget_amount, { decimals: 0 })}
+        </span>
+      </div>
+      ${
+        burndown.current?.points?.length > 0 &&
+        html`
+        <div class="vstack gap-0">
+          <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Spent</span>
+          <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.current.points[burndown.current.points.length - 1].cumulative) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--foreground)"}">
+            ${formatAmount(burndown.current.points[burndown.current.points.length - 1].cumulative, { decimals: 0 })}
+          </span>
+        </div>
+      `
+      }
+      ${
+        burndown.predicted_landing != null &&
+        html`
+        <div class="vstack gap-0">
+          <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Predicted</span>
+          <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.predicted_landing) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--success)"}">
+            ${formatAmount(burndown.predicted_landing, { decimals: 0 })}
+          </span>
+        </div>
+      `
+      }
+    </div>
+    <${BurndownChart} data=${burndown} />
+  `;
+}
+
 function Insights({ categoryId: routeCategoryId }) {
   const [categories, setCategories] = useState(null);
   const [error, setError] = useState(null);
-  const [selectedCat, setSelectedCat] = useState(routeCategoryId || "");
-  const [burndown, setBurndown] = useState(null);
-  const [bdLoading, setBdLoading] = useState(false);
-  const [bdError, setBdError] = useState(null);
+  const [burndowns, setBurndowns] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [expandedCat, setExpandedCat] = useState(routeCategoryId || null);
 
   function load() {
     api.get("/categories").then(setCategories).catch(setError);
@@ -4694,26 +4768,21 @@ function Insights({ categoryId: routeCategoryId }) {
   }, [categories, catMap]);
 
   useEffect(() => {
-    if (!selectedCat && monthlyCats.length > 0) {
-      setSelectedCat(monthlyCats[0].id);
-    }
-  }, [monthlyCats, selectedCat]);
-
-  useEffect(() => {
-    if (!selectedCat) return;
-    setBdLoading(true);
-    setBdError(null);
-    api
-      .get(`/budgets/burndown?category_id=${selectedCat}`)
-      .then((data) => {
-        setBurndown(data);
-        setBdLoading(false);
-      })
-      .catch((err) => {
-        setBdError(err.message);
-        setBdLoading(false);
-      });
-  }, [selectedCat]);
+    if (monthlyCats.length === 0) return;
+    setLoading(true);
+    const fetches = monthlyCats.map((c) =>
+      api
+        .get(`/budgets/burndown?category_id=${c.id}`)
+        .then((data) => ({ id: c.id, data }))
+        .catch(() => ({ id: c.id, data: null })),
+    );
+    Promise.all(fetches).then((results) => {
+      const map = {};
+      for (const r of results) if (r.data) map[r.id] = r.data;
+      setBurndowns(map);
+      setLoading(false);
+    });
+  }, [monthlyCats]);
 
   if (error)
     return html`<${ErrorPanel} error=${error} onRetry=${() => {
@@ -4722,72 +4791,69 @@ function Insights({ categoryId: routeCategoryId }) {
     }} />`;
   if (!categories) return html`<p class="text-light">Loading...</p>`;
 
+  const expanded = expandedCat && burndowns[expandedCat];
+
   return html`
     <div class="vstack gap-4">
       <h2>Insights</h2>
 
       ${
-        monthlyCats.length > 0
-          ? html`
-        <div class="card" style="padding:1.25rem">
-          <div class="hstack gap-4" style="align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
-            <h3 style="margin:0">Budget Burndown</h3>
-            <div style="min-width:220px">
-              <${CategorySelect}
-                value=${selectedCat}
-                onChange=${(id) => {
-                  setSelectedCat(id);
-                  navigateReplace(`/insights/${id}`);
-                }}
-                categories=${monthlyCats}
-                catMap=${catMap}
-                placeholder="Select category"
-              />
-            </div>
-          </div>
-
-          ${bdLoading && html`<progress></progress>`}
-          ${bdError && html`<p class="text-light">${bdError}</p>`}
-          ${
-            burndown &&
-            !bdLoading &&
-            html`
-            <div class="hstack gap-6" style="margin-bottom:1rem;flex-wrap:wrap">
-              <div class="vstack gap-0">
-                <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Budget</span>
-                <span style="font-size:var(--text-4);font-weight:600">
-                  ${formatAmount(burndown.budget_amount, { decimals: 0 })}
-                </span>
-              </div>
-              ${
-                burndown.current?.points?.length > 0 &&
-                html`
-                <div class="vstack gap-0">
-                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Spent</span>
-                  <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.current.points[burndown.current.points.length - 1].cumulative) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--foreground)"}">
-                    ${formatAmount(burndown.current.points[burndown.current.points.length - 1].cumulative, { decimals: 0 })}
-                  </span>
+        monthlyCats.length === 0
+          ? html`<p class="text-light">No monthly variable categories yet. Create one on the Categories page to see burndown charts.</p>`
+          : loading
+            ? html`<progress></progress>`
+            : expanded
+              ? html`
+                <div class="card" style="padding:1.25rem">
+                  <div class="hstack gap-3" style="align-items:center;margin-bottom:1rem">
+                    <button class="small outline" onClick=${() => {
+                      setExpandedCat(null);
+                      navigateReplace("/insights");
+                    }}>\u2039 All</button>
+                    <h3 style="margin:0">${expanded.category_name}</h3>
+                  </div>
+                  <${BurndownDetail} burndown=${expanded} />
                 </div>
               `
-              }
-              ${
-                burndown.predicted_landing != null &&
-                html`
-                <div class="vstack gap-0">
-                  <span class="text-light" style="font-size:var(--text-8);text-transform:uppercase;letter-spacing:0.04em">Predicted</span>
-                  <span style="font-size:var(--text-4);font-weight:600;color:${Number(burndown.predicted_landing) > Number(burndown.budget_amount) ? "var(--danger)" : "var(--success)"}">
-                    ${formatAmount(burndown.predicted_landing, { decimals: 0 })}
-                  </span>
+              : html`
+                <div class="burndown-grid">
+                  ${monthlyCats.map((c) => {
+                    const bd = burndowns[c.id];
+                    if (!bd) return null;
+                    const spent =
+                      bd.current?.points?.length > 0
+                        ? Number(
+                            bd.current.points[bd.current.points.length - 1]
+                              .cumulative,
+                          )
+                        : 0;
+                    const budget = Number(bd.budget_amount);
+                    const predicted =
+                      bd.predicted_landing != null
+                        ? Number(bd.predicted_landing)
+                        : null;
+                    const overBudget = predicted != null && predicted > budget;
+                    return html`
+                      <div
+                        class="card burndown-card"
+                        key=${c.id}
+                        onClick=${() => {
+                          setExpandedCat(c.id);
+                          navigateReplace("/insights/" + c.id);
+                        }}
+                      >
+                        <div class="hstack" style="justify-content:space-between;align-items:baseline;margin-bottom:0.25rem">
+                          <span style="font-weight:600;font-size:var(--text-7)">${categoryName(catMap, c.id)}</span>
+                          <span class="mono" style="font-size:var(--text-8);color:${overBudget ? "var(--danger)" : "var(--muted-foreground)"}">
+                            ${formatAmount(spent, { decimals: 0 })} / ${formatAmount(budget, { decimals: 0 })}
+                          </span>
+                        </div>
+                        <${BurndownSparkline} data=${bd} />
+                      </div>
+                    `;
+                  })}
                 </div>
               `
-              }
-            </div>
-            <${BurndownChart} data=${burndown} />
-          `
-          }
-        </div>
-      `
-          : html`<p class="text-light">No monthly variable categories yet. Create one on the Categories page to see burndown charts.</p>`
       }
     </div>
   `;
