@@ -5,7 +5,7 @@ use budget_core::models::SecretKey;
 use budget_db::Db;
 use budget_jobs::{
     AmazonSyncJob, ApalisPool, CategorizeJob, CategorizeTransactionJob, CorrelateJob, JobStorage,
-    LlmClient, PipelineStorage, SyncJob,
+    LlmClient, PayPalSyncJob, PipelineStorage, SyncJob,
 };
 use budget_providers::EnableBankingAuth;
 
@@ -46,4 +46,6 @@ pub struct AppState {
     pub amazon_sync_storage: JobStorage<AmazonSyncJob>,
     /// Amazon enrichment configuration.
     pub amazon_config: AmazonConfig,
+    /// Job queue storage for `PayPal` sync jobs.
+    pub paypal_sync_storage: JobStorage<PayPalSyncJob>,
 }

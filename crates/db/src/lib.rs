@@ -3,12 +3,15 @@ mod amazon;
 mod balances;
 mod categories;
 mod connections;
+mod enrichment;
 mod error;
+mod paypal;
 mod rules;
 mod transactions;
 
 pub use amazon::{AmazonEnrichment, AmazonEnrichmentStats};
 pub use error::DbError;
+pub use paypal::PayPalEnrichmentStats;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -177,7 +180,7 @@ fn row_to_transaction(row: &PgRow) -> Result<Transaction, DbError> {
         balance_after_transaction_currency: row.try_get("balance_after_transaction_currency")?,
         creditor_account_additional_id: row.try_get("creditor_account_additional_id")?,
         debtor_account_additional_id: row.try_get("debtor_account_additional_id")?,
-        amazon_item_titles: Vec::new(),
+        enrichment_item_titles: Vec::new(),
     })
 }
 

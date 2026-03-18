@@ -511,6 +511,7 @@ version = "0.1.0"
 dependencies = [
  "budget-amazon",
  "budget-core",
+ "budget-paypal",
  "chrono",
  "rust_decimal",
  "rust_decimal_macros",
@@ -533,12 +534,31 @@ dependencies = [
  "budget-amazon",
  "budget-core",
  "budget-db",
+ "budget-paypal",
  "budget-providers",
  "chrono",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
  "sqlx",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "budget-paypal"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "reqwest",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "utoipa",

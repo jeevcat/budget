@@ -41,6 +41,7 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 # Internal crates
 budget-amazon = { path = "crates/amazon" }
+budget-paypal = { path = "crates/paypal" }
 budget-core = { path = "crates/core" }
 budget-db = { path = "crates/db" }
 budget-jobs = { path = "crates/jobs" }

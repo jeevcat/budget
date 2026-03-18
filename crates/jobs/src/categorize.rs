@@ -45,12 +45,14 @@ pub(crate) async fn categorize_fan_out(
         return Ok(());
     }
 
-    // -- Enrich Amazon transactions with item titles for rule matching ---------
+    // -- Enrich transactions with item titles for rule matching -----------------
     let txn_ids: Vec<uuid::Uuid> = eligible.iter().map(|t| *t.id.as_uuid()).collect();
-    let mut amazon_titles = db.get_amazon_item_titles_for_transactions(&txn_ids).await?;
+    let mut enrichment_titles = db
+        .get_enrichment_item_titles_for_transactions(&txn_ids)
+        .await?;
     for txn in &mut eligible {
-        if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
-            txn.amazon_item_titles = titles;
+        if let Some(titles) = enrichment_titles.remove(txn.id.as_uuid()) {
+            txn.enrichment_item_titles = titles;
         }
     }
 
@@ -126,7 +128,7 @@ pub async fn handle_categorize_transaction_job(
         .get_amazon_enrichment_for_transaction(*txn.id.as_uuid())
         .await?
     {
-        txn.amazon_item_titles = enrichment
+        txn.enrichment_item_titles = enrichment
             .orders
             .into_iter()
             .flat_map(|o| o.items.into_iter().map(|i| i.title))
@@ -165,14 +167,14 @@ pub async fn handle_categorize_transaction_job(
         counterparty_name: txn.counterparty_name.as_deref(),
         counterparty_iban: txn.counterparty_iban.as_ref().map(AsRef::as_ref),
         counterparty_bic: txn.counterparty_bic.as_ref().map(AsRef::as_ref),
-        amazon_item_titles: &txn.amazon_item_titles,
+        enrichment_item_titles: &txn.enrichment_item_titles,
     };
 
     tracing::info!(
         txn_id = %txn_id,
         merchant = %txn.merchant_name,
         amount = %txn.amount,
-        amazon_items = ?txn.amazon_item_titles,
+        enrichment_items = ?txn.enrichment_item_titles,
         "no rule matched, sending to LLM"
     );
 

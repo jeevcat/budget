@@ -58,6 +58,7 @@ async fn setup(pool: PgPool) -> (Router, Db) {
         correlate_storage: JobStorage::new(&pool),
         pipeline_storage: PipelineStorage::new(&pool),
         amazon_sync_storage: JobStorage::new(&pool),
+        paypal_sync_storage: JobStorage::new(&pool),
         apalis_pool: pool,
         enable_banking_auth: None,
         llm: LlmClient::new(MockLlmProvider::new()),

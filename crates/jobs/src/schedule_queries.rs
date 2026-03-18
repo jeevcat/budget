@@ -19,6 +19,7 @@ use super::ApalisPool;
 pub enum AccountType {
     Bank,
     Amazon,
+    PayPal,
 }
 
 impl fmt::Display for AccountType {
@@ -26,6 +27,7 @@ impl fmt::Display for AccountType {
         match self {
             Self::Bank => write!(f, "bank"),
             Self::Amazon => write!(f, "amazon"),
+            Self::PayPal => write!(f, "paypal"),
         }
     }
 }
@@ -36,6 +38,7 @@ impl FromStr for AccountType {
         match s {
             "bank" => Ok(Self::Bank),
             "amazon" => Ok(Self::Amazon),
+            "paypal" => Ok(Self::PayPal),
             other => Err(format!("unknown AccountType: {other}")),
         }
     }

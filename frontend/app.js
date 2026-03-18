@@ -2983,7 +2983,8 @@ function Rules() {
       counterparty_iban: "counterparty IBAN",
       counterparty_bic: "counterparty BIC",
       bank_transaction_code: "bank txn code",
-      amazon_item_title: "Amazon item",
+      enrichment_item_title: "Enrichment item",
+      amazon_item_title: "Enrichment item",
     };
     return labels[field] ?? field;
   }
@@ -3068,7 +3069,7 @@ function Rules() {
                 <option value="counterparty_iban">Counterparty IBAN</option>
                 <option value="counterparty_bic">Counterparty BIC</option>
                 <option value="bank_transaction_code">Bank Transaction Code</option>
-                <option value="amazon_item_title">Amazon Item Title</option>
+                <option value="enrichment_item_title">Enrichment Item Title</option>
               </select>
               <input
                 type="text"

@@ -13,6 +13,7 @@ apalis-workflow = { workspace = true }
 budget-amazon = { workspace = true }
 budget-core = { workspace = true }
 budget-db = { workspace = true }
+budget-paypal = { workspace = true }
 budget-providers = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }

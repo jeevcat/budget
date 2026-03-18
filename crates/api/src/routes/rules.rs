@@ -225,11 +225,11 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
     let txn_ids: Vec<uuid::Uuid> = eligible.iter().map(|t| *t.id.as_uuid()).collect();
     let mut amazon_titles = state
         .db
-        .get_amazon_item_titles_for_transactions(&txn_ids)
+        .get_enrichment_item_titles_for_transactions(&txn_ids)
         .await?;
     for txn in &mut eligible {
         if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
-            txn.amazon_item_titles = titles;
+            txn.enrichment_item_titles = titles;
         }
     }
 
@@ -305,16 +305,16 @@ async fn preview(
         transactions.push(txn);
     }
 
-    // Enrich with Amazon item titles so AmazonItemTitle rules can match
+    // Enrich with Amazon item titles so EnrichmentItemTitle rules can match
     if rule.target.rule_type() == RuleType::Categorization {
         let txn_ids: Vec<uuid::Uuid> = transactions.iter().map(|t| *t.id.as_uuid()).collect();
         let mut amazon_titles = state
             .db
-            .get_amazon_item_titles_for_transactions(&txn_ids)
+            .get_enrichment_item_titles_for_transactions(&txn_ids)
             .await?;
         for txn in &mut transactions {
             if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
-                txn.amazon_item_titles = titles;
+                txn.enrichment_item_titles = titles;
             }
         }
     }
@@ -434,7 +434,7 @@ mod tests {
             ("counterparty_iban", MatchField::CounterpartyIban),
             ("counterparty_bic", MatchField::CounterpartyBic),
             ("bank_transaction_code", MatchField::BankTransactionCode),
-            ("amazon_item_title", MatchField::AmazonItemTitle),
+            ("amazon_item_title", MatchField::EnrichmentItemTitle),
         ] {
             let json = format!(
                 r#"{{"rule_type":"categorization","conditions":[{{"field":"{name}","pattern":"x"}}],"priority":0}}"#,

@@ -22,6 +22,7 @@ use budget_providers::{
 pub mod categorize;
 pub mod correlate;
 pub mod enrich;
+pub mod paypal;
 pub mod pipeline;
 pub mod queries;
 pub mod schedule_queries;
@@ -167,6 +168,7 @@ pub use enrich::{
     AmazonEnrichConfig, handle_amazon_fetch_order_job, handle_amazon_match_job,
     handle_amazon_page_job, handle_amazon_sync_job,
 };
+pub use paypal::{handle_paypal_match_job, handle_paypal_sync_job};
 pub use sync::{ImportResult, handle_sync_job, import_provider_transactions};
 
 mod storage;
@@ -514,6 +516,22 @@ pub struct AmazonMatchJob {
     pub schedule_run_id: Option<String>,
 }
 
+/// Fetch `PayPal` transactions via the Transaction Search API and store them.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PayPalSyncJob {
+    pub account_id: budget_core::models::PayPalAccountId,
+    #[serde(default)]
+    pub schedule_run_id: Option<String>,
+}
+
+/// Match `PayPal` transactions to bank transactions.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PayPalMatchJob {
+    pub account_id: budget_core::models::PayPalAccountId,
+    #[serde(default)]
+    pub schedule_run_id: Option<String>,
+}
+
 /// A no-op job for health checks and testing the job queue.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NoOpJob;
@@ -536,6 +554,7 @@ pub async fn handle_noop_job(_job: NoOpJob) -> Result<(), BoxDynError> {
 /// # Errors
 ///
 /// Returns an error if any worker fails.
+#[allow(clippy::too_many_lines)]
 pub async fn run_workers(
     db: &budget_db::Db,
     apalis_pool: &ApalisPool,
@@ -629,6 +648,19 @@ pub async fn run_workers(
         .data(apalis_pool.clone())
         .build(handle_amazon_match_job);
 
+    // PayPal enrichment workers
+    let paypal_sync_worker = WorkerBuilder::new("budget-paypal-sync")
+        .backend(backend!(PayPalSyncJob))
+        .data(db.clone())
+        .data(apalis_pool.clone())
+        .build(handle_paypal_sync_job);
+
+    let paypal_match_worker = WorkerBuilder::new("budget-paypal-match")
+        .backend(backend!(PayPalMatchJob))
+        .data(db.clone())
+        .data(apalis_pool.clone())
+        .build(handle_paypal_match_job);
+
     let noop_worker = WorkerBuilder::new("budget-no-op")
         .backend(backend!(NoOpJob))
         .build(handle_noop_job);
@@ -662,6 +694,8 @@ pub async fn run_workers(
     spawn_worker!(set, "amazon-page", amazon_page_worker);
     spawn_worker!(set, "amazon-order", amazon_order_worker);
     spawn_worker!(set, "amazon-match", amazon_match_worker);
+    spawn_worker!(set, "paypal-sync", paypal_sync_worker);
+    spawn_worker!(set, "paypal-match", paypal_match_worker);
     spawn_worker!(set, "noop", noop_worker);
 
     await_all_workers(set).await

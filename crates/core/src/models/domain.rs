@@ -9,8 +9,8 @@ use super::enums::{
     MatchField, PaceIndicator, RuleType,
 };
 use super::id::{
-    AccountId, AmazonAccountId, BalanceSnapshotId, BudgetMonthId, CategoryId, ConnectionId, RuleId,
-    TransactionId,
+    AccountId, AmazonAccountId, BalanceSnapshotId, BudgetMonthId, CategoryId, ConnectionId,
+    PayPalAccountId, RuleId, TransactionId,
 };
 use super::newtypes::{
     Bic, CurrencyCode, DomainCode, ExchangeRateType, Iban, MerchantCategoryCode, Priority,
@@ -619,9 +619,10 @@ pub struct Transaction {
     /// Source: Enable Banking `debtor_account_additional_identification`
     #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub debtor_account_additional_id: Option<serde_json::Value>,
-    /// Amazon item titles from matched orders (not persisted; enrichment-only).
+    /// Item titles from enrichment sources (Amazon orders, `PayPal` items, etc.).
+    /// Not persisted; populated at runtime from enrichment match tables.
     #[serde(skip)]
-    pub amazon_item_titles: Vec<String>,
+    pub enrichment_item_titles: Vec<String>,
 }
 
 impl Default for Transaction {
@@ -659,7 +660,7 @@ impl Default for Transaction {
             balance_after_transaction_currency: None,
             creditor_account_additional_id: None,
             debtor_account_additional_id: None,
-            amazon_item_titles: Vec::new(),
+            enrichment_item_titles: Vec::new(),
         }
     }
 }
@@ -900,6 +901,14 @@ pub struct BalanceSnapshot {
 pub struct AmazonAccount {
     pub id: AmazonAccountId,
     pub label: String,
+}
+
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PayPalAccount {
+    pub id: PayPalAccountId,
+    pub label: String,
+    pub sandbox: bool,
 }
 
 #[cfg(feature = "openapi")]

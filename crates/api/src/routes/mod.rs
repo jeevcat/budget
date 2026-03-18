@@ -5,6 +5,7 @@ pub mod categories;
 pub mod connections;
 pub mod import;
 pub mod jobs;
+pub mod paypal;
 pub mod rules;
 pub mod transactions;
 

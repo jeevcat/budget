@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         amazon_sync_storage: JobStorage::new(&apalis_pool),
         amazon_config,
+        paypal_sync_storage: JobStorage::new(&apalis_pool),
     };
 
     let frontend_dir = config.frontend_dir.map_or_else(
@@ -273,6 +274,7 @@ fn build_router(state: AppState, frontend_dir: &std::path::Path) -> Router {
         .nest("/jobs", routes::jobs::router())
         .nest("/connections", routes::connections::router())
         .nest("/amazon", routes::amazon::router())
+        .nest("/paypal", routes::paypal::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer_token,
