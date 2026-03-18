@@ -4399,6 +4399,11 @@ function NetWorthChart({ data }) {
     month: "short",
     year: "2-digit",
   });
+  const dayFmt = new Intl.DateTimeFormat("en", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
@@ -4497,7 +4502,7 @@ function NetWorthChart({ data }) {
       hover &&
       html`
       <div class="nw-tooltip hstack gap-4">
-        <span class="text-light">${monthFmt.format(hover.date)}</span>
+        <span class="text-light">${dayFmt.format(hover.date)}</span>
         <span style="font-weight:600">${formatAmount(hover.value, { decimals: 0 })}</span>
         ${
           hover.type === "forecast" &&
