@@ -11,7 +11,7 @@ chrono = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }
-scraper = "0.25"
+scraper = "0.26"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
