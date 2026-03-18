@@ -156,7 +156,7 @@ pub fn build_net_worth_series(
         }
 
         // Interpolate between snapshots or apply transaction deltas
-        let mut any_lerped = false;
+        let mut has_authoritative = !snapshot_accounts.is_empty();
         for (account_id, balance) in &mut running {
             if snapshot_accounts.contains(account_id) {
                 continue;
@@ -170,6 +170,7 @@ pub fn build_net_worth_series(
                         .copied()
                         .unwrap_or(Decimal::ZERO);
                     *balance += delta + daily_correction;
+                    has_authoritative = true;
                 }
                 Some(IntervalKind::NoTransactions) => {
                     // No transaction data: linear interpolation
@@ -180,13 +181,13 @@ pub fn build_net_worth_series(
                         &day_snapshots,
                     ) {
                         *balance = lerped;
-                        any_lerped = true;
                     }
                 }
                 None => {
                     // Tail region (past last snapshot): apply deltas unconditionally
                     if let Some(delta) = daily_deltas.get(&(*account_id, current_day)) {
                         *balance += delta;
+                        has_authoritative = true;
                     }
                 }
             }
@@ -196,7 +197,7 @@ pub fn build_net_worth_series(
         series.push(NetWorthPoint {
             date: current_day,
             value: total,
-            interpolated: any_lerped,
+            interpolated: !has_authoritative,
         });
 
         current_day = current_day.succ_opt().expect("date overflow");
