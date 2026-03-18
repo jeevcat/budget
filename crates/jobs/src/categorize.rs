@@ -123,16 +123,12 @@ pub async fn handle_categorize_transaction_job(
         return Ok(());
     }
 
-    // Enrich with Amazon item titles
-    if let Some(enrichment) = db
-        .get_amazon_enrichment_for_transaction(*txn.id.as_uuid())
-        .await?
-    {
-        txn.enrichment_item_titles = enrichment
-            .orders
-            .into_iter()
-            .flat_map(|o| o.items.into_iter().map(|i| i.title))
-            .collect();
+    // Enrich with item titles from all sources (Amazon, PayPal, etc.)
+    let titles = db
+        .get_enrichment_item_titles_for_transactions(&[*txn.id.as_uuid()])
+        .await?;
+    if let Some(t) = titles.into_values().next() {
+        txn.enrichment_item_titles = t;
     }
 
     // Try deterministic rules before LLM

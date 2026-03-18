@@ -343,7 +343,7 @@ async fn generate_rule(
         })
         .collect();
 
-    let amazon_titles = state
+    let enrichment_titles = state
         .db
         .get_enrichment_item_titles_for_transactions(&[*txn.id.as_uuid()])
         .await?
@@ -362,7 +362,7 @@ async fn generate_rule(
         counterparty_iban: txn.counterparty_iban.map(|v| v.to_string()),
         counterparty_bic: txn.counterparty_bic.map(|v| v.to_string()),
         bank_transaction_code: txn.bank_transaction_code,
-        enrichment_item_titles: amazon_titles,
+        enrichment_item_titles: enrichment_titles,
     };
 
     let proposed = state

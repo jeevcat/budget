@@ -223,12 +223,12 @@ async fn apply(State(state): State<AppState>) -> Result<Json<ApplyRulesResponse>
     );
 
     let txn_ids: Vec<uuid::Uuid> = eligible.iter().map(|t| *t.id.as_uuid()).collect();
-    let mut amazon_titles = state
+    let mut enrichment_titles = state
         .db
         .get_enrichment_item_titles_for_transactions(&txn_ids)
         .await?;
     for txn in &mut eligible {
-        if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
+        if let Some(titles) = enrichment_titles.remove(txn.id.as_uuid()) {
             txn.enrichment_item_titles = titles;
         }
     }
@@ -308,12 +308,12 @@ async fn preview(
     // Enrich with Amazon item titles so EnrichmentItemTitle rules can match
     if rule.target.rule_type() == RuleType::Categorization {
         let txn_ids: Vec<uuid::Uuid> = transactions.iter().map(|t| *t.id.as_uuid()).collect();
-        let mut amazon_titles = state
+        let mut enrichment_titles = state
             .db
             .get_enrichment_item_titles_for_transactions(&txn_ids)
             .await?;
         for txn in &mut transactions {
-            if let Some(titles) = amazon_titles.remove(txn.id.as_uuid()) {
+            if let Some(titles) = enrichment_titles.remove(txn.id.as_uuid()) {
                 txn.enrichment_item_titles = titles;
             }
         }
