@@ -8,7 +8,9 @@ use serde::Serialize;
 use budget_core::models::AccountId;
 use budget_jobs::queries::{JobRecord, QueueCount};
 use budget_jobs::schedule_queries::AccountScheduleStatus;
-use budget_jobs::{CategorizeJob, CorrelateJob, PipelineContext, SyncJob};
+use budget_jobs::{
+    AmazonSyncJob, CategorizeJob, CorrelateJob, PayPalSyncJob, PipelineContext, SyncJob,
+};
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -38,6 +40,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(trigger_correlate))
         .routes(routes!(trigger_pipeline))
         .routes(routes!(trigger_resync_all))
+        .routes(routes!(trigger_amazon_sync_all))
+        .routes(routes!(trigger_paypal_sync_all))
 }
 
 /// List all jobs ordered by most recent first.
@@ -219,4 +223,38 @@ async fn trigger_resync_all(
     }
 
     Ok((StatusCode::ACCEPTED, Json(ResyncAllResponse { enqueued })))
+}
+
+/// Enqueue sync jobs for all Amazon accounts.
+#[utoipa::path(post, path = "/amazon", tag = "jobs", responses((status = 202)), security(("bearer_token" = [])))]
+async fn trigger_amazon_sync_all(State(state): State<AppState>) -> Result<StatusCode, AppError> {
+    let accounts = state.db.list_amazon_accounts().await?;
+    for account in &accounts {
+        state
+            .amazon_sync_storage
+            .push(AmazonSyncJob {
+                account_id: account.id,
+                schedule_run_id: None,
+            })
+            .await
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Enqueue sync jobs for all `PayPal` accounts.
+#[utoipa::path(post, path = "/paypal", tag = "jobs", responses((status = 202)), security(("bearer_token" = [])))]
+async fn trigger_paypal_sync_all(State(state): State<AppState>) -> Result<StatusCode, AppError> {
+    let accounts = state.db.list_paypal_accounts().await?;
+    for account in &accounts {
+        state
+            .paypal_sync_storage
+            .push(PayPalSyncJob {
+                account_id: account.id,
+                schedule_run_id: None,
+            })
+            .await
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
+    Ok(StatusCode::ACCEPTED)
 }
