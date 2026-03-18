@@ -240,24 +240,27 @@ impl Db {
         Ok(rows.into_iter().map(|(k,)| k).collect())
     }
 
-    /// Get the latest transaction date for a `PayPal` account.
+    /// Get the earliest and latest transaction dates for a `PayPal` account.
+    ///
+    /// Returns `(None, None)` if no transactions exist yet.
     ///
     /// # Errors
     ///
     /// Returns `DbError` if the query fails.
-    pub async fn get_paypal_latest_transaction_date(
+    pub async fn get_paypal_date_range(
         &self,
         account_id: PayPalAccountId,
-    ) -> Result<Option<chrono::NaiveDate>, DbError> {
-        let row: (Option<chrono::NaiveDate>,) = sqlx::query_as(
-            "SELECT MAX(transaction_date) FROM paypal_transactions
+    ) -> Result<(Option<chrono::NaiveDate>, Option<chrono::NaiveDate>), DbError> {
+        let row: (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) = sqlx::query_as(
+            "SELECT MIN(transaction_date), MAX(transaction_date)
+             FROM paypal_transactions
              WHERE paypal_account_id = $1",
         )
         .bind(account_id)
         .fetch_one(&self.0)
         .await?;
 
-        Ok(row.0)
+        Ok(row)
     }
 
     /// Get bank transactions eligible for `PayPal` matching.

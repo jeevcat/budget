@@ -229,6 +229,43 @@ impl PayPalClient {
         info!(total = all_txns.len(), "fetched all PayPal transactions");
         Ok(all_txns)
     }
+
+    /// Fetch transactions from `since` to `until`, automatically chunking
+    /// into 31-day windows. Unlike [`fetch_all_transactions`], this stops
+    /// at `until` rather than `now`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any API call fails.
+    pub async fn fetch_all_transactions_until(
+        &mut self,
+        since: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Result<Vec<PayPalTransaction>, PayPalError> {
+        let mut all_txns = Vec::new();
+        let mut window_start = since;
+
+        while window_start < until {
+            let window_end = (window_start + Duration::days(MAX_WINDOW_DAYS)).min(until);
+
+            info!(
+                start = %window_start.format("%Y-%m-%d"),
+                end = %window_end.format("%Y-%m-%d"),
+                "fetching PayPal transactions window (backfill)"
+            );
+
+            let txns = self.search_transactions(window_start, window_end).await?;
+            all_txns.extend(txns);
+
+            window_start = window_end;
+        }
+
+        info!(
+            total = all_txns.len(),
+            "fetched PayPal backfill transactions"
+        );
+        Ok(all_txns)
+    }
 }
 
 // ---------------------------------------------------------------------------
