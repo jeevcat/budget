@@ -28,6 +28,7 @@ pub struct PayPalItem {
     pub name: Option<String>,
     pub description: Option<String>,
     pub quantity: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub unit_price: Option<Decimal>,
     pub unit_price_currency: Option<String>,
 }

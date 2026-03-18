@@ -159,6 +159,7 @@ dependencies = [
  "budget-core",
  "budget-db",
  "budget-jobs",
+ "budget-paypal",
  "budget-providers",
  "chrono",
  "rust_decimal",

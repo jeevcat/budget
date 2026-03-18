@@ -20,6 +20,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(delete_account, update_account))
         .routes(routes!(account_status))
         .routes(routes!(trigger_sync))
+        .routes(routes!(get_enrichment))
 }
 
 // ---------------------------------------------------------------------------
@@ -171,4 +172,52 @@ async fn trigger_sync(
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(StatusCode::ACCEPTED)
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct PayPalEnrichmentResponse {
+    bank_transaction_id: Uuid,
+    merchant_name: Option<String>,
+    items: Vec<budget_paypal::PayPalItem>,
+}
+
+/// Get `PayPal` enrichment details for a bank transaction.
+#[utoipa::path(get, path = "/enrichment/{transaction_id}", tag = "paypal")]
+async fn get_enrichment(
+    State(state): State<AppState>,
+    AxumPath(transaction_id): AxumPath<Uuid>,
+) -> Result<Json<PayPalEnrichmentResponse>, AppError> {
+    let titles = state
+        .db
+        .get_paypal_item_titles_for_transactions(&[transaction_id])
+        .await?;
+
+    let items_for_txn = titles.get(&transaction_id);
+    if items_for_txn.is_none() {
+        return Err(AppError(
+            StatusCode::NOT_FOUND,
+            "no PayPal enrichment for this transaction".to_owned(),
+        ));
+    }
+
+    let item_titles = items_for_txn.unwrap_or(&Vec::new()).clone();
+
+    Ok(Json(PayPalEnrichmentResponse {
+        bank_transaction_id: transaction_id,
+        merchant_name: item_titles.first().cloned(),
+        items: item_titles
+            .into_iter()
+            .map(|name| budget_paypal::PayPalItem {
+                name: Some(name),
+                description: None,
+                quantity: None,
+                unit_price: None,
+                unit_price_currency: None,
+            })
+            .collect(),
+    }))
 }

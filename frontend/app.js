@@ -1565,6 +1565,7 @@ function TxnDetail({
   const [proposalPreview, setProposalPreview] = useState(null);
   const [proposalPreviewing, setProposalPreviewing] = useState(false);
   const [amazonEnrichment, setAmazonEnrichment] = useState(null);
+  const [paypalEnrichment, setPaypalEnrichment] = useState(null);
   const debounceRef = useRef(null);
   if (!txn) return null;
 
@@ -1578,12 +1579,17 @@ function TxnDetail({
       setSelectedProposal(null);
       setProposalPreview(null);
       setAmazonEnrichment(null);
+      setPaypalEnrichment(null);
       // Small delay so the panel animates in
       requestAnimationFrame(() => setOpen(true));
       api
         .get(`/amazon/enrichment/${txn.id}`)
         .then(setAmazonEnrichment)
         .catch(() => setAmazonEnrichment(null));
+      api
+        .get(`/paypal/enrichment/${txn.id}`)
+        .then(setPaypalEnrichment)
+        .catch(() => setPaypalEnrichment(null));
     }
   }, [txn?.id]);
 
@@ -1595,6 +1601,7 @@ function TxnDetail({
       setSelectedProposal(null);
       setProposalPreview(null);
       setAmazonEnrichment(null);
+      setPaypalEnrichment(null);
       onClose();
     }, 250);
   }
@@ -1906,6 +1913,28 @@ function TxnDetail({
                   </div>
                 `,
               )}
+            </div>
+          `
+        }
+
+        ${
+          paypalEnrichment &&
+          html`
+            <div class="mt-4">
+              <h4 style="margin:0 0 0.5rem">PayPal Details</h4>
+              <div class="card" style="padding:0.75rem">
+                ${paypalEnrichment.merchant_name ? html`<div style="margin-bottom:0.5rem"><strong>${paypalEnrichment.merchant_name}</strong></div>` : null}
+                ${paypalEnrichment.items
+                  ?.filter((i) => i.name)
+                  .map(
+                    (item) => html`
+                    <div class="hstack gap-2" style="padding:0.25rem 0">
+                      <span style="flex:1">${item.name}</span>
+                      ${item.unit_price != null ? html`<span class="mono">${formatAmount(item.unit_price)}</span>` : null}
+                    </div>
+                  `,
+                  )}
+              </div>
             </div>
           `
         }
@@ -3753,6 +3782,7 @@ function Connections() {
     }
 
     <${AmazonPanel} />
+    <${PayPalPanel} />
   `;
 }
 
@@ -4000,6 +4030,248 @@ function AmazonAccountCard({ account, status, onReload, onDelete }) {
             class="small"
             onClick=${triggerSync}
             disabled=${syncing || !status?.cookies_valid}
+          >
+            ${syncing ? "Syncing\u2026" : "Sync Now"}
+          </button>
+          <button
+            data-variant="danger"
+            class="small"
+            onClick=${onDelete}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// PayPal Enrichment
+// ---------------------------------------------------------------------------
+
+function PayPalPanel() {
+  const [accounts, setAccounts] = useState([]);
+  const [statuses, setStatuses] = useState({});
+  const [showForm, setShowForm] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newClientId, setNewClientId] = useState("");
+  const [newSecret, setNewSecret] = useState("");
+  const [newSandbox, setNewSandbox] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  function loadAccounts() {
+    api
+      .get("/paypal/accounts")
+      .then((accts) => {
+        setAccounts(accts);
+        for (const a of accts) {
+          api
+            .get(`/paypal/accounts/${a.id}/status`)
+            .then((s) => setStatuses((prev) => ({ ...prev, [a.id]: s })))
+            .catch(() => {});
+        }
+      })
+      .catch(() => setAccounts([]));
+  }
+
+  useEffect(loadAccounts, []);
+
+  async function addAccount(e) {
+    e.preventDefault();
+    if (!newLabel.trim() || !newClientId.trim() || !newSecret.trim()) return;
+    setCreating(true);
+    try {
+      await api.post("/paypal/accounts", {
+        label: newLabel.trim(),
+        client_id: newClientId.trim(),
+        client_secret: newSecret.trim(),
+        sandbox: newSandbox,
+      });
+      setNewLabel("");
+      setNewClientId("");
+      setNewSecret("");
+      setNewSandbox(false);
+      setShowForm(false);
+      loadAccounts();
+      ot.toast("Account created", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Failed to create account", { variant: "danger" });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function deleteAccount(id, label) {
+    if (
+      !confirm(
+        `Delete PayPal account "${label}"? This removes all its transactions and matches.`,
+      )
+    )
+      return;
+    try {
+      await api.del(`/paypal/accounts/${id}`);
+      loadAccounts();
+      ot.toast("Account deleted", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Failed to delete account", { variant: "danger" });
+    }
+  }
+
+  return html`
+    <div style="margin-top:2rem">
+      <div class="conn-header">
+        <h3 style="margin:0">PayPal Enrichment</h3>
+        <button
+          class="small ${showForm ? "" : "outline"}"
+          data-variant="primary"
+          onClick=${() => setShowForm(!showForm)}
+        >
+          Add Account
+        </button>
+      </div>
+
+      ${
+        showForm &&
+        html`
+        <article class="card" style="margin-bottom:1.25rem">
+          <form class="vstack gap-2" onSubmit=${addAccount}>
+            <input
+              type="text"
+              placeholder="Account label (e.g. Personal PayPal)"
+              required
+              value=${newLabel}
+              onInput=${(e) => setNewLabel(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Client ID"
+              required
+              value=${newClientId}
+              onInput=${(e) => setNewClientId(e.target.value)}
+              style="font-family:monospace;font-size:0.85rem"
+            />
+            <input
+              type="password"
+              placeholder="Client Secret"
+              required
+              value=${newSecret}
+              onInput=${(e) => setNewSecret(e.target.value)}
+              style="font-family:monospace;font-size:0.85rem"
+            />
+            <label class="hstack gap-2" style="align-items:center">
+              <input type="checkbox" checked=${newSandbox} onChange=${(e) => setNewSandbox(e.target.checked)} />
+              Sandbox mode
+            </label>
+            <div class="hstack gap-2">
+              <button type="submit" data-variant="primary" class="small" disabled=${creating}>
+                ${creating ? "Creating\u2026" : "Create Account"}
+              </button>
+              <button type="button" class="small outline" onClick=${() => setShowForm(false)}>Cancel</button>
+            </div>
+          </form>
+        </article>
+      `
+      }
+
+      <div class="vstack gap-3">
+        ${accounts.map(
+          (account) => html`
+            <${PayPalAccountCard}
+              key=${account.id}
+              account=${account}
+              status=${statuses[account.id]}
+              onReload=${loadAccounts}
+              onDelete=${() => deleteAccount(account.id, account.label)}
+            />
+          `,
+        )}
+      </div>
+    </div>
+  `;
+}
+
+function PayPalAccountCard({ account, status, onReload, onDelete }) {
+  const [syncing, setSyncing] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState(account.label);
+
+  async function saveLabel() {
+    const trimmed = editLabel.trim();
+    if (!trimmed || trimmed === account.label) {
+      setEditing(false);
+      setEditLabel(account.label);
+      return;
+    }
+    try {
+      await api.patch(`/paypal/accounts/${account.id}`, { label: trimmed });
+      setEditing(false);
+      onReload();
+    } catch (e) {
+      ot.toast(e.message, "Rename failed", { variant: "danger" });
+    }
+  }
+
+  async function triggerSync() {
+    setSyncing(true);
+    try {
+      await api.post(`/paypal/accounts/${account.id}/sync`);
+      ot.toast("PayPal sync queued", "", { variant: "success" });
+    } catch (e) {
+      ot.toast(e.message, "Sync failed", { variant: "danger" });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const st = status?.stats;
+
+  return html`
+    <div class="card" style="padding:1rem">
+      <div class="hstack gap-3" style="align-items:start;justify-content:space-between">
+        <div class="vstack gap-2" style="flex:1">
+          <div class="hstack gap-2" style="align-items:center">
+            ${
+              editing
+                ? html`<input
+                  type="text"
+                  value=${editLabel}
+                  onInput=${(e) => setEditLabel(e.target.value)}
+                  onBlur=${saveLabel}
+                  onKeyDown=${(e) => {
+                    if (e.key === "Enter") e.target.blur();
+                    if (e.key === "Escape") {
+                      setEditing(false);
+                      setEditLabel(account.label);
+                    }
+                  }}
+                  ref=${(el) => el?.focus()}
+                  style="font-weight:700;padding:0 0.25rem;width:12rem"
+                />`
+                : html`<strong style="cursor:pointer" onClick=${() => setEditing(true)} title="Click to rename">${account.label}</strong>`
+            }
+            ${account.sandbox ? html`<span class="chip">Sandbox</span>` : null}
+          </div>
+
+          ${
+            st
+              ? html`
+              <div class="hstack gap-3" style="flex-wrap:wrap">
+                <span class="text-light">${st.total_transactions} transactions</span>
+                <span class="text-light">${st.matched_transactions} matched</span>
+                <span class="text-light">${st.unmatched_transactions} unmatched</span>
+              </div>
+            `
+              : null
+          }
+        </div>
+
+        <div class="hstack gap-2">
+          <button
+            data-variant="primary"
+            class="small"
+            onClick=${triggerSync}
+            disabled=${syncing}
           >
             ${syncing ? "Syncing\u2026" : "Sync Now"}
           </button>

@@ -12,7 +12,7 @@ use budget_db::Db;
 use super::pipeline::PipelineContext;
 use super::schedule_queries::{self, AccountType, RunStatus, ScheduleRun, TriggerReason};
 use super::storage::{JobStorage, PipelineStorage};
-use super::{AmazonSyncJob, ApalisPool};
+use super::{AmazonSyncJob, ApalisPool, PayPalSyncJob};
 
 /// Sync interval: 1 hour between successful runs.
 const SYNC_INTERVAL_SECS: i64 = 3600;
@@ -27,11 +27,19 @@ const MAX_BACKOFF_SECS: i64 = 900; // 15 minutes
 pub async fn run_scheduler(db: &Db, pool: &ApalisPool) {
     let pipeline_storage = PipelineStorage::new(pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(pool);
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(pool);
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     loop {
         interval.tick().await;
-        if let Err(e) =
-            scheduler_tick(db, pool, &pipeline_storage, &amazon_storage, Utc::now()).await
+        if let Err(e) = scheduler_tick(
+            db,
+            pool,
+            &pipeline_storage,
+            &amazon_storage,
+            &paypal_storage,
+            Utc::now(),
+        )
+        .await
         {
             tracing::warn!(error = %e, "scheduler tick failed");
         }
@@ -50,6 +58,7 @@ pub async fn scheduler_tick(
     pool: &ApalisPool,
     pipeline_storage: &PipelineStorage,
     amazon_storage: &JobStorage<AmazonSyncJob>,
+    paypal_storage: &JobStorage<PayPalSyncJob>,
     now: DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Bank accounts
@@ -111,6 +120,41 @@ pub async fn scheduler_tick(
                 enqueue_amazon_sync(
                     pool,
                     amazon_storage,
+                    account_uuid,
+                    reason,
+                    attempt,
+                    next_run_at,
+                    now,
+                )
+                .await?;
+            }
+        }
+    }
+
+    // PayPal accounts
+    let paypal_accounts = db.list_paypal_accounts().await?;
+    for account in &paypal_accounts {
+        let account_uuid: uuid::Uuid = account.id.into();
+        let latest =
+            schedule_queries::get_latest_run_for_account(pool, account_uuid, AccountType::PayPal)
+                .await?;
+
+        match evaluate_account(latest.as_ref(), now) {
+            Action::Skip => {}
+            Action::UpdateNextRun {
+                run_id,
+                next_run_at,
+            } => {
+                schedule_queries::update_next_run_at(pool, run_id, next_run_at).await?;
+            }
+            Action::Enqueue {
+                reason,
+                attempt,
+                next_run_at,
+            } => {
+                enqueue_paypal_sync(
+                    pool,
+                    paypal_storage,
                     account_uuid,
                     reason,
                     attempt,
@@ -344,6 +388,57 @@ async fn enqueue_amazon_sync(
         reason = %reason,
         attempt,
         "scheduled Amazon sync"
+    );
+
+    Ok(())
+}
+
+/// Insert a `schedule_runs` row and push a `PayPal` sync job.
+async fn enqueue_paypal_sync(
+    pool: &ApalisPool,
+    paypal_storage: &JobStorage<PayPalSyncJob>,
+    account_id: uuid::Uuid,
+    reason: TriggerReason,
+    attempt: i32,
+    next_run_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let run_id = uuid::Uuid::new_v4();
+
+    let run = ScheduleRun {
+        id: run_id,
+        account_id,
+        account_type: AccountType::PayPal,
+        status: RunStatus::Running,
+        trigger_reason: reason,
+        attempt,
+        started_at: Some(now),
+        finished_at: None,
+        next_run_at,
+        error_message: None,
+        created_at: now,
+    };
+
+    schedule_queries::insert_schedule_run(pool, &run).await?;
+
+    if let Err(e) = paypal_storage
+        .push(PayPalSyncJob {
+            account_id: budget_core::models::PayPalAccountId::from_uuid(account_id),
+            schedule_run_id: Some(run_id.to_string()),
+        })
+        .await
+    {
+        let _ = schedule_queries::complete_schedule_run(pool, run_id, RunStatus::Failed, Some(&e))
+            .await;
+        return Err(e.into());
+    }
+
+    tracing::info!(
+        %account_id,
+        %run_id,
+        reason = %reason,
+        attempt,
+        "scheduled PayPal sync"
     );
 
     Ok(())

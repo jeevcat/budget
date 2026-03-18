@@ -271,6 +271,18 @@ pub async fn get_all_schedule_status(
                  WHERE account_id = aa.id AND account_type = 'amazon' \
                  ORDER BY created_at DESC LIMIT 1 \
              ) sr ON true \
+             UNION ALL \
+             SELECT pa.id AS account_id, pa.label AS account_name, \
+                    'paypal' AS account_type, \
+                    sr.started_at AS last_run_at, sr.status AS last_run_status, \
+                    sr.error_message AS last_error, sr.next_run_at, sr.trigger_reason \
+             FROM paypal_accounts pa \
+             LEFT JOIN LATERAL ( \
+                 SELECT started_at, status, error_message, next_run_at, trigger_reason \
+                 FROM schedule_runs \
+                 WHERE account_id = pa.id AND account_type = 'paypal' \
+                 ORDER BY created_at DESC LIMIT 1 \
+             ) sr ON true \
          ) combined \
          ORDER BY account_name",
     )

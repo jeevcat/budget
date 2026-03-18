@@ -11,6 +11,7 @@ path = "src/main.rs"
 budget-amazon = { workspace = true, features = ["openapi"] }
 budget-core = { workspace = true, features = ["openapi"] }
 budget-db = { workspace = true, features = ["openapi"] }
+budget-paypal = { workspace = true, features = ["openapi"] }
 budget-jobs = { workspace = true, features = ["openapi"] }
 budget-providers = { workspace = true, features = ["openapi"] }
 tokio = { workspace = true }

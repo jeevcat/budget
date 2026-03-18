@@ -16,7 +16,7 @@ use budget_jobs::schedule_queries::{
     self, AccountType as ScheduleAccountType, RunStatus, ScheduleRun, TriggerReason,
 };
 use budget_jobs::scheduler::scheduler_tick;
-use budget_jobs::{AmazonSyncJob, ApalisPool, JobStorage, PipelineStorage};
+use budget_jobs::{AmazonSyncJob, ApalisPool, JobStorage, PayPalSyncJob, PipelineStorage};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -98,11 +98,19 @@ async fn scheduler_enqueues_pipeline_for_new_account(pool: PgPool) {
     let account = seed_account(&db, "Primary Checking", conn_id).await;
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
     let now = Utc::now();
 
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     let account_uuid: uuid::Uuid = account.id.into();
     let run = schedule_queries::get_latest_run_for_account(
@@ -144,9 +152,17 @@ async fn scheduler_skips_account_with_running_pipeline(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // Count all runs — should still be just the one
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
@@ -183,9 +199,17 @@ async fn scheduler_retries_failed_transient_error(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // Should have 2 runs now — original failed + new retry
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
@@ -235,9 +259,17 @@ async fn scheduler_respects_backoff_delay(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // Should still be just 1 run
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
@@ -273,9 +305,17 @@ async fn scheduler_stops_retrying_after_max_attempts(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // Should still be just 1 run — no retry
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
@@ -325,9 +365,17 @@ async fn scheduler_does_not_retry_permanent_error(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // Should still be just 1 run — no retry for permanent errors
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schedule_runs WHERE account_id = $1")
@@ -361,9 +409,17 @@ async fn scheduler_skips_csv_only_accounts(pool: PgPool) {
 
     let pipeline_storage = PipelineStorage::new(&apalis_pool);
     let amazon_storage = JobStorage::<AmazonSyncJob>::new(&apalis_pool);
-    scheduler_tick(&db, &apalis_pool, &pipeline_storage, &amazon_storage, now)
-        .await
-        .expect("tick should succeed");
+    let paypal_storage = JobStorage::<PayPalSyncJob>::new(&apalis_pool);
+    scheduler_tick(
+        &db,
+        &apalis_pool,
+        &pipeline_storage,
+        &amazon_storage,
+        &paypal_storage,
+        now,
+    )
+    .await
+    .expect("tick should succeed");
 
     // No schedule runs should exist for the CSV-only account
     let csv_uuid: uuid::Uuid = csv_account.id.into();
