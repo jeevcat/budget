@@ -60,15 +60,16 @@ pub fn find_matches(
         if used_paypal_ids.contains(ptxn.transaction_id.as_str()) {
             continue;
         }
-        let paypal_abs = ptxn.amount.abs();
 
         for (bi, bank) in bank_candidates.iter().enumerate() {
             if used_bank_ids.contains(&bank.id) {
                 continue;
             }
 
-            let bank_abs = bank.amount.abs();
-            if paypal_abs != bank_abs {
+            // Exact amount match (same sign) — PayPal outgoing payments are
+            // negative, matching bank debits. Refunds (positive in PayPal)
+            // should only match bank credits (positive).
+            if ptxn.amount != bank.amount {
                 continue;
             }
 
@@ -317,5 +318,38 @@ mod tests {
     fn extract_reference_no_match() {
         let lines = vec!["some random remittance info".to_owned()];
         assert_eq!(extract_paypal_reference(&lines), None);
+    }
+
+    #[test]
+    fn refund_does_not_match_payment() {
+        let d = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        // PayPal refund is positive, bank payment is negative — should NOT match
+        let ptxn = paypal_txn("TXN_REFUND", d, dec!(535.50));
+        let btxn = bank(d, dec!(-535.50), "PayPal Europe", &[]);
+
+        let matches = find_matches(&[ptxn], &[btxn]);
+        assert!(
+            matches.is_empty(),
+            "refund (+) should not match payment (-)"
+        );
+    }
+
+    #[test]
+    fn sign_must_match_exactly() {
+        let d = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        // Both negative — should match
+        let p1 = paypal_txn("TXN001", d, dec!(-15.00));
+        let b1 = bank(d, dec!(-15.00), "PayPal Europe", &[]);
+        assert_eq!(find_matches(&[p1], &[b1]).len(), 1);
+
+        // Both positive (bank credit + PayPal refund) — should match
+        let p2 = paypal_txn("TXN002", d, dec!(15.00));
+        let b2 = bank(d, dec!(15.00), "PayPal Europe", &[]);
+        assert_eq!(find_matches(&[p2], &[b2]).len(), 1);
+
+        // Opposite signs — should NOT match
+        let p3 = paypal_txn("TXN003", d, dec!(15.00));
+        let b3 = bank(d, dec!(-15.00), "PayPal Europe", &[]);
+        assert!(find_matches(&[p3], &[b3]).is_empty());
     }
 }
