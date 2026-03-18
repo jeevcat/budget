@@ -125,21 +125,14 @@ pub fn build_net_worth_series(
     // pairs and check if transaction deltas fully explain the balance change.
     let interpolatable = build_interpolatable_set(&day_snapshots, daily_deltas);
 
-    // Track which accounts have a snapshot after the last snapshot day
-    // (i.e. days in the "tail" region past all snapshots for that account)
-    let last_snapshot_per_account: HashMap<AccountId, NaiveDate> = {
-        let mut m: HashMap<AccountId, NaiveDate> = HashMap::new();
-        for &(account_id, day) in day_snapshots.keys() {
-            m.entry(account_id)
-                .and_modify(|d| {
-                    if day > *d {
-                        *d = day;
-                    }
-                })
-                .or_insert(day);
-        }
-        m
-    };
+    // Per-account sorted snapshot dates for linear interpolation lookups
+    let mut account_snap_dates: HashMap<AccountId, Vec<NaiveDate>> = HashMap::new();
+    for &(account_id, day) in day_snapshots.keys() {
+        account_snap_dates.entry(account_id).or_default().push(day);
+    }
+    for dates in account_snap_dates.values_mut() {
+        dates.sort();
+    }
 
     // Walk day-by-day, carrying forward balances
     let mut running: HashMap<AccountId, Decimal> = HashMap::new();
@@ -156,19 +149,27 @@ pub fn build_net_worth_series(
             }
         }
 
-        // Apply transaction deltas for reconciled intervals or tail region
+        // Interpolate between snapshots or apply transaction deltas
         for (account_id, balance) in &mut running {
             if snapshot_accounts.contains(account_id) {
                 continue;
             }
 
-            let in_tail = last_snapshot_per_account
-                .get(account_id)
-                .is_some_and(|&last| current_day > last);
-
-            if (in_tail || interpolatable.contains(&(*account_id, current_day)))
-                && let Some(delta) = daily_deltas.get(&(*account_id, current_day))
-            {
+            if interpolatable.contains(&(*account_id, current_day)) {
+                // Reconciled interval: apply exact transaction deltas
+                if let Some(delta) = daily_deltas.get(&(*account_id, current_day)) {
+                    *balance += delta;
+                }
+            } else if let Some(lerped) = lerp_between_snapshots(
+                *account_id,
+                current_day,
+                &account_snap_dates,
+                &day_snapshots,
+            ) {
+                // Non-reconciled interval with a future snapshot: linear interpolation
+                *balance = lerped;
+            } else if let Some(delta) = daily_deltas.get(&(*account_id, current_day)) {
+                // Tail region (past last snapshot): apply deltas unconditionally
                 *balance += delta;
             }
         }
@@ -235,6 +236,40 @@ fn build_interpolatable_set(
     }
 
     result
+}
+
+/// Linearly interpolate an account's balance between surrounding snapshots.
+///
+/// Returns `Some(value)` if `current_day` falls strictly between two snapshots
+/// for the given account. Returns `None` if there is no enclosing interval
+/// (e.g. before the first snapshot or after the last).
+fn lerp_between_snapshots(
+    account_id: AccountId,
+    current_day: NaiveDate,
+    account_snap_dates: &HashMap<AccountId, Vec<NaiveDate>>,
+    day_snapshots: &HashMap<(AccountId, NaiveDate), &BalanceSnapshot>,
+) -> Option<Decimal> {
+    let dates = account_snap_dates.get(&account_id)?;
+
+    // Binary search for the first snapshot date > current_day
+    let idx = dates.partition_point(|&d| d <= current_day);
+    if idx == 0 || idx >= dates.len() {
+        return None;
+    }
+
+    let date_a = dates[idx - 1];
+    let date_b = dates[idx];
+    let span = (date_b - date_a).num_days();
+    if span == 0 {
+        return None;
+    }
+
+    let elapsed = (current_day - date_a).num_days();
+    let bal_a = day_snapshots[&(account_id, date_a)].current;
+    let bal_b = day_snapshots[&(account_id, date_b)].current;
+
+    let frac = Decimal::from(elapsed) / Decimal::from(span);
+    Some(bal_a + (bal_b - bal_a) * frac)
 }
 
 /// Forecast future net worth from a historical daily series.
@@ -497,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn balance_update_replaces_carried_value() {
+    fn balance_update_lerps_between_snapshots() {
         let a = AccountId::new();
         let snapshots = vec![
             make_snapshot(a, dec!(1000), d(2025, 1, 1)),
@@ -506,7 +541,7 @@ mod tests {
         let series = build_net_worth_series(&snapshots, &HashMap::new());
         assert_eq!(series.len(), 3);
         assert_eq!(series[0], (d(2025, 1, 1), dec!(1000)));
-        assert_eq!(series[1], (d(2025, 1, 2), dec!(1000)));
+        assert_eq!(series[1], (d(2025, 1, 2), dec!(1100)));
         assert_eq!(series[2], (d(2025, 1, 3), dec!(1200)));
     }
 
@@ -522,7 +557,8 @@ mod tests {
         let series = build_net_worth_series(&snapshots, &HashMap::new());
         assert_eq!(series.len(), 3);
         assert_eq!(series[0], (d(2025, 1, 1), dec!(1000)));
-        assert_eq!(series[1], (d(2025, 1, 2), dec!(1500)));
+        // A lerps to 1050, B first appears at 500
+        assert_eq!(series[1], (d(2025, 1, 2), dec!(1550)));
         assert_eq!(series[2], (d(2025, 1, 3), dec!(1600)));
     }
 
@@ -539,7 +575,8 @@ mod tests {
         let series = build_net_worth_series(&snapshots, &HashMap::new());
         assert_eq!(series.len(), 3);
         assert_eq!(series[0], (d(2025, 1, 1), dec!(1000)));
-        assert_eq!(series[1], (d(2025, 1, 2), dec!(1500)));
+        // A lerps to 1050, B first appears at 500
+        assert_eq!(series[1], (d(2025, 1, 2), dec!(1550)));
         assert_eq!(series[2], (d(2025, 1, 3), dec!(1600)));
     }
 
@@ -722,23 +759,20 @@ mod tests {
     }
 
     #[test]
-    fn deltas_skipped_when_not_reconciled() {
+    fn non_reconciled_intervals_use_linear_interpolation() {
         let a = AccountId::new();
+        // 2-day span: lerp gives 1000, 1050, 1100
         let snapshots = vec![
             make_snapshot(a, dec!(1000), d(2025, 1, 1)),
-            make_snapshot(a, dec!(1100), d(2025, 1, 4)),
+            make_snapshot(a, dec!(1100), d(2025, 1, 3)),
         ];
         // Sum = 50, but balance delta = 100 — not reconciled
-        let deltas = HashMap::from([
-            ((a, d(2025, 1, 2)), dec!(20)),
-            ((a, d(2025, 1, 3)), dec!(30)),
-        ]);
+        let deltas = HashMap::from([((a, d(2025, 1, 2)), dec!(50))]);
         let series = build_net_worth_series(&snapshots, &deltas);
-        assert_eq!(series.len(), 4);
+        assert_eq!(series.len(), 3);
         assert_eq!(series[0], (d(2025, 1, 1), dec!(1000)));
-        assert_eq!(series[1], (d(2025, 1, 2), dec!(1000)));
-        assert_eq!(series[2], (d(2025, 1, 3), dec!(1000)));
-        assert_eq!(series[3], (d(2025, 1, 4), dec!(1100)));
+        assert_eq!(series[1], (d(2025, 1, 2), dec!(1050)));
+        assert_eq!(series[2], (d(2025, 1, 3), dec!(1100)));
     }
 
     #[test]
@@ -747,28 +781,24 @@ mod tests {
         let b = AccountId::new();
         let snapshots = vec![
             make_snapshot(a, dec!(1000), d(2025, 1, 1)),
-            make_snapshot(a, dec!(1050), d(2025, 1, 4)),
+            make_snapshot(a, dec!(1050), d(2025, 1, 3)),
             make_snapshot(b, dec!(500), d(2025, 1, 1)),
-            make_snapshot(b, dec!(700), d(2025, 1, 4)),
+            make_snapshot(b, dec!(700), d(2025, 1, 3)),
         ];
         // Account A: delta sum = 50, balance change = 50 — reconciled
-        // Account B: delta sum = 80, balance change = 200 — NOT reconciled
+        // Account B: delta sum = 80, balance change = 200 — NOT reconciled (lerped)
         let deltas = HashMap::from([
-            ((a, d(2025, 1, 2)), dec!(20)),
-            ((a, d(2025, 1, 3)), dec!(30)),
-            ((b, d(2025, 1, 2)), dec!(30)),
-            ((b, d(2025, 1, 3)), dec!(50)),
+            ((a, d(2025, 1, 2)), dec!(50)),
+            ((b, d(2025, 1, 2)), dec!(80)),
         ]);
         let series = build_net_worth_series(&snapshots, &deltas);
-        assert_eq!(series.len(), 4);
+        assert_eq!(series.len(), 3);
         // Day 1: A=1000, B=500 => 1500
         assert_eq!(series[0], (d(2025, 1, 1), dec!(1500)));
-        // Day 2: A=1020 (interpolated), B=500 (carry-forward) => 1520
-        assert_eq!(series[1], (d(2025, 1, 2), dec!(1520)));
-        // Day 3: A=1050 (interpolated), B=500 (carry-forward) => 1550
-        assert_eq!(series[2], (d(2025, 1, 3), dec!(1550)));
-        // Day 4: A=1050 (snapshot), B=700 (snapshot) => 1750
-        assert_eq!(series[3], (d(2025, 1, 4), dec!(1750)));
+        // Day 2: A=1050 (txn delta), B=600 (lerp: 500 + 200*1/2) => 1650
+        assert_eq!(series[1], (d(2025, 1, 2), dec!(1650)));
+        // Day 3: A=1050 (snapshot), B=700 (snapshot) => 1750
+        assert_eq!(series[2], (d(2025, 1, 3), dec!(1750)));
     }
 
     #[test]
