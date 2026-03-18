@@ -4322,6 +4322,7 @@ function NetWorthChart({ data }) {
     const hist = (data.history || []).map((p) => ({
       date: new Date(`${p.date}T00:00:00`),
       value: Number(p.value),
+      interpolated: p.interpolated || false,
     }));
     const fore = (data.forecast || []).map((p) => ({
       date: new Date(`${p.date}T00:00:00`),
@@ -4419,6 +4420,7 @@ function NetWorthChart({ data }) {
       let closest = null;
       let closestDist = Infinity;
       for (const p of hist) {
+        if (p.interpolated) continue;
         const dist = Math.abs(p.date - dateAtMouse);
         if (dist < closestDist) {
           closestDist = dist;

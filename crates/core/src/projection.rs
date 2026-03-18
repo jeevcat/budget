@@ -18,6 +18,10 @@ pub struct NetWorthPoint {
     pub date: NaiveDate,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub value: Decimal,
+    /// True when the value was derived from interpolation rather than
+    /// authoritative balance snapshots.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interpolated: bool,
 }
 
 /// A single forecasted data point with confidence bounds.
@@ -150,6 +154,7 @@ pub fn build_net_worth_series(
         }
 
         // Interpolate between snapshots or apply transaction deltas
+        let mut any_lerped = false;
         for (account_id, balance) in &mut running {
             if snapshot_accounts.contains(account_id) {
                 continue;
@@ -168,6 +173,7 @@ pub fn build_net_worth_series(
             ) {
                 // Non-reconciled interval with a future snapshot: linear interpolation
                 *balance = lerped;
+                any_lerped = true;
             } else if let Some(delta) = daily_deltas.get(&(*account_id, current_day)) {
                 // Tail region (past last snapshot): apply deltas unconditionally
                 *balance += delta;
@@ -178,6 +184,7 @@ pub fn build_net_worth_series(
         series.push(NetWorthPoint {
             date: current_day,
             value: total,
+            interpolated: any_lerped,
         });
 
         current_day = current_day.succ_opt().expect("date overflow");
@@ -473,6 +480,7 @@ mod tests {
                         .checked_add_signed(chrono::Duration::days(i64::from(i)))
                         .expect("valid"),
                     value: Decimal::from_f64_retain(val).expect("valid decimal"),
+                    interpolated: false,
                 }
             })
             .collect()
@@ -629,6 +637,7 @@ mod tests {
         let series = vec![NetWorthPoint {
             date: d(2025, 1, 1),
             value: dec!(1000),
+            interpolated: false,
         }];
         let err = forecast_net_worth(&series, 6, 0.8).unwrap_err();
         assert_eq!(
