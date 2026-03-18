@@ -249,15 +249,15 @@ impl Db {
         &self,
         account_id: PayPalAccountId,
     ) -> Result<Option<chrono::NaiveDate>, DbError> {
-        let row: Option<(chrono::NaiveDate,)> = sqlx::query_as(
+        let row: (Option<chrono::NaiveDate>,) = sqlx::query_as(
             "SELECT MAX(transaction_date) FROM paypal_transactions
              WHERE paypal_account_id = $1",
         )
         .bind(account_id)
-        .fetch_optional(&self.0)
+        .fetch_one(&self.0)
         .await?;
 
-        Ok(row.map(|(d,)| d))
+        Ok(row.0)
     }
 
     /// Get bank transactions eligible for `PayPal` matching.

@@ -284,16 +284,18 @@ export function shortType(t) {
 }
 
 export function syncUrlFor(s) {
-  return s.account_type === "amazon"
-    ? `/amazon/accounts/${s.account_id}/sync`
-    : `/jobs/pipeline/${s.account_id}`;
+  if (s.account_type === "amazon")
+    return `/amazon/accounts/${s.account_id}/sync`;
+  if (s.account_type === "paypal")
+    return `/paypal/accounts/${s.account_id}/sync`;
+  return `/jobs/pipeline/${s.account_id}`;
 }
 
 export const QUEUE_CARDS = [
   {
     key: "sync",
     title: "Sync",
-    desc: "Fetch new transactions from connected bank and Amazon accounts",
+    desc: "Fetch new transactions from connected bank accounts",
     types: ["SyncJob", "Pipeline"],
   },
   {
@@ -318,6 +320,12 @@ export const QUEUE_CARDS = [
       "AmazonFetchOrderJob",
       "AmazonMatchJob",
     ],
+  },
+  {
+    key: "paypal",
+    title: "PayPal",
+    desc: "Fetch PayPal transaction details and match to bank transactions",
+    types: ["PayPalSyncJob", "PayPalMatchJob"],
   },
 ];
 
