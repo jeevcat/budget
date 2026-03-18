@@ -270,13 +270,15 @@ async fn net_worth_projection(
     let interval_width = params.interval_width.unwrap_or(0.8).clamp(0.0, 1.0);
 
     let snapshots = state.db.list_all_balance_snapshots().await?;
+    let daily_deltas = state.db.get_daily_transaction_deltas().await?;
     debug!(
         snapshot_count = snapshots.len(),
+        delta_days = daily_deltas.len(),
         "running net worth projection on blocking thread"
     );
 
     let result = tokio::task::spawn_blocking(move || {
-        projection::project_net_worth(&snapshots, months, interval_width)
+        projection::project_net_worth(&snapshots, &daily_deltas, months, interval_width)
     })
     .await
     .map_err(|e| {

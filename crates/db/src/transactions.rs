@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::Row;
@@ -671,5 +673,34 @@ impl Db {
             Some(r) => Ok(r.try_get("max_date")?),
             None => Ok(None),
         }
+    }
+
+    /// Sum transaction amounts per (account, day).
+    ///
+    /// Used by net worth interpolation to fill gaps between balance snapshots
+    /// with daily granularity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn get_daily_transaction_deltas(
+        &self,
+    ) -> Result<HashMap<(AccountId, NaiveDate), Decimal>, DbError> {
+        let pool = &self.0;
+        let rows = sqlx::query(
+            "SELECT account_id, posted_date, SUM(amount) as daily_total
+             FROM transactions
+             GROUP BY account_id, posted_date",
+        )
+        .fetch_all(pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                let account_id: AccountId = row.try_get("account_id")?;
+                let date: NaiveDate = row.try_get("posted_date")?;
+                let total: Decimal = row.try_get("daily_total")?;
+                Ok(((account_id, date), total))
+            })
+            .collect()
     }
 }
