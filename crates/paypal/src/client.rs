@@ -151,8 +151,11 @@ impl PayPalClient {
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .header(ACCEPT, "application/json")
                 .query(&[
-                    ("start_date", start.to_rfc3339()),
-                    ("end_date", end.to_rfc3339()),
+                    (
+                        "start_date",
+                        start.format("%Y-%m-%dT%H:%M:%S%z").to_string(),
+                    ),
+                    ("end_date", end.format("%Y-%m-%dT%H:%M:%S%z").to_string()),
                     ("fields", "all".to_owned()),
                     ("page_size", "500".to_owned()),
                     ("page", page.to_string()),
