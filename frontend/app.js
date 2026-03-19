@@ -843,9 +843,10 @@ function BudgetSection({
 
 function guessMonthName(month) {
   const start = new Date(`${month.start_date}T00:00:00`);
-  const end = month.end_date ? new Date(`${month.end_date}T00:00:00`) : null;
-  const mid = end ? new Date((start.getTime() + end.getTime()) / 2) : start;
-  return mid.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  return start.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function formatMonthRange(month) {
