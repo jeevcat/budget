@@ -102,22 +102,13 @@ Path is determined by `confy` via the `directories` crate. Run `cargo run -- con
 - **No request body on GET or DELETE** — use query parameters or path segments instead
 - **Auth is bearer token** — all endpoints behind auth middleware except `/health` and OAuth callbacks
 
-## Pending: Relabel enriched transactions
+## Deployment
 
-After deploying commit `fb5f7c2` (enrichment product name titles), relabel existing Amazon/PayPal transactions by clearing their LLM category so the categorize job re-processes them with the updated prompt:
+When changes need to hit production (e.g. before testing with live data, running migrations, or relabelling):
 
-```sql
-UPDATE transactions t
-SET category_id = NULL, category_method = NULL, llm_justification = NULL, llm_title = NULL
-WHERE category_method = 'llm'
-  AND EXISTS (
-    SELECT 1 FROM amazon_orders ao WHERE ao.bank_transaction_id = t.id
-    UNION
-    SELECT 1 FROM paypal_transactions pt WHERE pt.bank_transaction_id = t.id
-  );
-```
-
-Then trigger the categorize job. Remove this section once done.
+1. Commit and push to `main`
+2. Ask the user to deploy — they run `nix flake update budget && make` in `~/nix` on tank
+3. Wait for confirmation before doing anything against production
 
 ## Coding Standards
 
