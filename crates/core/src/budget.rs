@@ -777,7 +777,7 @@ fn compute_monthly_status(
     current_month: &BudgetMonth,
     categories: &[Category],
     today: NaiveDate,
-    seasonal: Option<&crate::seasonality::SeasonalContext>,
+    analysis: Option<&crate::anomalies::SpendingAnalysis>,
 ) -> BudgetStatus {
     let spent = compute_category_spending(transactions, category.id, current_month, categories);
     let budget_amount = category.budget.amount().unwrap_or(Decimal::ZERO);
@@ -795,7 +795,7 @@ fn compute_monthly_status(
         .budget
         .budget_type()
         .unwrap_or(BudgetType::Variable);
-    let sf = seasonal.map(|s| s.seasonal_factor);
+    let sf = analysis.map(|a| a.seasonal.seasonal_factor);
     let (pace, pace_delta) = compute_pace(spent, budget_amount, elapsed_days, total_days, bt, sf);
 
     BudgetStatus {
@@ -809,7 +809,10 @@ fn compute_monthly_status(
         pace_delta,
         budget_mode: BudgetMode::Monthly,
         seasonal_factor: sf,
-        trend_monthly: seasonal.map(|s| s.trend_monthly),
+        trend_monthly: analysis.map(|a| a.seasonal.trend_monthly),
+        changepoint_shift_pct: analysis
+            .and_then(|a| a.anomalies.changepoint.as_ref().map(|c| c.shift_pct)),
+        residual_outlier: analysis.is_some_and(|a| a.anomalies.residual_outlier),
     }
 }
 
@@ -875,6 +878,8 @@ fn compute_annual_status(
         budget_mode: BudgetMode::Annual,
         seasonal_factor: None,
         trend_monthly: None,
+        changepoint_shift_pct: None,
+        residual_outlier: false,
     }
 }
 
@@ -957,6 +962,8 @@ fn compute_project_status(
         budget_mode: BudgetMode::Project,
         seasonal_factor: None,
         trend_monthly: None,
+        changepoint_shift_pct: None,
+        residual_outlier: false,
     }
 }
 
@@ -971,7 +978,7 @@ pub fn compute_budget_status(
     all_months: &[BudgetMonth],
     categories: &[Category],
     today: NaiveDate,
-    seasonal: Option<&crate::seasonality::SeasonalContext>,
+    analysis: Option<&crate::anomalies::SpendingAnalysis>,
 ) -> BudgetStatus {
     match category.budget.mode() {
         Some(BudgetMode::Annual) => compute_annual_status(
@@ -994,7 +1001,7 @@ pub fn compute_budget_status(
                 current_month,
                 categories,
                 today,
-                seasonal,
+                analysis,
             )
         }
     }

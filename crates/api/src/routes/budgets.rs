@@ -707,12 +707,12 @@ fn build_ledgers(
 ///
 /// Returns all data needed to render the dashboard: budget statuses, pre-filtered
 /// transactions grouped by mode, uncategorized count, budget year, and project
-fn seasonal_context_for(
+fn spending_analysis_for(
     cat: &Category,
     transactions: &[Transaction],
     budget_months: &[BudgetMonth],
     categories: &[Category],
-) -> Option<budget_core::seasonality::SeasonalContext> {
+) -> Option<budget_core::anomalies::SpendingAnalysis> {
     if cat.budget.budget_type() != Some(budget_core::models::BudgetType::Variable) {
         return None;
     }
@@ -722,7 +722,7 @@ fn seasonal_context_for(
         budget_months,
         categories,
     );
-    budget_core::seasonality::compute_seasonal_context(&series)
+    budget_core::anomalies::analyze_spending(&series)
 }
 
 /// child breakdowns. The frontend is a pure display layer — no business logic.
@@ -780,7 +780,7 @@ async fn status(
             )
         })
         .map(|cat| {
-            let seasonal = seasonal_context_for(cat, &transactions, &budget_months, &categories);
+            let analysis = spending_analysis_for(cat, &transactions, &budget_months, &categories);
             let status = compute_budget_status(
                 cat,
                 &transactions,
@@ -788,7 +788,7 @@ async fn status(
                 &budget_months,
                 &categories,
                 reference_date,
-                seasonal.as_ref(),
+                analysis.as_ref(),
             );
             let direct_children: Vec<ChildCategoryInfo> = categories
                 .iter()
@@ -1109,6 +1109,8 @@ mod tests {
             budget_mode: BudgetMode::Monthly,
             seasonal_factor: None,
             trend_monthly: None,
+            changepoint_shift_pct: None,
+            residual_outlier: false,
         }
     }
 
@@ -2756,6 +2758,8 @@ mod tests {
             budget_mode: BudgetMode::Project,
             seasonal_factor: None,
             trend_monthly: None,
+            changepoint_shift_pct: None,
+            residual_outlier: false,
         };
         let car_status = BudgetStatus {
             category_id: cat_id(61),
@@ -2769,6 +2773,8 @@ mod tests {
             budget_mode: BudgetMode::Project,
             seasonal_factor: None,
             trend_monthly: None,
+            changepoint_shift_pct: None,
+            residual_outlier: false,
         };
 
         let projects = vec![

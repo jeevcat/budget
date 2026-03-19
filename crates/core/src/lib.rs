@@ -8,6 +8,7 @@ use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
+pub mod anomalies;
 pub mod budget;
 pub mod error;
 pub mod models;
