@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU32;
 
 use chrono::{Datelike, NaiveDate};
@@ -231,27 +231,54 @@ pub fn detect_budget_month_boundaries(
 
     salary_txns.sort_by_key(|t| t.posted_date);
 
-    // Group salary transactions by calendar month (year, month)
+    // Group salary transactions by calendar month (year, month).
+    // For each month, track all dates (for detected count) and the first
+    // arrival date per distinct salary category (for Nth-category boundary).
     let mut by_month: BTreeMap<(i32, u32), Vec<NaiveDate>> = BTreeMap::new();
+    // (year, month) -> category_id -> earliest date that category arrived
+    let mut first_per_cat: BTreeMap<(i32, u32), HashMap<CategoryId, NaiveDate>> = BTreeMap::new();
 
     for txn in &salary_txns {
         let key = (txn.posted_date.year(), txn.posted_date.month());
         by_month.entry(key).or_default().push(txn.posted_date);
+        if let Some(cat_id) = txn.categorization.category_id() {
+            first_per_cat
+                .entry(key)
+                .or_default()
+                .entry(cat_id)
+                .and_modify(|d| {
+                    if txn.posted_date < *d {
+                        *d = txn.posted_date;
+                    }
+                })
+                .or_insert(txn.posted_date);
+        }
     }
 
-    // For each calendar month that has >= expected_salary_count deposits,
-    // the budget month starts on the first salary date so all deposits
-    // fall within the month range
+    // For each calendar month, sort the per-category first-arrival dates and
+    // use the Nth one (expected_salary_count) as the budget month start.
+    // This means early-arriving categories (e.g. Kindergeld) are skipped when
+    // count > 1, so the month boundary falls on the first "main" salary.
     let mut budget_months: Vec<BudgetMonth> = Vec::new();
+    let threshold = usize::try_from(expected_salary_count.get()).unwrap_or(usize::MAX);
 
-    for dates in by_month.values() {
-        if dates.len() >= usize::try_from(expected_salary_count.get()).unwrap_or(usize::MAX)
-            && let Some(&first_salary_date) = dates.iter().min()
-        {
+    for (ym, dates) in &by_month {
+        let cat_arrivals = first_per_cat.get(ym);
+        let mut sorted_arrivals: Vec<NaiveDate> = cat_arrivals
+            .map(|m| {
+                let mut v: Vec<NaiveDate> = m.values().copied().collect();
+                v.sort();
+                v
+            })
+            .unwrap_or_default();
+        sorted_arrivals.sort();
+
+        if sorted_arrivals.len() >= threshold {
+            let start_date = sorted_arrivals[threshold - 1];
             let detected: u32 = dates.len().try_into().unwrap_or(u32::MAX);
             budget_months.push(BudgetMonth {
-                id: deterministic_month_id(first_salary_date),
-                start_date: first_salary_date,
+                id: deterministic_month_id(start_date),
+                start_date,
                 end_date: None,
                 salary_transactions_detected: detected,
             });
@@ -1236,6 +1263,8 @@ mod tests {
 
     #[test]
     fn detect_two_salary_budget_months() {
+        // One salary category, multiple transactions per month.
+        // count=1 means any arrival of that category starts the month.
         let categories = vec![salary_category()];
         let transactions = vec![
             make_txn(
@@ -1260,44 +1289,47 @@ mod tests {
             ),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        // Budget month starts on first salary of the calendar month
+        // Budget month starts on first arrival of the (single) category
         assert_eq!(months[0].start_date, date(2025, 1, 10));
         assert_eq!(months[1].start_date, date(2025, 2, 10));
     }
 
     #[test]
     fn incomplete_salary_month_skipped() {
-        let categories = vec![salary_category()];
-        // Only 1 salary in February when 2 expected
+        // Two salary categories; count=2 means both must arrive.
+        // February only has one of the two categories — no budget month for Feb.
+        let categories = vec![salary_category(), kindergeld_category()];
         let transactions = vec![
+            // Jan: both categories arrive
             make_txn(
                 Categorization::Manual(salary_cat_id()),
                 dec!(2000),
                 date(2025, 1, 10),
             ),
             make_txn(
-                Categorization::Manual(salary_cat_id()),
-                dec!(2000),
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
                 date(2025, 1, 25),
             ),
+            // Feb: only one category arrives — skipped
             make_txn(
                 Categorization::Manual(salary_cat_id()),
                 dec!(2000),
                 date(2025, 2, 10),
             ),
-            // Missing second salary in Feb
+            // Mar: both categories arrive
             make_txn(
                 Categorization::Manual(salary_cat_id()),
                 dec!(2000),
                 date(2025, 3, 10),
             ),
             make_txn(
-                Categorization::Manual(salary_cat_id()),
-                dec!(2000),
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
                 date(2025, 3, 25),
             ),
         ];
@@ -1306,8 +1338,8 @@ mod tests {
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        assert_eq!(months[0].start_date, date(2025, 1, 10));
-        assert_eq!(months[1].start_date, date(2025, 3, 10));
+        assert_eq!(months[0].start_date, date(2025, 1, 25));
+        assert_eq!(months[1].start_date, date(2025, 3, 25));
     }
 
     #[test]
@@ -1369,77 +1401,68 @@ mod tests {
     }
 
     #[test]
-    fn month_starts_on_first_salary_all_deposits_in_range() {
-        // With 3 salary deposits per month, the budget month should start
-        // on the earliest one so all deposits fall within the month range.
-        let sal = salary_category();
-        let child_sal = Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(201)),
-            name: CategoryName::new("Kindergeld").unwrap(),
-            parent_id: None,
-            budget: BudgetConfig::Salary,
-        };
-        let categories = vec![sal, child_sal];
-        let sal_id = salary_cat_id();
-        let child_id = CategoryId::from_uuid(uuid::Uuid::from_u128(201));
+    fn month_starts_on_nth_distinct_source_all_deposits_in_range() {
+        // Two salary categories (Kindergeld + Salary); count=2 means the month
+        // starts on the 2nd distinct category (Salary, ~day 26), not Kindergeld.
+        // Multiple transactions from the same Salary category still count as one.
+        let categories = vec![salary_category(), kindergeld_category()];
 
         let transactions = vec![
-            // Feb: Kindergeld on 6th, Facebook on 26th, LBV on 27th
+            // Jan: Kindergeld on 8th (1st source), Salary on 26th (2nd source), extra on 30th
             make_txn(
-                Categorization::Manual(child_id),
-                dec!(518),
-                date(2026, 2, 6),
-            ),
-            make_txn(
-                Categorization::Manual(sal_id),
-                dec!(14000),
-                date(2026, 2, 26),
-            ),
-            make_txn(
-                Categorization::Manual(sal_id),
-                dec!(1721),
-                date(2026, 2, 27),
-            ),
-            // Jan: Kindergeld on 8th, Facebook on 26th, LBV on 30th
-            make_txn(
-                Categorization::Manual(child_id),
+                Categorization::Manual(kindergeld_cat_id()),
                 dec!(518),
                 date(2026, 1, 8),
             ),
             make_txn(
-                Categorization::Manual(sal_id),
+                Categorization::Manual(salary_cat_id()),
                 dec!(9330),
                 date(2026, 1, 26),
             ),
             make_txn(
-                Categorization::Manual(sal_id),
+                Categorization::Manual(salary_cat_id()),
                 dec!(1721),
                 date(2026, 1, 30),
             ),
+            // Feb: Kindergeld on 6th, Salary on 26th, extra on 27th
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1721),
+                date(2026, 2, 27),
+            ),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        assert_eq!(months[0].start_date, date(2026, 1, 8));
-        assert_eq!(months[1].start_date, date(2026, 2, 6));
+        // Month starts on the 2nd distinct category (Salary, day 26)
+        assert_eq!(months[0].start_date, date(2026, 1, 26));
+        assert_eq!(months[1].start_date, date(2026, 2, 26));
 
-        // All Jan salary deposits fall within month 0 (01-08 to 02-05)
-        assert_eq!(months[0].end_date, Some(date(2026, 2, 5)));
-        assert!(date(2026, 1, 8) >= months[0].start_date);
-        assert!(date(2026, 1, 26) <= months[0].end_date.unwrap());
+        assert_eq!(months[0].end_date, Some(date(2026, 2, 25)));
+        assert!(date(2026, 1, 26) >= months[0].start_date);
         assert!(date(2026, 1, 30) <= months[0].end_date.unwrap());
 
-        // All Feb salary deposits fall within month 1 (02-06 to open)
         assert_eq!(months[1].end_date, None);
-        assert!(date(2026, 2, 6) >= months[1].start_date);
         assert!(date(2026, 2, 26) >= months[1].start_date);
         assert!(date(2026, 2, 27) >= months[1].start_date);
     }
 
     #[test]
     fn end_date_is_day_before_next_first_salary() {
+        // Single category, count=1: month starts on first arrival, ends day
+        // before the next month's first arrival.
         let categories = vec![salary_category()];
         let transactions = vec![
             make_txn(
@@ -1464,12 +1487,49 @@ mod tests {
             ),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
             .expect("should detect months");
 
         assert_eq!(months[0].start_date, date(2025, 3, 5));
         assert_eq!(months[0].end_date, Some(date(2025, 4, 3)));
         assert_eq!(months[1].start_date, date(2025, 4, 4));
+    }
+
+    // Same test with two categories and count=2 to verify end_date is still
+    // day-before-next-Nth-start.
+    #[test]
+    fn end_date_is_day_before_next_nth_category_start() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
+                date(2025, 3, 5),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 3, 20),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
+                date(2025, 4, 4),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(2000),
+                date(2025, 4, 19),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        // Nth start = day 20 (Mar) and day 19 (Apr); end = day before next start
+        assert_eq!(months[0].start_date, date(2025, 3, 20));
+        assert_eq!(months[0].end_date, Some(date(2025, 4, 18)));
+        assert_eq!(months[1].start_date, date(2025, 4, 19));
     }
 
     #[test]
@@ -1498,33 +1558,328 @@ mod tests {
     }
 
     #[test]
-    fn three_salaries_same_day() {
-        let sal = salary_category();
-        let child_sal = Category {
-            id: CategoryId::from_uuid(uuid::Uuid::from_u128(201)),
-            name: CategoryName::new("Bonus").unwrap(),
-            parent_id: None,
-            budget: BudgetConfig::Salary,
-        };
-        let categories = vec![sal, child_sal];
-        let sal_id = salary_cat_id();
-        let child_id = CategoryId::from_uuid(uuid::Uuid::from_u128(201));
+    fn two_distinct_categories_same_day() {
+        // Both salary categories arrive on the same day; count=2 → month starts that day.
+        let categories = vec![salary_category(), kindergeld_category()];
 
         let transactions = vec![
-            make_txn(Categorization::Manual(sal_id), dec!(3000), date(2025, 6, 1)),
             make_txn(
-                Categorization::Manual(child_id),
+                Categorization::Manual(salary_cat_id()),
+                dec!(3000),
+                date(2025, 6, 1),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
                 dec!(500),
                 date(2025, 6, 1),
             ),
-            make_txn(Categorization::Manual(sal_id), dec!(1000), date(2025, 6, 1)),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1000),
+                date(2025, 6, 1),
+            ),
         ];
 
-        let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
             .expect("should detect months");
 
         assert_eq!(months.len(), 1);
         assert_eq!(months[0].start_date, date(2025, 6, 1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Nth-category boundary detection tests
+    //
+    // New semantic: with expected_salary_count = N, the budget month starts
+    // on the date the Nth distinct salary category arrives in a calendar month.
+    // This lets users skip early-arriving categories (e.g. Kindergeld) that
+    // shouldn't define the month boundary.
+    // -----------------------------------------------------------------------
+
+    fn kindergeld_cat_id() -> CategoryId {
+        CategoryId::from_uuid(uuid::Uuid::from_u128(2))
+    }
+
+    fn kindergeld_category() -> Category {
+        Category {
+            budget: BudgetConfig::Salary,
+            ..make_category(2, "Kindergeld", None)
+        }
+    }
+
+    // Three salary categories arrive each month: Kindergeld (~day 5),
+    // Salary/Facebook (~day 26), LBV (~day 27).
+    // With expected_salary_count = 2, the month should start on day 26
+    // (the 2nd distinct category), not day 5 (Kindergeld).
+    #[test]
+    fn nth_category_month_starts_on_second_distinct_source() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            // Jan: Kindergeld on 8th, Salary on 26th, LBV on 30th
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1721),
+                date(2026, 1, 30),
+            ),
+            // Feb: Kindergeld on 6th, Salary on 26th, LBV on 27th
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1721),
+                date(2026, 2, 27),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 2);
+        // Month starts on the 2nd distinct category (Salary, day 26), not Kindergeld (day 5/8)
+        assert_eq!(months[0].start_date, date(2026, 1, 26));
+        assert_eq!(months[1].start_date, date(2026, 2, 26));
+        assert_eq!(months[0].end_date, Some(date(2026, 2, 25)));
+        assert_eq!(months[1].end_date, None);
+    }
+
+    // With count = 1, the first distinct category (Kindergeld) triggers the
+    // month — same as before.
+    #[test]
+    fn nth_category_count_one_starts_on_first_source() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(1), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 2);
+        assert_eq!(months[0].start_date, date(2026, 1, 8));
+        assert_eq!(months[1].start_date, date(2026, 2, 6));
+    }
+
+    // When the Nth category hasn't arrived yet in the current calendar month,
+    // no new budget month is created — the previous month stays open.
+    #[test]
+    fn nth_category_no_new_month_until_nth_source_arrives() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            // Jan: both sources arrived
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            // Feb: both sources arrived
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+            // Mar: only Kindergeld so far, Salary hasn't arrived
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 3, 5),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        // Only Jan and Feb become budget months; Mar is not started yet
+        assert_eq!(months.len(), 2);
+        assert_eq!(months[0].start_date, date(2026, 1, 26));
+        assert_eq!(months[1].start_date, date(2026, 2, 26));
+        // Feb month stays open
+        assert_eq!(months[1].end_date, None);
+    }
+
+    // Once the Nth source arrives in the new month, it closes the previous
+    // and opens a new one.
+    #[test]
+    fn nth_category_new_month_opens_when_nth_source_arrives() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 3, 5),
+            ),
+            // Salary arrives in March — triggers new month
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 3, 21),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 2);
+        assert_eq!(months[0].start_date, date(2026, 2, 26));
+        assert_eq!(months[0].end_date, Some(date(2026, 3, 20)));
+        assert_eq!(months[1].start_date, date(2026, 3, 21));
+        assert_eq!(months[1].end_date, None);
+    }
+
+    // Multiple transactions from the same category in one month count as
+    // only one distinct source.
+    #[test]
+    fn nth_category_same_category_multiple_times_counts_once() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            // Jan: Salary arrives twice (bonus + regular), Kindergeld once
+            // With count=2, needs 2 distinct categories — Salary + Kindergeld
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9000),
+                date(2026, 1, 20),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1721),
+                date(2026, 1, 25),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        // Month starts on the 2nd distinct category — Salary on day 20
+        // (Kindergeld day 8 is first, Salary day 20 is second)
+        assert_eq!(months[0].start_date, date(2026, 1, 20));
+    }
+
+    // With count=3 and only 2 distinct categories available, the month never
+    // reaches the threshold — no budget months created.
+    #[test]
+    fn nth_category_count_exceeds_available_sources_no_months() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 2, 6),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(14000),
+                date(2026, 2, 26),
+            ),
+        ];
+
+        // count=3 but only 2 distinct salary categories exist
+        let months = detect_budget_month_boundaries(&transactions, nz(3), &categories)
+            .expect("should succeed but return no months");
+
+        assert_eq!(months.len(), 0);
+    }
+
+    // Salary transactions detected count reflects all transactions from all
+    // sources (not just distinct categories).
+    #[test]
+    fn nth_category_detected_count_reflects_all_transactions() {
+        let categories = vec![salary_category(), kindergeld_category()];
+        let transactions = vec![
+            make_txn(
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(518),
+                date(2026, 1, 8),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(9330),
+                date(2026, 1, 26),
+            ),
+            make_txn(
+                Categorization::Manual(salary_cat_id()),
+                dec!(1721),
+                date(2026, 1, 30),
+            ),
+        ];
+
+        let months = detect_budget_month_boundaries(&transactions, nz(2), &categories)
+            .expect("should detect months");
+
+        assert_eq!(months.len(), 1);
+        // All 3 transactions were salary-category transactions
+        assert_eq!(months[0].salary_transactions_detected, 3);
     }
 
     #[test]
@@ -3793,12 +4148,13 @@ mod tests {
 
     #[test]
     fn gap_with_skipped_month_extends_previous() {
-        let categories = vec![salary_category(), food_category()];
-        // Expected 2 salaries/month. Jan has 2, Feb has only 1 (skipped), Mar has 2.
+        // Two salary categories; count=2. Jan has both, Feb has only one (skipped), Mar has both.
+        let categories = vec![salary_category(), kindergeld_category(), food_category()];
         let transactions = vec![
+            // Jan: both categories arrive
             make_txn(
-                Categorization::Manual(salary_cat_id()),
-                dec!(2000),
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
                 date(2026, 1, 10),
             ),
             make_txn(
@@ -3806,15 +4162,16 @@ mod tests {
                 dec!(2000),
                 date(2026, 1, 25),
             ),
-            // Feb only has 1 salary — skipped
+            // Feb: only one category — skipped
             make_txn(
                 Categorization::Manual(salary_cat_id()),
                 dec!(2000),
                 date(2026, 2, 10),
             ),
+            // Mar: both categories arrive
             make_txn(
-                Categorization::Manual(salary_cat_id()),
-                dec!(2000),
+                Categorization::Manual(kindergeld_cat_id()),
+                dec!(500),
                 date(2026, 3, 10),
             ),
             make_txn(
@@ -3828,10 +4185,10 @@ mod tests {
             .expect("should detect months");
 
         assert_eq!(months.len(), 2);
-        assert_eq!(months[0].start_date, date(2026, 1, 10));
-        assert_eq!(months[1].start_date, date(2026, 3, 10));
+        assert_eq!(months[0].start_date, date(2026, 1, 25));
+        assert_eq!(months[1].start_date, date(2026, 3, 25));
 
-        // Feb 15 falls in the Jan budget month (which extends to Mar 9)
+        // Feb 15 falls in the Jan budget month (which extends to Mar 24)
         assert!(is_in_budget_month(date(2026, 2, 15), &months[0]));
         assert!(!is_in_budget_month(date(2026, 2, 15), &months[1]));
     }
