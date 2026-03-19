@@ -477,6 +477,21 @@ function TrendArrow({ trend_monthly, budget_amount }) {
   return html`<span class="trend-arrow" title=${label}>${arrow}</span>`;
 }
 
+function AnomalyBadge({ changepoint_shift_pct, residual_outlier }) {
+  if (changepoint_shift_pct != null) {
+    const up = changepoint_shift_pct > 0;
+    const pct = Math.round(Math.abs(changepoint_shift_pct) * 100);
+    const arrow = up ? "\u21E1" : "\u21E3";
+    const color = up ? "var(--warning)" : "var(--success)";
+    const label = `Spending shifted ${up ? "up" : "down"} ~${pct}% recently`;
+    return html`<span class="anomaly-badge" title=${label} style="color:${color}">${arrow}${pct}%</span>`;
+  }
+  if (residual_outlier) {
+    return html`<span class="anomaly-badge" title="Unusual spending this month" style="color:var(--warning)">spike</span>`;
+  }
+  return null;
+}
+
 function Ledger({
   items,
   ledger,
@@ -585,6 +600,7 @@ function Ledger({
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
                 <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+                <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
                 ${
                   onBurndownClick &&
                   s.budgetMode === "monthly" &&
@@ -785,6 +801,7 @@ function BudgetSection({
                 html` <span class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
               }
               <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+              <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
             </span>
             <${BudgetBar}
               pace=${s.pace}

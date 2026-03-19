@@ -532,6 +532,12 @@ dialog > form > div {
   margin-left: 0.25em;
   cursor: help;
 }
+.anomaly-badge {
+  font-size: var(--text-8);
+  font-weight: 600;
+  margin-left: 0.25em;
+  cursor: help;
+}
 
 .ledger-pace-dot {
   display: inline-block;
