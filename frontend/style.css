@@ -1096,3 +1096,15 @@ dialog > form > div {
   height: 10px;
   border-radius: var(--radius-small);
 }
+
+/* Overview dashboard grid */
+.overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 768px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
