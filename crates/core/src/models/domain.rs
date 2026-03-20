@@ -875,6 +875,11 @@ pub struct BudgetStatus {
     /// Monthly trend slope from MSTL decomposition (positive = spending increasing).
     /// `None` when insufficient history.
     pub trend_monthly: Option<f64>,
+    /// Percentage shift from a detected structural changepoint (e.g. 0.35 = +35%).
+    /// `None` when no recent changepoint detected.
+    pub changepoint_shift_pct: Option<f64>,
+    /// Whether the current month's spending is a one-off outlier (MSTL residual z-score > 2.5).
+    pub residual_outlier: bool,
 }
 
 /// Point-in-time balance snapshot for an account.

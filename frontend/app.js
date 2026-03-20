@@ -477,6 +477,21 @@ function TrendArrow({ trend_monthly, budget_amount }) {
   return html`<span class="trend-arrow" title=${label}>${arrow}</span>`;
 }
 
+function AnomalyBadge({ changepoint_shift_pct, residual_outlier }) {
+  if (changepoint_shift_pct != null) {
+    const up = changepoint_shift_pct > 0;
+    const pct = Math.round(Math.abs(changepoint_shift_pct) * 100);
+    const arrow = up ? "\u21E1" : "\u21E3";
+    const color = up ? "var(--warning)" : "var(--success)";
+    const label = `Spending shifted ${up ? "up" : "down"} ~${pct}% recently`;
+    return html`<span class="anomaly-badge" title=${label} style="color:${color}">${arrow}${pct}%</span>`;
+  }
+  if (residual_outlier) {
+    return html`<span class="anomaly-badge" title="Unusual spending this month" style="color:var(--warning)">spike</span>`;
+  }
+  return null;
+}
+
 function Ledger({
   items,
   ledger,
@@ -585,6 +600,7 @@ function Ledger({
                 <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
                 ${s.shortName}
                 <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+                <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
                 ${
                   onBurndownClick &&
                   s.budgetMode === "monthly" &&
@@ -785,6 +801,7 @@ function BudgetSection({
                 html` <span class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</span>`
               }
               <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+              <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
             </span>
             <${BudgetBar}
               pace=${s.pace}
@@ -826,9 +843,14 @@ function BudgetSection({
 
 function guessMonthName(month) {
   const start = new Date(`${month.start_date}T00:00:00`);
-  const end = month.end_date ? new Date(`${month.end_date}T00:00:00`) : null;
-  const mid = end ? new Date((start.getTime() + end.getTime()) / 2) : start;
-  return mid.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const end = month.end_date
+    ? new Date(`${month.end_date}T00:00:00`)
+    : new Date();
+  const mid = new Date((start.getTime() + end.getTime()) / 2);
+  return mid.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function formatMonthRange(month) {
@@ -953,13 +975,354 @@ function ProjectDrillDown({
   `;
 }
 
+// ---------------------------------------------------------------------------
+// Overview (landing page)
+// ---------------------------------------------------------------------------
+
+function Overview() {
+  const [statusResp, setStatusResp] = useState(null);
+  const [categories, setCategories] = useState(null);
+  const [netWorth, setNetWorth] = useState(null);
+  const [projection, setProjection] = useState(null);
+  const [recentTxns, setRecentTxns] = useState(null);
+  const [jobSchedule, setJobSchedule] = useState(null);
+  const [error, setError] = useState(null);
+
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(() => {
+    Promise.all([
+      api.get("/budgets/status").catch(() => null),
+      api.get("/categories").catch(() => null),
+      api.get("/accounts/net-worth").catch(() => null),
+      api
+        .get("/accounts/net-worth/projection?months=6&interval_width=0.8")
+        .catch(() => null),
+      api.get("/transactions?limit=7").catch(() => null),
+      api.get("/jobs/schedule").catch(() => null),
+    ])
+      .then(([s, c, nw, proj, txns, sched]) => {
+        setStatusResp(s);
+        setCategories(c || []);
+        setNetWorth(nw);
+        setProjection(proj);
+        setRecentTxns(txns);
+        setJobSchedule(sched);
+        setLoaded(true);
+      })
+      .catch(setError);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (error)
+    return html`<${ErrorPanel} error=${error} onRetry=${() => {
+      setError(null);
+      load();
+    }} />`;
+  if (!loaded) return html`<p class="text-light">Loading...</p>`;
+
+  const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
+
+  const month = statusResp?.month;
+  const ledger = statusResp?.ledger;
+
+  // Budget-derived data (only when status is available)
+  const budgetData = useMemo(() => {
+    if (!month) return null;
+    const isCurrentMonth = !month.end_date;
+    const monthLabel = (() => {
+      const d = new Date(`${month.start_date}T00:00:00`);
+      return d.toLocaleDateString(undefined, { month: "long" });
+    })();
+
+    const today = new Date();
+    const endDate = month.end_date
+      ? new Date(`${month.end_date}T00:00:00`)
+      : new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const startDate = new Date(`${month.start_date}T00:00:00`);
+    const daysTotal = Math.round((endDate - startDate) / 86400000) + 1;
+    const daysElapsed = Math.min(
+      Math.round((today - startDate) / 86400000) + 1,
+      daysTotal,
+    );
+    const daysLeft = Math.max(daysTotal - daysElapsed, 0);
+
+    const variableStatuses = (statusResp.statuses || []).filter((s) => {
+      const mode = categoryBudgetMode(catMap, s.category_id);
+      const type = categoryBudgetType(catMap, s.category_id);
+      return mode === "monthly" && type === "variable";
+    });
+    const totalSpent = variableStatuses.reduce(
+      (sum, s) => sum + Math.abs(Number(s.spent)),
+      0,
+    );
+    const totalBudget = variableStatuses.reduce(
+      (sum, s) => sum + Number(s.budget_amount),
+      0,
+    );
+    const timeFrac = daysElapsed / daysTotal;
+    const expectedSpend = totalBudget * timeFrac;
+    const overAmount = totalSpent - expectedSpend;
+
+    let aggregatePace;
+    if (totalSpent > totalBudget) {
+      aggregatePace = "over_budget";
+    } else if (totalBudget > 0 && totalSpent / totalBudget > timeFrac * 1.08) {
+      aggregatePace = "above_pace";
+    } else {
+      aggregatePace = "on_track";
+    }
+
+    const variableCatIds = new Set(variableStatuses.map((s) => s.category_id));
+    const variableTxns = (statusResp.monthly_transactions || []).filter(
+      (t) => variableCatIds.has(t.category_id) && Number(t.amount) < 0,
+    );
+
+    const uncategorizedCount = (statusResp.monthly_transactions || []).filter(
+      (t) => !t.category_id,
+    ).length;
+
+    const overBudgetCount = variableStatuses.filter(
+      (s) => s.pace === "over_budget",
+    ).length;
+    const abovePaceCount = variableStatuses.filter(
+      (s) => s.pace === "above_pace",
+    ).length;
+
+    const salaryLate = statusResp.salary_status?.any_late;
+
+    return {
+      isCurrentMonth,
+      monthLabel,
+      daysLeft,
+      totalSpent,
+      totalBudget,
+      aggregatePace,
+      overAmount,
+      variableTxns,
+      uncategorizedCount,
+      overBudgetCount,
+      abovePaceCount,
+      salaryLate,
+    };
+  }, [statusResp, catMap]);
+
+  const staleAccounts = (netWorth?.accounts || []).filter(
+    (a) =>
+      a.is_manual &&
+      Date.now() - new Date(a.snapshot_at).getTime() > 7 * 86400_000,
+  );
+
+  const failedSyncs = (jobSchedule || []).filter(
+    (j) => j.last_run_status === "failed",
+  );
+
+  const attentionItems = useMemo(() => {
+    const items = [];
+    if (budgetData?.uncategorizedCount > 0)
+      items.push({
+        text: `${budgetData.uncategorizedCount} uncategorized`,
+        variant: "warning",
+        href: "#/transactions?cat=uncategorized",
+      });
+    if (staleAccounts.length > 0)
+      items.push({
+        text: `${staleAccounts.length} stale balance${staleAccounts.length !== 1 ? "s" : ""}`,
+        variant: "warning",
+        href: "#/net-worth",
+      });
+    if (budgetData?.overBudgetCount > 0)
+      items.push({
+        text: `${budgetData.overBudgetCount} over budget`,
+        variant: "danger",
+        href: "#/monthly",
+      });
+    if (budgetData?.abovePaceCount > 0)
+      items.push({
+        text: `${budgetData.abovePaceCount} above pace`,
+        variant: "warning",
+        href: "#/monthly",
+      });
+    if (budgetData?.salaryLate)
+      items.push({
+        text: "Salary late",
+        variant: "warning",
+        href: "#/monthly",
+      });
+    if (failedSyncs.length > 0)
+      items.push({
+        text: `${failedSyncs.length} sync${failedSyncs.length !== 1 ? "s" : ""} failed`,
+        variant: "danger",
+        href: "#/jobs",
+      });
+    return items;
+  }, [budgetData, staleAccounts, failedSyncs]);
+
+  const historyPoints = projection?.history || [];
+
+  const paceSentence =
+    budgetData &&
+    (() => {
+      if (budgetData.aggregatePace === "on_track")
+        return html`<span style="color:var(--success)">On track</span>`;
+      if (budgetData.aggregatePace === "above_pace")
+        return html`<span style="color:var(--warning)">Above pace (~${formatAmount(Math.abs(budgetData.overAmount), { decimals: 0 })})</span>`;
+      return html`<span style="color:var(--danger)">Over budget (~${formatAmount(Math.abs(budgetData.totalSpent - budgetData.totalBudget), { decimals: 0 })})</span>`;
+    })();
+
+  return html`
+    <h2>Dashboard</h2>
+
+    <div class="overview-grid">
+      ${
+        netWorth &&
+        netWorth.accounts?.length > 0 &&
+        html`
+        <a href="#/net-worth" class="card" style="display:block;padding:var(--space-4);text-decoration:none;color:inherit">
+          <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+            <h3 style="margin:0">Net Worth</h3>
+            ${
+              staleAccounts.length > 0
+                ? html`<span class="badge warning small" style="margin-left:0.5rem">${staleAccounts.length} stale</span>`
+                : ""
+            }
+            <span class="text-light text-body" style="margin-left:auto">\u203A</span>
+          </div>
+          <span style="font-size:var(--text-2);font-weight:700;color:${Number(netWorth.total) >= 0 ? "var(--success)" : "var(--danger)"}">
+            ${formatAmount(netWorth.total, { decimals: 0 })}
+          </span>
+          <${NetWorthSparkline} points=${historyPoints} />
+          <div class="hstack gap-3" style="margin-top:0.5rem;flex-wrap:wrap">
+            ${netWorth.accounts.map(
+              (a) => html`
+              <div key=${a.account_id} style="min-width:0">
+                <div class="text-light text-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.account_name}</div>
+                <div class="mono text-body" style="color:${Number(a.current) >= 0 ? "var(--success)" : "var(--danger)"}">
+                  ${formatAmount(a.current, { decimals: 0 })}
+                </div>
+              </div>
+            `,
+            )}
+          </div>
+        </a>
+      `
+      }
+
+      ${
+        budgetData &&
+        html`
+        <a href="#/monthly" class="card" style="display:block;padding:var(--space-4);text-decoration:none;color:inherit">
+          <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+            <h3 style="margin:0">${budgetData.monthLabel}</h3>
+            ${
+              budgetData.isCurrentMonth
+                ? html`<span class="badge secondary small" style="margin-left:0.5rem">${budgetData.daysLeft}d left</span>`
+                : ""
+            }
+            <span class="text-light text-body" style="margin-left:auto">\u203A</span>
+          </div>
+          <${NetSummary} ledger=${ledger} />
+          <div class="text-body">${paceSentence}</div>
+        </a>
+      `
+      }
+    </div>
+
+    <div class="overview-grid" style="margin-top:1rem">
+      ${
+        budgetData &&
+        html`
+        <a href="#/insights" class="card" style="display:block;padding:var(--space-4);text-decoration:none;color:inherit">
+          <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+            <h3 style="margin:0">Spending</h3>
+            <span class="mono text-body" style="margin-left:auto">
+              ${formatAmount(budgetData.totalSpent, { decimals: 0 })} / ${formatAmount(budgetData.totalBudget, { decimals: 0 })}
+            </span>
+          </div>
+          <${AggregateBurndownSparkline}
+            transactions=${budgetData.variableTxns}
+            month=${month}
+            totalBudget=${budgetData.totalBudget}
+          />
+          <div class="hstack gap-4 text-caption" style="margin-top:0.25rem">
+            <span style="color:var(--kw-crystal-blue)">\u2014 Spent</span>
+            <span style="color:var(--kw-autumn-yellow)">\u2013 \u2013 Budget</span>
+          </div>
+        </a>
+      `
+      }
+
+      <article class="card" style="padding:var(--space-4)">
+        <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
+          <h3 style="margin:0">Attention</h3>
+          ${
+            attentionItems.length > 0
+              ? html`<span class="badge warning small" style="margin-left:0.5rem">${attentionItems.length}</span>`
+              : ""
+          }
+        </div>
+        ${
+          attentionItems.length === 0
+            ? html`<div class="hstack gap-2 text-body" style="color:var(--success);padding:0.5rem 0">
+              <span>\u2713</span> All good
+            </div>`
+            : html`<div class="vstack" style="gap:0">
+              ${attentionItems.map(
+                (item) => html`
+                  <a href=${item.href} class="hstack clickable-item" style="text-decoration:none;color:inherit;padding:0.35rem 0">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--${item.variant});flex-shrink:0"></span>
+                    <span class="text-body" style="flex:1">${item.text}</span>
+                    <span class="text-light">\u203A</span>
+                  </a>
+                `,
+              )}
+            </div>`
+        }
+      </article>
+    </div>
+
+    ${
+      recentTxns?.items?.length > 0 &&
+      html`
+      <article class="card" style="padding:var(--space-4);margin-top:1rem">
+        <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
+          <h3 style="margin:0">Recent</h3>
+          <a href="#/transactions" class="text-light text-body" style="margin-left:auto;text-decoration:none">\u203A</a>
+        </div>
+        <${TransactionTable}
+          transactions=${recentTxns.items}
+          categories=${categories}
+          catMap=${catMap}
+          onTransactionUpdate=${(txnId, patch) => {
+            setRecentTxns((prev) => ({
+              ...prev,
+              items: prev.items.map((t) =>
+                t.id === txnId ? { ...t, ...patch } : t,
+              ),
+            }));
+          }}
+          onRuleCreated=${() => waitForJobsDrained().then(load)}
+          compact=${true}
+        />
+      </article>
+    `
+    }
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Budget dashboard
+// ---------------------------------------------------------------------------
+
 const TAB_NAMES = ["monthly", "annual", "projects"];
 
 function Dashboard({ tab = "monthly", monthId = null }) {
   const [statusResp, setStatusResp] = useState(null);
   const [categories, setCategories] = useState(null);
   const [months, setMonths] = useState(null);
-  const [netWorth, setNetWorth] = useState(null);
   const [error, setError] = useState(null);
 
   const selectedMonthId = monthId;
@@ -976,13 +1339,11 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       api.get(statusUrl),
       api.get("/categories"),
       api.get("/budgets/months"),
-      api.get("/accounts/net-worth"),
     ])
-      .then(([s, c, m, nw]) => {
+      .then(([s, c, m]) => {
         setStatusResp(s);
         setCategories(c);
         setMonths(m);
-        setNetWorth(nw);
       })
       .catch(setError);
   }, []);
@@ -1427,44 +1788,6 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       `
       }
     </ot-tabs>
-
-    ${
-      netWorth &&
-      netWorth.accounts.length > 0 &&
-      html`
-      <a href="#/net-worth" class="card" style="display:block;padding:var(--space-4);margin-top:1rem;text-decoration:none;color:inherit">
-        <div class="hstack" style="align-items:baseline;margin-bottom:0.5rem">
-          <h3 style="margin:0">Net Worth</h3>
-          ${(() => {
-            const stale = netWorth.accounts.filter(
-              (a) =>
-                a.is_manual &&
-                Date.now() - new Date(a.snapshot_at).getTime() > 7 * 86400_000,
-            ).length;
-            return stale > 0
-              ? html`<span class="badge warning small" style="margin-left:0.5rem">${stale} stale</span>`
-              : "";
-          })()}
-          <span class="text-light text-body" style="margin-left:auto">\u203A</span>
-        </div>
-        <span style="font-size:var(--text-2);font-weight:700;color:${Number(netWorth.total) >= 0 ? "var(--success)" : "var(--danger)"}">
-          ${formatAmount(netWorth.total, { decimals: 0 })}
-        </span>
-        <div class="hstack gap-3" style="margin-top:0.75rem;flex-wrap:wrap">
-          ${netWorth.accounts.map(
-            (a) => html`
-            <div key=${a.account_id} style="min-width:0">
-              <div class="text-light text-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.account_name}</div>
-              <div class="mono text-body" style="color:${Number(a.current) >= 0 ? "var(--success)" : "var(--danger)"}">
-                ${formatAmount(a.current, { decimals: 0 })}
-              </div>
-            </div>
-          `,
-          )}
-        </div>
-      </a>
-    `
-    }
 
     <article class="card" style="padding:var(--space-4);margin-top:1rem">
       <div
@@ -5067,6 +5390,84 @@ function BurndownSparkline({ data }) {
   `;
 }
 
+function NetWorthSparkline({ points }) {
+  const w = 200;
+  const h = 40;
+  const pad = 4;
+  if (!points?.length || points.length < 2) return null;
+
+  const vals = points.map((p) => Number(p.value));
+  const minV = Math.min(...vals);
+  const maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const trendUp = vals[vals.length - 1] >= vals[0];
+
+  const x = (i) => pad + (i / (points.length - 1)) * (w - 2 * pad);
+  const y = (v) => pad + (1 - (v - minV) / range) * (h - 2 * pad);
+
+  const line = vals
+    .map((v, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(v)}`)
+    .join(" ");
+
+  return html`
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:40px;display:block">
+      <path d=${line} fill="none" stroke="${trendUp ? "var(--success)" : "var(--danger)"}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `;
+}
+
+function AggregateBurndownSparkline({ transactions, month, totalBudget }) {
+  const w = 200;
+  const h = 40;
+  const pad = 4;
+  if (!transactions?.length || !month?.start_date) return null;
+
+  const start = new Date(`${month.start_date}T00:00:00`);
+  const end = month.end_date
+    ? new Date(`${month.end_date}T00:00:00`)
+    : new Date(start.getFullYear(), start.getMonth() + 1, 0);
+  const totalDays = Math.round((end - start) / 86400000) + 1;
+
+  const daily = {};
+  for (const t of transactions) {
+    const d = new Date(`${t.posted_date}T00:00:00`);
+    const day = Math.round((d - start) / 86400000) + 1;
+    if (day >= 1 && day <= totalDays) {
+      daily[day] = (daily[day] || 0) + Math.abs(Number(t.amount));
+    }
+  }
+  let cum = 0;
+  const pts = [];
+  for (let d = 1; d <= totalDays; d++) {
+    if (daily[d]) cum += daily[d];
+    if (daily[d] || d === 1) pts.push({ day: d, cum });
+  }
+  const lastDay = Object.keys(daily).length
+    ? Math.max(...Object.keys(daily).map(Number))
+    : 1;
+  if (pts.length && pts[pts.length - 1].day !== lastDay) {
+    pts.push({ day: lastDay, cum });
+  }
+  if (!pts.length) return null;
+
+  const budget = Number(totalBudget) || 1;
+  const maxVal = Math.max(budget, cum) * 1.1 || 1;
+
+  const x = (day) => pad + ((day - 1) / (totalDays - 1 || 1)) * (w - 2 * pad);
+  const y = (v) => pad + (1 - v / maxVal) * (h - 2 * pad);
+
+  const line = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.day)},${y(p.cum)}`)
+    .join(" ");
+
+  return html`
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:40px;display:block">
+      <line x1=${pad} y1=${y(budget)} x2=${w - pad} y2=${y(budget)} stroke="var(--kw-autumn-yellow)" stroke-width="1" stroke-dasharray="4 2" opacity="0.6" />
+      <path d=${line} fill="none" stroke="var(--kw-crystal-blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `;
+}
+
 function BurndownDetail({ burndown }) {
   const monthLabel = burndown.current?.start_date
     ? (() => {
@@ -5711,11 +6112,23 @@ function App() {
     const segments = route.split("/").filter(Boolean);
     const [s0, s1] = segments;
 
-    // Budget routes: /, /monthly, /monthly/:id, /annual, /annual/:id, /projects
-    if (!s0 || s0 === "monthly" || s0 === "annual" || s0 === "projects") {
-      const tab = s0 || "monthly";
-      const monthId = (tab === "monthly" || tab === "annual") && s1 ? s1 : null;
-      return html`<${Dashboard} tab=${tab} monthId=${monthId} />`;
+    // Overview (landing page)
+    if (!s0) return html`<${Overview} />`;
+    // Budget routes: /budget, /monthly, /annual, /projects
+    if (
+      s0 === "budget" ||
+      s0 === "monthly" ||
+      s0 === "annual" ||
+      s0 === "projects"
+    ) {
+      const tab = s0 === "budget" ? s1 || "monthly" : s0;
+      const monthId =
+        tab === "monthly" || tab === "annual"
+          ? s0 === "budget"
+            ? segments[2]
+            : s1
+          : null;
+      return html`<${Dashboard} tab=${tab} monthId=${monthId || null} />`;
     }
     if (s0 === "transactions") return html`<${Transactions} />`;
     if (s0 === "categories") return html`<${Categories} />`;
@@ -5733,7 +6146,8 @@ function App() {
       <aside data-sidebar>
         <h1>Budget</h1>
         <nav>
-          <${NavLink} href="/" match=${(r) => r === "/" || /^\/(monthly|annual|projects)(\/|$)/.test(r)}>Budget<//>
+          <${NavLink} href="/" match=${(r) => r === "/"}>Dashboard<//>
+          <${NavLink} href="/budget" match=${(r) => /^\/(budget|monthly|annual|projects)(\/|$)/.test(r)}>Budget<//>
           <${NavLink} href="/transactions">Transactions<//>
           <${NavLink} href="/insights">Insights<//>
           <${NavLink} href="/net-worth">Net Worth<//>

@@ -9,10 +9,6 @@
 ### Frontend
 - [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
 
-## Insights & Analytics
-
-### Features
-- [ ] **Spending anomaly detection**: Changepoint detection (BOCPD) for structural shifts ("groceries shifted +35% in October") + outlier flagging on MSTL residuals for one-off spikes. Surface on dashboard as subtle badge on category rows linking to detail on insights page. Run on all categories with 3+ months of history
 
 ## E2E Tests
 

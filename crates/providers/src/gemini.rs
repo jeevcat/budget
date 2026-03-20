@@ -177,7 +177,7 @@ Respond with a JSON object containing:
 - "confidence": number — your confidence from 0.0 to 1.0
 - "justification": string — one brief sentence explaining why this category fits
 - "proposed_category": string or null — only set this if none of the existing categories fit well; suggest a new "Parent:Child" category name
-- "title": string — a concise 2-4 word human-friendly name for this transaction. Strip payment processor prefixes (VISA, SUMUP, BBMSL*), store numbers, location suffixes, and junk. Use the actual business name or purpose (e.g. "Tim Ho Wan" not "BBMSL*Tim Ho Wan Dim Su HK", "MTR Top-up" not "VISA MTR-KIOSK PAYMENT04100", "Rent" for a rent payment to a person).
+- "title": string — a concise 2-4 word human-friendly name for this transaction. Strip payment processor prefixes (VISA, SUMUP, BBMSL*), store numbers, location suffixes, and junk. Use the actual business name or purpose (e.g. "Tim Ho Wan" not "BBMSL*Tim Ho Wan Dim Su HK", "MTR Top-up" not "VISA MTR-KIOSK PAYMENT04100", "Rent" for a rent payment to a person). When "Known item details" are present (e.g. from Amazon or PayPal enrichment), prefer the actual product name(s) as the title if they are short enough (e.g. "Pixel 9 Pro" not "Amazon", "Mass Gainer" not "PayPal").
 
 If you are unsure, use a low confidence score. Do not guess wildly.
 

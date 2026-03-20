@@ -1,10 +1,16 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
 
-test("budget page loads and shows Budget heading", async ({ page }) => {
+test("dashboard page loads as landing page", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("h1")).toHaveText("Budget", { timeout: 10_000 });
   await expect(page.locator("nav")).toBeVisible();
+  await expect(page.locator("h2")).toHaveText("Dashboard");
+});
+
+test("budget page loads via /budget route", async ({ page }) => {
+  await page.goto("/#/budget");
+  await expect(page.locator("h1")).toHaveText("Budget", { timeout: 10_000 });
 });
 
 test("insights page loads", async ({ page }) => {
