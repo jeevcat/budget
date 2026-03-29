@@ -1038,44 +1038,23 @@ function Overview() {
       return d.toLocaleDateString(undefined, { month: "long" });
     })();
 
-    const today = new Date();
-    const endDate = month.end_date
-      ? new Date(`${month.end_date}T00:00:00`)
-      : new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    const startDate = new Date(`${month.start_date}T00:00:00`);
-    const daysTotal = Math.round((endDate - startDate) / 86400000) + 1;
-    const daysElapsed = Math.min(
-      Math.round((today - startDate) / 86400000) + 1,
-      daysTotal,
-    );
+    const agg = statusResp.aggregate_monthly_variable || {};
+    const totalSpent = Number(agg.total_spent || 0);
+    const totalBudget = Number(agg.total_budget || 0);
+    const daysElapsed = agg.days_elapsed || 0;
+    const daysTotal = agg.days_total || 1;
     const daysLeft = Math.max(daysTotal - daysElapsed, 0);
+    const aggregatePace = agg.pace || "on_track";
+
+    const timeFrac = daysElapsed / daysTotal;
+    const expectedSpend = totalBudget * timeFrac;
+    const overAmount = totalSpent - expectedSpend;
 
     const variableStatuses = (statusResp.statuses || []).filter((s) => {
       const mode = categoryBudgetMode(catMap, s.category_id);
       const type = categoryBudgetType(catMap, s.category_id);
       return mode === "monthly" && type === "variable";
     });
-    const totalSpent = variableStatuses.reduce(
-      (sum, s) => sum + Math.abs(Number(s.spent)),
-      0,
-    );
-    const totalBudget = variableStatuses.reduce(
-      (sum, s) => sum + Number(s.budget_amount),
-      0,
-    );
-    const timeFrac = daysElapsed / daysTotal;
-    const expectedSpend = totalBudget * timeFrac;
-    const overAmount = totalSpent - expectedSpend;
-
-    let aggregatePace;
-    if (totalSpent > totalBudget) {
-      aggregatePace = "over_budget";
-    } else if (totalBudget > 0 && totalSpent / totalBudget > timeFrac * 1.08) {
-      aggregatePace = "above_pace";
-    } else {
-      aggregatePace = "on_track";
-    }
-
     const variableCatIds = new Set(variableStatuses.map((s) => s.category_id));
     const variableTxns = (statusResp.monthly_transactions || []).filter(
       (t) => variableCatIds.has(t.category_id) && Number(t.amount) < 0,
@@ -1243,8 +1222,8 @@ function Overview() {
             </span>
           </div>
           <${AggregateBurndownSparkline}
-            transactions=${budgetData.variableTxns}
-            month=${month}
+            burndownPoints=${agg.burndown_points}
+            daysTotal=${budgetData.daysTotal}
             totalBudget=${budgetData.totalBudget}
           />
           <div class="hstack gap-4 text-caption" style="margin-top:0.25rem">
@@ -1544,7 +1523,7 @@ function Dashboard({ tab = "monthly", monthId = null }) {
       name: c.category_name,
       spent: Number(c.spent),
     }));
-    const total = rows.reduce((sum, r) => sum + r.spent, 0);
+    const total = Number(backendProject?.total_spent || 0);
     return { childBreakdown: rows, drilledTotalSpent: total };
   }, [drilledProjectId, drilledProject, statusResp]);
 
@@ -5416,44 +5395,26 @@ function NetWorthSparkline({ points }) {
   `;
 }
 
-function AggregateBurndownSparkline({ transactions, month, totalBudget }) {
+function AggregateBurndownSparkline({
+  burndownPoints,
+  daysTotal,
+  totalBudget,
+}) {
   const w = 200;
   const h = 40;
   const pad = 4;
-  if (!transactions?.length || !month?.start_date) return null;
+  if (!burndownPoints?.length || !daysTotal) return null;
 
-  const start = new Date(`${month.start_date}T00:00:00`);
-  const end = month.end_date
-    ? new Date(`${month.end_date}T00:00:00`)
-    : new Date(start.getFullYear(), start.getMonth() + 1, 0);
-  const totalDays = Math.round((end - start) / 86400000) + 1;
-
-  const daily = {};
-  for (const t of transactions) {
-    const d = new Date(`${t.posted_date}T00:00:00`);
-    const day = Math.round((d - start) / 86400000) + 1;
-    if (day >= 1 && day <= totalDays) {
-      daily[day] = (daily[day] || 0) + Math.abs(Number(t.amount));
-    }
-  }
-  let cum = 0;
-  const pts = [];
-  for (let d = 1; d <= totalDays; d++) {
-    if (daily[d]) cum += daily[d];
-    if (daily[d] || d === 1) pts.push({ day: d, cum });
-  }
-  const lastDay = Object.keys(daily).length
-    ? Math.max(...Object.keys(daily).map(Number))
-    : 1;
-  if (pts.length && pts[pts.length - 1].day !== lastDay) {
-    pts.push({ day: lastDay, cum });
-  }
-  if (!pts.length) return null;
+  const pts = burndownPoints.map((p) => ({
+    day: Number(p.day),
+    cum: Number(p.cumulative),
+  }));
 
   const budget = Number(totalBudget) || 1;
-  const maxVal = Math.max(budget, cum) * 1.1 || 1;
+  const finalCum = pts[pts.length - 1]?.cum || 0;
+  const maxVal = Math.max(budget, finalCum) * 1.1 || 1;
 
-  const x = (day) => pad + ((day - 1) / (totalDays - 1 || 1)) * (w - 2 * pad);
+  const x = (day) => pad + ((day - 1) / (daysTotal - 1 || 1)) * (w - 2 * pad);
   const y = (v) => pad + (1 - v / maxVal) * (h - 2 * pad);
 
   const line = pts

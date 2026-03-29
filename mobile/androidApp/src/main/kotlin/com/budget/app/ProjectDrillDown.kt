@@ -49,7 +49,7 @@ fun ProjectDrillDownContent(
     onTransactionClick: ((String) -> Unit)? = null,
     onBack: () -> Unit,
 ) {
-  val totalSpent = project.children.sumOf { it.spent }
+  val totalSpent = project.totalSpent
   val color = paceColor(project.pace)
 
   LazyColumn(
