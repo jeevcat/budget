@@ -1098,6 +1098,273 @@ async fn budgets_status_with_current_month(pool: PgPool) {
     );
 }
 
+#[sqlx::test]
+async fn budgets_status_aggregate_monthly_variable_stats(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Aggregate Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Salary category for month derivation
+    let salary_cat = Category {
+        budget: BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
+    db.insert_category(&salary_cat)
+        .await
+        .expect("salary category");
+
+    // Monthly variable categories
+    let groceries = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Groceries").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(40000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&groceries).await.expect("groceries");
+
+    let transport = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Transport").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(30000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&transport).await.expect("transport");
+
+    // Monthly fixed category (should be excluded from aggregate)
+    let rent = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Rent").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(100_000, 2),
+            budget_type: BudgetType::Fixed,
+        },
+    };
+    db.insert_category(&rent).await.expect("rent");
+
+    // Annual category (should be excluded from aggregate)
+    let insurance = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Insurance").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Annual {
+            amount: rust_decimal::Decimal::new(120_000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&insurance).await.expect("insurance");
+
+    let today = chrono::Utc::now().date_naive();
+
+    // Salary transaction to create budget month
+    let mut salary_txn = make_txn(account.id, "EMPLOYER", 1);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(10);
+    db.upsert_transaction(&salary_txn, Some("sal-1"))
+        .await
+        .expect("salary");
+
+    // Transactions for groceries (spent: 250)
+    let mut groc_txn = make_txn(account.id, "SUPERMARKET", 2);
+    groc_txn.categorization = Categorization::Manual(groceries.id);
+    groc_txn.amount = rust_decimal::Decimal::new(-25_000, 2);
+    groc_txn.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&groc_txn, Some("groc-1"))
+        .await
+        .expect("groceries txn");
+
+    // Transactions for transport (spent: 150)
+    let mut trans_txn = make_txn(account.id, "METRO", 3);
+    trans_txn.categorization = Categorization::Manual(transport.id);
+    trans_txn.amount = rust_decimal::Decimal::new(-15_000, 2);
+    trans_txn.posted_date = today - chrono::Duration::days(3);
+    db.upsert_transaction(&trans_txn, Some("trans-1"))
+        .await
+        .expect("transport txn");
+
+    // Transaction for rent (should not affect aggregate)
+    let mut rent_txn = make_txn(account.id, "LANDLORD", 4);
+    rent_txn.categorization = Categorization::Manual(rent.id);
+    rent_txn.amount = rust_decimal::Decimal::new(-100_000, 2);
+    rent_txn.posted_date = today - chrono::Duration::days(2);
+    db.upsert_transaction(&rent_txn, Some("rent-1"))
+        .await
+        .expect("rent txn");
+
+    let (status, body) = send(app, get("/api/budgets/status")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+
+    // Check aggregate monthly variable stats
+    let agg = &resp["aggregate_monthly_variable"];
+    assert!(agg.is_object(), "aggregate_monthly_variable should exist");
+
+    let total_budget = agg["total_budget"]
+        .as_str()
+        .expect("total_budget string")
+        .parse::<f64>()
+        .expect("parse budget");
+    assert!(
+        (total_budget - 700.0).abs() < 0.01,
+        "total_budget should be 400 + 300 = 700"
+    );
+
+    let total_spent = agg["total_spent"]
+        .as_str()
+        .expect("total_spent string")
+        .parse::<f64>()
+        .expect("parse spent");
+    assert!(
+        (total_spent - 400.0).abs() < 0.01,
+        "total_spent should be 250 + 150 = 400"
+    );
+
+    let days_elapsed = agg["days_elapsed"].as_u64().expect("days_elapsed u64");
+    assert!(days_elapsed > 0, "days_elapsed should be positive");
+
+    let days_total = agg["days_total"].as_u64().expect("days_total u64");
+    assert!(days_total > 0, "days_total should be positive");
+
+    let pace = agg["pace"].as_str().expect("pace string");
+    assert!(
+        pace == "on_track"
+            || pace == "above_pace"
+            || pace == "under_budget"
+            || pace == "over_budget",
+        "pace should be a valid indicator"
+    );
+}
+
+#[sqlx::test]
+async fn budgets_status_project_total_spent(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Project Total Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Salary category for month derivation
+    let salary_cat = Category {
+        budget: BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
+    db.insert_category(&salary_cat)
+        .await
+        .expect("salary category");
+
+    // Project category (parent)
+    let project = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Home Renovation").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Project {
+            amount: rust_decimal::Decimal::new(1_000_000, 2),
+            start_date: chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("date"),
+            end_date: Some(chrono::NaiveDate::from_ymd_opt(2025, 12, 31).expect("date")),
+        },
+    };
+    db.insert_category(&project).await.expect("project");
+
+    // Child categories under project
+    let plumbing = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Plumbing").expect("valid"),
+        parent_id: Some(project.id),
+        budget: BudgetConfig::None,
+    };
+    db.insert_category(&plumbing).await.expect("plumbing");
+
+    let electrical = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Electrical").expect("valid"),
+        parent_id: Some(project.id),
+        budget: BudgetConfig::None,
+    };
+    db.insert_category(&electrical).await.expect("electrical");
+
+    let today = chrono::Utc::now().date_naive();
+
+    // Salary transaction to create budget month
+    let mut salary_txn = make_txn(account.id, "EMPLOYER", 1);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(10);
+    db.upsert_transaction(&salary_txn, Some("sal-1"))
+        .await
+        .expect("salary");
+
+    // Transaction for plumbing (spent: 300)
+    let mut plumb_txn = make_txn(account.id, "PLUMBER CO", 2);
+    plumb_txn.categorization = Categorization::Manual(plumbing.id);
+    plumb_txn.amount = rust_decimal::Decimal::new(-30000, 2);
+    plumb_txn.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&plumb_txn, Some("plumb-1"))
+        .await
+        .expect("plumbing txn");
+
+    // Transaction for electrical (spent: 450)
+    let mut elec_txn = make_txn(account.id, "ELECTRICIAN", 3);
+    elec_txn.categorization = Categorization::Manual(electrical.id);
+    elec_txn.amount = rust_decimal::Decimal::new(-45000, 2);
+    elec_txn.posted_date = today - chrono::Duration::days(3);
+    db.upsert_transaction(&elec_txn, Some("elec-1"))
+        .await
+        .expect("electrical txn");
+
+    let (status, body) = send(app, get("/api/budgets/status")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+
+    // Find the project entry
+    let projects = resp["projects"].as_array().expect("projects array");
+    assert_eq!(projects.len(), 1);
+
+    let proj = &projects[0];
+    assert_eq!(
+        proj["category_id"].as_str().expect("category_id"),
+        project.id.as_uuid().to_string()
+    );
+
+    // Check that total_spent field exists and equals sum of children
+    let total_spent = proj["total_spent"]
+        .as_str()
+        .expect("total_spent string")
+        .parse::<f64>()
+        .expect("parse total_spent");
+    assert!(
+        (total_spent - 750.0).abs() < 0.01,
+        "total_spent should be 300 + 450 = 750"
+    );
+
+    // Verify children also exist and match
+    let children = proj["children"].as_array().expect("children array");
+    assert_eq!(children.len(), 2);
+
+    let child_totals: f64 = children
+        .iter()
+        .map(|c| {
+            c["spent"]
+                .as_str()
+                .expect("spent string")
+                .parse::<f64>()
+                .expect("parse spent")
+        })
+        .sum();
+    assert!(
+        (child_totals - total_spent).abs() < 0.01,
+        "total_spent should match sum of children"
+    );
+}
+
 // ===========================================================================
 // Jobs
 // ===========================================================================

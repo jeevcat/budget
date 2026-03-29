@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use chrono::{NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -49,9 +49,24 @@ struct ProjectStatusEntry {
     status: BudgetStatus,
     children: Vec<ProjectChildSpending>,
     has_children: bool,
+    /// Sum of spending across all direct children.
+    #[schema(value_type = String)]
+    total_spent: Decimal,
     project_start_date: NaiveDate,
     project_end_date: Option<NaiveDate>,
     finished: bool,
+}
+
+/// Aggregate statistics for all monthly variable-budget categories in the current month.
+#[derive(Serialize, utoipa::ToSchema)]
+struct AggregateMonthlyVariable {
+    #[schema(value_type = String)]
+    total_budget: Decimal,
+    #[schema(value_type = String)]
+    total_spent: Decimal,
+    days_elapsed: i64,
+    days_total: i64,
+    pace: PaceIndicator,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -130,6 +145,8 @@ struct StatusResponse {
     monthly_ledger: LedgerSummary,
     annual_ledger: LedgerSummary,
     project_summary: BudgetGroupSummary,
+    /// Aggregate statistics for monthly variable-budget categories (for dashboard summary).
+    aggregate_monthly_variable: AggregateMonthlyVariable,
     /// Transactions contributing to monthly budgets in the active month.
     monthly_transactions: Vec<Transaction>,
     /// Transactions contributing to annual budgets across the budget year.
@@ -427,6 +444,75 @@ fn compute_project_group_summary(entries: &[ProjectStatusEntry]) -> BudgetGroupS
     }
 }
 
+/// Compute aggregate statistics for monthly variable-budget categories.
+///
+/// Filters for monthly variable statuses, sums budget/spent, calculates elapsed/total days,
+/// and determines overall pace indicator.
+fn compute_aggregate_monthly_variable(
+    statuses: &[StatusEntry],
+    categories: &[Category],
+    month: &BudgetMonth,
+) -> AggregateMonthlyVariable {
+    let cat_map: std::collections::HashMap<CategoryId, &Category> =
+        categories.iter().map(|c| (c.id, c)).collect();
+
+    let variable_statuses: Vec<&StatusEntry> = statuses
+        .iter()
+        .filter(|entry| {
+            if entry.status.budget_mode != BudgetMode::Monthly {
+                return false;
+            }
+            if let Some(cat) = cat_map.get(&entry.status.category_id) {
+                cat.budget.budget_type() == Some(BudgetType::Variable)
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    let total_budget = variable_statuses
+        .iter()
+        .fold(Decimal::ZERO, |acc, e| acc + e.status.budget_amount);
+
+    let total_spent = variable_statuses
+        .iter()
+        .fold(Decimal::ZERO, |acc, e| acc + e.status.spent.abs());
+
+    let today = Utc::now().date_naive();
+    let end_date = month.end_date.unwrap_or_else(|| {
+        NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1).unwrap()
+            - chrono::Duration::days(1)
+    });
+    let start_date = month.start_date;
+
+    let days_total = (end_date - start_date).num_days() + 1;
+    let days_elapsed = ((today - start_date).num_days() + 1).min(days_total);
+
+    let time_frac = if days_total > 0 {
+        Decimal::from(days_elapsed) / Decimal::from(days_total)
+    } else {
+        Decimal::ZERO
+    };
+
+    let pace = if total_spent > total_budget {
+        PaceIndicator::OverBudget
+    } else if total_budget > Decimal::ZERO
+        && total_spent / total_budget > time_frac * Decimal::new(108, 2)
+    {
+        PaceIndicator::AbovePace
+    } else {
+        PaceIndicator::OnTrack
+    };
+
+    AggregateMonthlyVariable {
+        total_budget,
+        total_spent,
+        days_elapsed,
+        days_total,
+        pace,
+    }
+}
+
 /// Group transactions by category into [`CashFlowItem`]s.
 ///
 /// Each distinct category becomes one item; uncategorized transactions
@@ -611,10 +697,12 @@ fn compute_projects(
                 _ => unreachable!("filtered to projects above"),
             };
             let finished = project_end_date.is_some_and(|end| end < reference_date);
+            let total_spent = children.iter().fold(Decimal::ZERO, |acc, c| acc + c.spent);
             ProjectStatusEntry {
                 status,
                 children,
                 has_children,
+                total_spent,
                 project_start_date,
                 project_end_date,
                 finished,
@@ -731,6 +819,7 @@ fn spending_analysis_for(
 ///
 /// Returns 404 if the requested budget month does not exist.
 /// Returns `AppError` if any database query fails.
+#[allow(clippy::too_many_lines)]
 #[utoipa::path(get, path = "/status", tag = "budgets", params(StatusQuery), responses((status = 200, body = StatusResponse)), security(("bearer_token" = [])))]
 async fn status(
     State(state): State<AppState>,
@@ -832,6 +921,9 @@ async fn status(
         None
     };
 
+    let aggregate_monthly_variable =
+        compute_aggregate_monthly_variable(&statuses, &categories, month);
+
     Ok(Json(StatusResponse {
         month: month.clone(),
         statuses,
@@ -839,6 +931,7 @@ async fn status(
         monthly_ledger,
         annual_ledger,
         project_summary,
+        aggregate_monthly_variable,
         monthly_transactions: classified.monthly,
         annual_transactions: classified.annual,
         project_transactions: classified.project,
@@ -2782,6 +2875,7 @@ mod tests {
                 status: reno_status,
                 children: vec![],
                 has_children: false,
+                total_spent: Decimal::ZERO,
                 project_start_date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
                 project_end_date: None,
                 finished: false,
@@ -2790,6 +2884,7 @@ mod tests {
                 status: car_status,
                 children: vec![],
                 has_children: false,
+                total_spent: Decimal::ZERO,
                 project_start_date: NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(),
                 project_end_date: Some(NaiveDate::from_ymd_opt(2026, 1, 31).unwrap()),
                 finished: true,
