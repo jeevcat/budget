@@ -57,6 +57,14 @@ struct ProjectStatusEntry {
     finished: bool,
 }
 
+/// Daily cumulative spending point for aggregate burndown sparkline.
+#[derive(Serialize, utoipa::ToSchema)]
+struct AggregateBurndownPoint {
+    day: u16,
+    #[schema(value_type = String)]
+    cumulative: Decimal,
+}
+
 /// Aggregate statistics for all monthly variable-budget categories in the current month.
 #[derive(Serialize, utoipa::ToSchema)]
 struct AggregateMonthlyVariable {
@@ -67,6 +75,8 @@ struct AggregateMonthlyVariable {
     days_elapsed: i64,
     days_total: i64,
     pace: PaceIndicator,
+    /// Daily cumulative spending points for sparkline visualization.
+    burndown_points: Vec<AggregateBurndownPoint>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -444,14 +454,70 @@ fn compute_project_group_summary(entries: &[ProjectStatusEntry]) -> BudgetGroupS
     }
 }
 
+/// Bin transactions by day and compute cumulative spending for each day.
+///
+/// Returns points representing days with spending, where cumulative increases
+/// monotonically. Mimics the frontend logic from `AggregateBurndownSparkline`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn compute_daily_cumulative(
+    transactions: &[&Transaction],
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Vec<AggregateBurndownPoint> {
+    let total_days = (end_date - start_date).num_days() + 1;
+    if total_days <= 0 {
+        return vec![];
+    }
+
+    // Bin transactions by day
+    let mut daily: std::collections::HashMap<i64, Decimal> = std::collections::HashMap::new();
+    for t in transactions {
+        let days_since_start = (t.posted_date - start_date).num_days() + 1;
+        if days_since_start >= 1 && days_since_start <= total_days {
+            *daily.entry(days_since_start).or_insert(Decimal::ZERO) += t.amount.abs();
+        }
+    }
+
+    // Compute cumulative spending per day
+    let mut cum = Decimal::ZERO;
+    let mut points = Vec::new();
+
+    for day in 1..=total_days {
+        if let Some(spend) = daily.get(&day) {
+            cum += *spend;
+        }
+        // Include day 1 and any day with spending
+        if day == 1 || daily.contains_key(&day) {
+            points.push(AggregateBurndownPoint {
+                day: day as u16,
+                cumulative: cum,
+            });
+        }
+    }
+
+    // Ensure the last day with spending is included
+    if let Some(&last_day) = daily.keys().max()
+        && !points.is_empty()
+        && points[points.len() - 1].day != last_day as u16
+    {
+        points.push(AggregateBurndownPoint {
+            day: last_day as u16,
+            cumulative: cum,
+        });
+    }
+
+    points
+}
+
 /// Compute aggregate statistics for monthly variable-budget categories.
 ///
 /// Filters for monthly variable statuses, sums budget/spent, calculates elapsed/total days,
-/// and determines overall pace indicator.
+/// determines overall pace indicator, and computes daily cumulative spending points.
 fn compute_aggregate_monthly_variable(
     statuses: &[StatusEntry],
     categories: &[Category],
     month: &BudgetMonth,
+    transactions: &[Transaction],
 ) -> AggregateMonthlyVariable {
     let cat_map: std::collections::HashMap<CategoryId, &Category> =
         categories.iter().map(|c| (c.id, c)).collect();
@@ -504,12 +570,30 @@ fn compute_aggregate_monthly_variable(
         PaceIndicator::OnTrack
     };
 
+    // Compute daily cumulative spending for burndown sparkline
+    let variable_cat_ids: std::collections::HashSet<CategoryId> = variable_statuses
+        .iter()
+        .map(|e| e.status.category_id)
+        .collect();
+
+    let variable_txns: Vec<&Transaction> = transactions
+        .iter()
+        .filter(|t| {
+            t.categorization
+                .category_id()
+                .is_some_and(|cid| variable_cat_ids.contains(&cid))
+        })
+        .collect();
+
+    let burndown_points = compute_daily_cumulative(&variable_txns, start_date, end_date);
+
     AggregateMonthlyVariable {
         total_budget,
         total_spent,
         days_elapsed,
         days_total,
         pace,
+        burndown_points,
     }
 }
 
@@ -922,7 +1006,7 @@ async fn status(
     };
 
     let aggregate_monthly_variable =
-        compute_aggregate_monthly_variable(&statuses, &categories, month);
+        compute_aggregate_monthly_variable(&statuses, &categories, month, &transactions);
 
     Ok(Json(StatusResponse {
         month: month.clone(),

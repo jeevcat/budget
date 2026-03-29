@@ -1365,6 +1365,131 @@ async fn budgets_status_project_total_spent(pool: PgPool) {
     );
 }
 
+#[sqlx::test]
+async fn budgets_status_aggregate_burndown_points(pool: PgPool) {
+    let (app, db) = setup(pool).await;
+
+    let account = make_account("Burndown Test");
+    db.upsert_account(&account).await.expect("account");
+
+    // Salary category for month derivation
+    let salary_cat = Category {
+        budget: BudgetConfig::Salary,
+        ..make_category("Salary")
+    };
+    db.insert_category(&salary_cat)
+        .await
+        .expect("salary category");
+
+    // Monthly variable category
+    let food = Category {
+        id: CategoryId::new(),
+        name: CategoryName::new("Food").expect("valid"),
+        parent_id: None,
+        budget: BudgetConfig::Monthly {
+            amount: rust_decimal::Decimal::new(50000, 2),
+            budget_type: BudgetType::Variable,
+        },
+    };
+    db.insert_category(&food).await.expect("food");
+
+    let today = chrono::Utc::now().date_naive();
+
+    // Salary transaction to create budget month
+    let mut salary_txn = make_txn(account.id, "EMPLOYER", 1);
+    salary_txn.categorization = Categorization::Manual(salary_cat.id);
+    salary_txn.amount = rust_decimal::Decimal::new(500_000, 2);
+    salary_txn.posted_date = today - chrono::Duration::days(10);
+    db.upsert_transaction(&salary_txn, Some("sal-1"))
+        .await
+        .expect("salary");
+
+    // Food transactions on different days
+    let mut food_txn1 = make_txn(account.id, "GROCERY 1", 2);
+    food_txn1.categorization = Categorization::Manual(food.id);
+    food_txn1.amount = rust_decimal::Decimal::new(-10000, 2);
+    food_txn1.posted_date = today - chrono::Duration::days(8);
+    db.upsert_transaction(&food_txn1, Some("food-1"))
+        .await
+        .expect("food txn 1");
+
+    let mut food_txn2 = make_txn(account.id, "RESTAURANT", 3);
+    food_txn2.categorization = Categorization::Manual(food.id);
+    food_txn2.amount = rust_decimal::Decimal::new(-15000, 2);
+    food_txn2.posted_date = today - chrono::Duration::days(5);
+    db.upsert_transaction(&food_txn2, Some("food-2"))
+        .await
+        .expect("food txn 2");
+
+    let mut food_txn3 = make_txn(account.id, "GROCERY 2", 4);
+    food_txn3.categorization = Categorization::Manual(food.id);
+    food_txn3.amount = rust_decimal::Decimal::new(-8000, 2);
+    food_txn3.posted_date = today - chrono::Duration::days(2);
+    db.upsert_transaction(&food_txn3, Some("food-3"))
+        .await
+        .expect("food txn 3");
+
+    let (status, body) = send(app, get("/api/budgets/status")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let resp: serde_json::Value = serde_json::from_slice(&body).expect("parse");
+
+    let agg = &resp["aggregate_monthly_variable"];
+    assert!(agg.is_object(), "aggregate_monthly_variable should exist");
+
+    // Check burndown_points field exists and is an array
+    let points = agg["burndown_points"]
+        .as_array()
+        .expect("burndown_points should be an array");
+
+    assert!(
+        points.len() >= 3,
+        "should have at least 3 points (day 1, and transaction days)"
+    );
+
+    // Verify points structure: each should have {day, cumulative}
+    for pt in points {
+        assert!(pt["day"].is_u64(), "point should have day as u64");
+        assert!(
+            pt["cumulative"].is_string(),
+            "point should have cumulative as string"
+        );
+    }
+
+    // Verify cumulative values are monotonically increasing
+    let mut prev_cum = 0.0;
+    for pt in points {
+        let cum = pt["cumulative"]
+            .as_str()
+            .expect("cumulative string")
+            .parse::<f64>()
+            .expect("parse cumulative");
+        assert!(
+            cum >= prev_cum,
+            "cumulative spending should be monotonically increasing"
+        );
+        prev_cum = cum;
+    }
+
+    // Final cumulative should match total_spent
+    let final_cum = points.last().expect("should have at least one point")["cumulative"]
+        .as_str()
+        .expect("cumulative string")
+        .parse::<f64>()
+        .expect("parse cumulative");
+
+    let total_spent = agg["total_spent"]
+        .as_str()
+        .expect("total_spent string")
+        .parse::<f64>()
+        .expect("parse spent");
+
+    assert!(
+        (final_cum - total_spent).abs() < 0.01,
+        "final cumulative should match total_spent"
+    );
+}
+
 // ===========================================================================
 // Jobs
 // ===========================================================================
