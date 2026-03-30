@@ -12,6 +12,7 @@ mod transactions;
 pub use amazon::{AmazonEnrichment, AmazonEnrichmentStats};
 pub use error::DbError;
 pub use paypal::PayPalEnrichmentStats;
+pub use transactions::TransactionFilters;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -1312,7 +1313,7 @@ mod tests {
         assert_eq!(child.parent_id.unwrap().to_string(), cat_id);
 
         let (txns, total) = db
-            .list_transactions_paginated(10, 0, "", "", "", "")
+            .list_transactions_paginated(10, 0, TransactionFilters::default())
             .await
             .unwrap();
         assert_eq!(total, 1);
@@ -1369,5 +1370,83 @@ mod tests {
             !ids.contains(&txn_far.id),
             "far transaction should be excluded"
         );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_list_transactions_paginated_date_filters(pool: PgPool) {
+        let db = wrap(pool);
+        let acct = make_account();
+        db.upsert_account(&acct).await.unwrap();
+
+        let mut jan = make_transaction(acct.id);
+        jan.posted_date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        db.upsert_transaction(&jan, None).await.unwrap();
+
+        let mut mar = make_transaction(acct.id);
+        mar.posted_date = NaiveDate::from_ymd_opt(2025, 3, 15).unwrap();
+        db.upsert_transaction(&mar, None).await.unwrap();
+
+        let mut jun = make_transaction(acct.id);
+        jun.posted_date = NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+        db.upsert_transaction(&jun, None).await.unwrap();
+
+        // from filter only — should include mar and jun, not jan
+        let (txns, total) = db
+            .list_transactions_paginated(
+                10,
+                0,
+                TransactionFilters {
+                    from: Some(NaiveDate::from_ymd_opt(2025, 2, 1).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(total, 2);
+        let ids: Vec<_> = txns.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&mar.id));
+        assert!(ids.contains(&jun.id));
+        assert!(!ids.contains(&jan.id));
+
+        // to filter only — should include jan and mar, not jun
+        let (txns, total) = db
+            .list_transactions_paginated(
+                10,
+                0,
+                TransactionFilters {
+                    to: Some(NaiveDate::from_ymd_opt(2025, 4, 1).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(total, 2);
+        let ids: Vec<_> = txns.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&jan.id));
+        assert!(ids.contains(&mar.id));
+        assert!(!ids.contains(&jun.id));
+
+        // both filters — only mar
+        let (txns, total) = db
+            .list_transactions_paginated(
+                10,
+                0,
+                TransactionFilters {
+                    from: Some(NaiveDate::from_ymd_opt(2025, 2, 1).unwrap()),
+                    to: Some(NaiveDate::from_ymd_opt(2025, 4, 1).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(txns[0].id, mar.id);
+
+        // no filters — all three
+        let (_, total) = db
+            .list_transactions_paginated(10, 0, TransactionFilters::default())
+            .await
+            .unwrap();
+        assert_eq!(total, 3);
     }
 }

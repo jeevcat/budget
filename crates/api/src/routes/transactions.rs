@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -10,6 +11,8 @@ use budget_core::models::{
 use budget_core::rules::compile_rule;
 use budget_jobs::CategorizeTransactionJob;
 use budget_providers::RuleContext;
+
+use budget_db::TransactionFilters;
 
 use crate::routes::AppError;
 use crate::state::AppState;
@@ -118,6 +121,8 @@ struct ListQuery {
     category_id: Option<String>,
     account_id: Option<String>,
     category_method: Option<String>,
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
 }
 
 /// Paginated response wrapper for transaction listings.
@@ -159,10 +164,14 @@ async fn list(
         .list_transactions_paginated(
             limit,
             offset,
-            search,
-            category_id,
-            account_id,
-            category_method,
+            TransactionFilters {
+                search,
+                category_id,
+                account_id,
+                category_method,
+                from: query.from,
+                to: query.to,
+            },
         )
         .await?;
 

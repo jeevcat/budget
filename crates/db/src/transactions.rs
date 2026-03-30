@@ -10,6 +10,17 @@ use budget_core::models::{
 
 use crate::{Db, DbError, TXN_COLUMNS, row_to_transaction};
 
+/// Filter parameters for [`Db::list_transactions_paginated`].
+#[derive(Default)]
+pub struct TransactionFilters<'a> {
+    pub search: &'a str,
+    pub category_id: &'a str,
+    pub account_id: &'a str,
+    pub category_method: &'a str,
+    pub from: Option<NaiveDate>,
+    pub to: Option<NaiveDate>,
+}
+
 impl Db {
     /// Insert or update a transaction using provider-level deduplication.
     ///
@@ -158,12 +169,17 @@ impl Db {
         &self,
         limit: i64,
         offset: i64,
-        search: &str,
-        category_id: &str,
-        account_id: &str,
-        category_method: &str,
+        filters: TransactionFilters<'_>,
     ) -> Result<(Vec<Transaction>, i64), DbError> {
         let pool = &self.0;
+        let TransactionFilters {
+            search,
+            category_id,
+            account_id,
+            category_method,
+            from,
+            to,
+        } = filters;
 
         let where_clause = "WHERE ($1 = '' OR LOWER(merchant_name) LIKE '%' || LOWER($1) || '%'
                             OR LOWER(array_to_string(remittance_information, ' ')) LIKE '%' || LOWER($1) || '%'
@@ -172,7 +188,9 @@ impl Db {
                             OR ($2 != '__none' AND category_id = $2::uuid))
                AND ($3 = '' OR account_id = $3::uuid)
                AND ($4 = '' OR ($4 = '__none' AND category_method IS NULL)
-                            OR ($4 != '__none' AND category_method = $4))";
+                            OR ($4 != '__none' AND category_method = $4))
+               AND ($5::date IS NULL OR posted_date >= $5::date)
+               AND ($6::date IS NULL OR posted_date <= $6::date)";
 
         let count_sql = format!("SELECT COUNT(*) as cnt FROM transactions {where_clause}");
         let total: i64 = sqlx::query_scalar(&count_sql)
@@ -180,6 +198,8 @@ impl Db {
             .bind(category_id)
             .bind(account_id)
             .bind(category_method)
+            .bind(from)
+            .bind(to)
             .fetch_one(pool)
             .await?;
 
@@ -188,13 +208,15 @@ impl Db {
              FROM transactions
              {where_clause}
              ORDER BY posted_date DESC, merchant_name ASC
-             LIMIT $5 OFFSET $6"
+             LIMIT $7 OFFSET $8"
         );
         let rows = sqlx::query(&data_sql)
             .bind(search)
             .bind(category_id)
             .bind(account_id)
             .bind(category_method)
+            .bind(from)
+            .bind(to)
             .bind(limit)
             .bind(offset)
             .fetch_all(pool)
