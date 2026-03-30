@@ -42,6 +42,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(categorize, uncategorize))
         .routes(routes!(generate_rule))
         .routes(routes!(skip_correlation))
+        .routes(routes!(update_title))
 }
 
 /// Page size for transaction listing (1–200, default 50).
@@ -273,6 +274,39 @@ async fn skip_correlation(
     Json(body): Json<SkipCorrelationRequest>,
 ) -> Result<StatusCode, AppError> {
     state.db.set_skip_correlation(id, body.skip).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Update Title
+// ---------------------------------------------------------------------------
+
+/// Request body for the update-title endpoint.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct UpdateTitleRequest {
+    /// The new title to set, or `null` to clear the LLM title and fall back to the raw merchant name.
+    pub title: Option<String>,
+}
+
+/// Set or clear the human-friendly title on a transaction.
+///
+/// When `title` is `null` the `llm_title` column is cleared and the transaction
+/// will fall back to its raw merchant name in all display contexts.
+///
+/// # Errors
+///
+/// Returns 400 if the ID is not a valid UUID.
+/// Returns `AppError` if the database update fails.
+#[utoipa::path(patch, path = "/{id}/title", tag = "transactions", params(("id" = TransactionId, Path, description = "Transaction UUID")), request_body = UpdateTitleRequest, responses((status = 204)), security(("bearer_token" = [])))]
+async fn update_title(
+    State(state): State<AppState>,
+    Path(id): Path<TransactionId>,
+    Json(body): Json<UpdateTitleRequest>,
+) -> Result<StatusCode, AppError> {
+    match body.title.as_deref() {
+        Some(title) => state.db.update_transaction_llm_title(id, title).await?,
+        None => state.db.clear_transaction_llm_title(id).await?,
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

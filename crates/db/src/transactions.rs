@@ -440,6 +440,20 @@ impl Db {
         Ok(())
     }
 
+    /// Clear the LLM-generated title so the transaction falls back to its raw merchant name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError` if the query fails.
+    pub async fn clear_transaction_llm_title(&self, id: TransactionId) -> Result<(), DbError> {
+        let pool = &self.0;
+        sqlx::query("UPDATE transactions SET llm_title = NULL WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     /// Set the correlation of a transaction (transfer or reimbursement link).
     ///
     /// # Errors

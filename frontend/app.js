@@ -1857,6 +1857,7 @@ function TxnDetail({
   categories,
   acctMap,
   onCategorize,
+  onUpdate,
   onClose,
   onRuleCreated,
 }) {
@@ -1870,6 +1871,9 @@ function TxnDetail({
   const [proposalPreviewing, setProposalPreviewing] = useState(false);
   const [amazonEnrichment, setAmazonEnrichment] = useState(null);
   const [paypalEnrichment, setPaypalEnrichment] = useState(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
   const debounceRef = useRef(null);
   if (!txn) return null;
 
@@ -1952,6 +1956,35 @@ function TxnDetail({
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  function startEditTitle() {
+    setTitleDraft(txn.llm_title || "");
+    setEditingTitle(true);
+  }
+
+  async function commitTitleEdit() {
+    const trimmed = titleDraft.trim();
+    setEditingTitle(false);
+    if (trimmed === (txn.llm_title || "")) return;
+    setSavingTitle(true);
+    try {
+      await api.patch(`/transactions/${txn.id}/title`, {
+        title: trimmed || null,
+      });
+      if (onUpdate) onUpdate(txn.id, { llm_title: trimmed || null });
+    } finally {
+      setSavingTitle(false);
+    }
+  }
+
+  function handleTitleKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitTitleEdit();
+    } else if (e.key === "Escape") {
+      setEditingTitle(false);
     }
   }
 
@@ -2047,6 +2080,31 @@ function TxnDetail({
           `
               : null
           }
+          <dt>Title</dt>
+          <dd>
+            ${
+              editingTitle
+                ? html`
+                  <input
+                    value=${titleDraft}
+                    onInput=${(e) => setTitleDraft(e.target.value)}
+                    onBlur=${commitTitleEdit}
+                    onKeyDown=${handleTitleKeyDown}
+                    placeholder="Leave blank to clear"
+                    autoFocus
+                    style="width:100%;margin:0"
+                  />
+                `
+                : html`
+                  <span
+                    style="cursor:pointer;border-bottom:1px dashed var(--border)"
+                    title="Click to edit title"
+                    onClick=${startEditTitle}
+                  >${savingTitle ? "Saving…" : transactionTitle(txn)}</span>
+                  ${txn.llm_title ? html`<span class="chip outline small" style="margin-left:0.5rem" title="LLM-generated title">✦ auto</span>` : null}
+                `
+            }
+          </dd>
           <dt>Category</dt>
           <dd>
             <${CategorySelect}
@@ -2460,6 +2518,12 @@ function TransactionTable({
       categories=${categories}
       acctMap=${acctMap}
       onCategorize=${handleCategorize}
+      onUpdate=${(txnId, patch) => {
+        onTransactionUpdate(txnId, patch);
+        setSelected((prev) =>
+          prev && prev.id === txnId ? { ...prev, ...patch } : prev,
+        );
+      }}
       onClose=${() => setSelected(null)}
       onRuleCreated=${onRuleCreated}
     />
