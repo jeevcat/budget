@@ -1300,26 +1300,27 @@ function Overview() {
 
 // Wraps the ot-tabs element. Renders the tab bar and period navigator as a
 // unified header row, with children as the tab panels below.
-function DashboardHeader({
-  tabsCallbackRef,
-  hasProjects,
-  periodNav,
-  children,
-}) {
+function DashboardHeader({ tabsCallbackRef, hasProjects, children }) {
   return html`
-    <ot-tabs ref=${tabsCallbackRef} class="dashboard-tabs">
+    <ot-tabs ref=${tabsCallbackRef}>
       <div role="tablist">
         <button role="tab">Monthly</button>
         <button role="tab">Annual</button>
         ${hasProjects && html`<button role="tab">Projects</button>`}
       </div>
-      ${periodNav && html`<div class="dashboard-period-nav">${periodNav}</div>`}
       ${children}
     </ot-tabs>
   `;
 }
 
 function MonthlyTabPanel({
+  activeMonth,
+  isCurrentMonth,
+  monthlyTimeLabel,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
   ledger,
   items,
   selectedCategoryId,
@@ -1330,6 +1331,19 @@ function MonthlyTabPanel({
 }) {
   return html`
     <div role="tabpanel">
+      <header class="dashboard-period-nav">
+        <button onClick=${onPrev} disabled=${!hasPrev} style="padding:0.25rem 0.5rem" aria-label="Previous month">\u2039</button>
+        <div>
+          <strong>${guessMonthName(activeMonth)}</strong>
+          <div class="text-light text-body">${formatMonthRange(activeMonth)}</div>
+          ${
+            isCurrentMonth
+              ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
+              : html`<div class="text-light text-body">Closed</div>`
+          }
+        </div>
+        <button onClick=${onNext} disabled=${!hasNext} style="padding:0.25rem 0.5rem" aria-label="Next month">\u203A</button>
+      </header>
       <section class="dashboard-net-summary">
         <${NetSummary} ledger=${ledger} />
       </section>
@@ -1353,6 +1367,12 @@ function MonthlyTabPanel({
 }
 
 function AnnualTabPanel({
+  budgetYear,
+  annualTimeLabel,
+  hasPrevYear,
+  hasNextYear,
+  onPrevYear,
+  onNextYear,
   ledger,
   items,
   selectedCategoryId,
@@ -1363,6 +1383,14 @@ function AnnualTabPanel({
 }) {
   return html`
     <div role="tabpanel">
+      <header class="dashboard-period-nav">
+        <button onClick=${onPrevYear} disabled=${!hasPrevYear} style="padding:0.25rem 0.5rem" aria-label="Previous year">\u2039</button>
+        <div>
+          <strong>${budgetYear}</strong>
+          ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
+        </div>
+        <button onClick=${onNextYear} disabled=${!hasNextYear} style="padding:0.25rem 0.5rem" aria-label="Next year">\u203A</button>
+      </header>
       <section class="dashboard-net-summary">
         <${NetSummary} ledger=${ledger} />
       </section>
@@ -1830,39 +1858,16 @@ function Dashboard({ tab = "monthly", monthId = null }) {
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
   })();
 
-  const monthlyPeriodNav = html`
-    <button onClick=${goPrev} disabled=${!hasPrev} style="padding:0.25rem 0.5rem" aria-label="Previous month">\u2039</button>
-    <div>
-      <strong>${guessMonthName(activeMonth)}</strong>
-      <div class="text-light text-body">${formatMonthRange(activeMonth)}</div>
-      ${
-        isCurrentMonth
-          ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
-          : html`<div class="text-light text-body">Closed</div>`
-      }
-    </div>
-    <button onClick=${goNext} disabled=${!hasNext} style="padding:0.25rem 0.5rem" aria-label="Next month">\u203A</button>
-  `;
-
-  const annualPeriodNav = html`
-    <button onClick=${goPrevYear} disabled=${!hasPrevYear} style="padding:0.25rem 0.5rem" aria-label="Previous year">\u2039</button>
-    <div>
-      <strong>${budgetYear}</strong>
-      ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
-    </div>
-    <button onClick=${goNextYear} disabled=${!hasNextYear} style="padding:0.25rem 0.5rem" aria-label="Next year">\u203A</button>
-  `;
-
-  const periodNav =
-    activeTab === 1
-      ? annualPeriodNav
-      : activeTab === 0
-        ? monthlyPeriodNav
-        : null;
-
   return html`
-    <${DashboardHeader} tabsCallbackRef=${tabsCallbackRef} hasProjects=${hasProjects} periodNav=${periodNav}>
+    <${DashboardHeader} tabsCallbackRef=${tabsCallbackRef} hasProjects=${hasProjects}>
       <${MonthlyTabPanel}
+        activeMonth=${activeMonth}
+        isCurrentMonth=${isCurrentMonth}
+        monthlyTimeLabel=${monthlyTimeLabel}
+        hasPrev=${hasPrev}
+        hasNext=${hasNext}
+        onPrev=${goPrev}
+        onNext=${goNext}
         ledger=${monthlyLedger}
         items=${monthly}
         selectedCategoryId=${selectedCategoryId}
@@ -1874,6 +1879,12 @@ function Dashboard({ tab = "monthly", monthId = null }) {
         salaryStatus=${isCurrentMonth ? statusResp.salary_status : null}
       />
       <${AnnualTabPanel}
+        budgetYear=${budgetYear}
+        annualTimeLabel=${annualTimeLabel}
+        hasPrevYear=${hasPrevYear}
+        hasNextYear=${hasNextYear}
+        onPrevYear=${goPrevYear}
+        onNextYear=${goNextYear}
         ledger=${annualLedger}
         items=${annual}
         selectedCategoryId=${selectedCategoryId}

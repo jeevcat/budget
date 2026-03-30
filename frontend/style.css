@@ -413,16 +413,12 @@ dialog > form > div {
 }
 
 /* Ledger — unified budget/cashflow view */
-.dashboard-tabs {
-  position: relative;
-}
 .dashboard-period-nav {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
+  margin-bottom: 1.25rem;
 }
 .dashboard-period-nav > div {
   text-align: center;
