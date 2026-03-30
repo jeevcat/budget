@@ -413,6 +413,28 @@ dialog > form > div {
 }
 
 /* Ledger — unified budget/cashflow view */
+.dashboard-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.dashboard-period-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dashboard-period-nav > div {
+  text-align: center;
+  min-width: 6rem;
+}
+.dashboard-net-summary,
+.dashboard-categories {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
 .ledger {
   margin-bottom: 1rem;
 }
@@ -420,10 +442,9 @@ dialog > form > div {
   margin-bottom: 1rem;
 }
 .ledger-section-label {
-  font-size: var(--text-8);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 0.25rem;
+  font-size: var(--text-6);
+  font-weight: var(--font-semibold);
+  margin-bottom: 0.5rem;
 }
 .ledger-col-headers {
   display: grid;
@@ -579,7 +600,7 @@ dialog > form > div {
 }
 .ledger-fixed-label {
   font-size: var(--text-8);
-  padding: 0.5rem 0.35rem 0.15rem;
+  padding: 0.5rem 0.35rem 0.15rem 1rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }

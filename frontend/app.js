@@ -1298,6 +1298,229 @@ function Overview() {
 // Budget dashboard
 // ---------------------------------------------------------------------------
 
+// Wraps the ot-tabs element. Renders the tab bar and period navigator as a
+// unified header row, with children as the tab panels below.
+function DashboardHeader({
+  tabsCallbackRef,
+  hasProjects,
+  periodNav,
+  children,
+}) {
+  return html`
+    <ot-tabs ref=${tabsCallbackRef}>
+      <div class="dashboard-header-row">
+        <div role="tablist">
+          <button role="tab">Monthly</button>
+          <button role="tab">Annual</button>
+          ${hasProjects && html`<button role="tab">Projects</button>`}
+        </div>
+        ${periodNav && html`<div class="dashboard-period-nav">${periodNav}</div>`}
+      </div>
+      ${children}
+    </ot-tabs>
+  `;
+}
+
+function MonthlyTabPanel({
+  ledger,
+  items,
+  selectedCategoryId,
+  onCategoryClick,
+  onBurndownClick,
+  catMap,
+  salaryStatus,
+}) {
+  return html`
+    <div role="tabpanel">
+      <section class="dashboard-net-summary">
+        <${NetSummary} ledger=${ledger} />
+      </section>
+      <section class="dashboard-categories">
+        ${
+          ledger
+            ? html`<${Ledger}
+              items=${items}
+              ledger=${ledger}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${onCategoryClick}
+              onBurndownClick=${onBurndownClick}
+              catMap=${catMap}
+              salaryStatus=${salaryStatus}
+            />`
+            : html`<p class="text-light">No monthly budgets.</p>`
+        }
+      </section>
+    </div>
+  `;
+}
+
+function AnnualTabPanel({
+  ledger,
+  items,
+  selectedCategoryId,
+  onCategoryClick,
+  onMonthlyClick,
+  onProjectsClick,
+  catMap,
+}) {
+  return html`
+    <div role="tabpanel">
+      <section class="dashboard-net-summary">
+        <${NetSummary} ledger=${ledger} />
+      </section>
+      <section class="dashboard-categories">
+        ${
+          ledger
+            ? html`<${Ledger}
+              items=${items}
+              ledger=${ledger}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${onCategoryClick}
+              onMonthlyClick=${onMonthlyClick}
+              onProjectsClick=${onProjectsClick}
+              catMap=${catMap}
+            />`
+            : html`<p class="text-light">No annual budgets.</p>`
+        }
+      </section>
+    </div>
+  `;
+}
+
+function ProjectsTabPanel({
+  drilledProject,
+  childBreakdown,
+  drilledTotalSpent,
+  selectedCategoryId,
+  onCategoryClick,
+  onProjectClick,
+  onDrillBack,
+  activeProjects,
+  finishedProjects,
+  projectSummary,
+}) {
+  return html`
+    <div role="tabpanel">
+      <section class="dashboard-categories">
+        ${
+          drilledProject
+            ? html`<${ProjectDrillDown}
+              project=${drilledProject}
+              childBreakdown=${childBreakdown}
+              totalSpent=${drilledTotalSpent}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${onCategoryClick}
+              onBack=${onDrillBack}
+            />`
+            : html`
+            <${BudgetSection}
+              items=${activeProjects}
+              summary=${projectSummary}
+              barMax=${Number(projectSummary.bar_max)}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${onProjectClick}
+              showDateSubtitle
+            />
+            ${
+              finishedProjects.length > 0 &&
+              html`
+              <details class="mt-4">
+                <summary class="text-light" style="cursor:pointer;padding:0.5rem 0">Finished (${finishedProjects.length})</summary>
+                <div class="vstack" style="gap:0;margin-top:0.5rem;opacity:0.5">
+                  ${finishedProjects.map(
+                    (s) => html`
+                    <div
+                      class="hstack clickable-row clickable-item${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+                      key=${s.category_id}
+                      title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
+                      onClick=${() => onProjectClick?.(s.category_id)}
+                    >
+                      <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
+                      <div style="flex:1;min-width:0">
+                        <div class="proj-item-name">
+                          ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
+                        </div>
+                        ${
+                          s.project_start_date &&
+                          html`
+                          <div class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
+                        `
+                        }
+                        <div class="text-caption">
+                          <span>${formatAmount(s.spent, { decimals: 0 })}</span>
+                          <span class="text-light">${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span>
+                        </div>
+                      </div>
+                      <div class="vstack" style="align-items:flex-end;gap:0.15rem;white-space:nowrap">
+                        <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}</span>
+                        <span class="text-body" style="${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
+                          ${formatAmount(s.remaining, { decimals: 0, sign: true })}
+                        </span>
+                      </div>
+                    </div>
+                  `,
+                  )}
+                </div>
+              </details>
+            `
+            }
+          `
+        }
+      </section>
+    </div>
+  `;
+}
+
+function DashboardTransactions({
+  displayTxns,
+  categories,
+  catMap,
+  drilledProject,
+  selectedCategoryId,
+  onClearCategory,
+  onTransactionUpdate,
+  onRuleCreated,
+}) {
+  return html`
+    <article class="card" style="padding:var(--space-4);margin-top:1rem">
+      <div class="hstack" style="align-items:baseline;margin-bottom:0.75rem">
+        <h3 style="margin:0">Transactions</h3>
+        ${
+          drilledProject &&
+          html`
+          <span class="chip outline small cat-project" style="margin-left:0.5rem">
+            ${drilledProject.shortName}
+          </span>
+        `
+        }
+        ${
+          selectedCategoryId &&
+          html`
+          <button
+            class="chip outline small${selectedCategoryId !== "__none" ? ` ${budgetModeColor(categoryBudgetMode(catMap, selectedCategoryId))}` : ""}"
+            style="margin-left:0.5rem"
+            onClick=${onClearCategory}
+          >
+            ${selectedCategoryId === "__none" ? "Uncategorized" : categoryName(catMap, selectedCategoryId)} \u00d7
+          </button>
+        `
+        }
+        <span class="text-light text-body" style="margin-left:auto">
+          ${displayTxns.length} transaction${displayTxns.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <${TransactionTable}
+        transactions=${displayTxns}
+        categories=${categories}
+        catMap=${catMap}
+        onTransactionUpdate=${onTransactionUpdate}
+        onRuleCreated=${onRuleCreated}
+        compact=${true}
+      />
+    </article>
+  `;
+}
+
 const TAB_NAMES = ["monthly", "annual", "projects"];
 
 function Dashboard({ tab = "monthly", monthId = null }) {
@@ -1609,218 +1832,97 @@ function Dashboard({ tab = "monthly", monthId = null }) {
     return [...list].sort((a, b) => b.posted_date.localeCompare(a.posted_date));
   })();
 
+  const monthlyPeriodNav = html`
+    <button onClick=${goPrev} disabled=${!hasPrev} style="padding:0.25rem 0.5rem" aria-label="Previous month">\u2039</button>
+    <div>
+      <strong>${guessMonthName(activeMonth)}</strong>
+      <div class="text-light text-body">${formatMonthRange(activeMonth)}</div>
+      ${
+        isCurrentMonth
+          ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
+          : html`<div class="text-light text-body">Closed</div>`
+      }
+    </div>
+    <button onClick=${goNext} disabled=${!hasNext} style="padding:0.25rem 0.5rem" aria-label="Next month">\u203A</button>
+  `;
+
+  const annualPeriodNav = html`
+    <button onClick=${goPrevYear} disabled=${!hasPrevYear} style="padding:0.25rem 0.5rem" aria-label="Previous year">\u2039</button>
+    <div>
+      <strong>${budgetYear}</strong>
+      ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
+    </div>
+    <button onClick=${goNextYear} disabled=${!hasNextYear} style="padding:0.25rem 0.5rem" aria-label="Next year">\u203A</button>
+  `;
+
+  const periodNav =
+    activeTab === 1
+      ? annualPeriodNav
+      : activeTab === 0
+        ? monthlyPeriodNav
+        : null;
+
   return html`
-    <ot-tabs ref=${tabsCallbackRef}>
-      <div role="tablist">
-        <button role="tab">Monthly</button>
-        <button role="tab">Annual</button>
-        ${hasProjects && html`<button role="tab">Projects</button>`}
-      </div>
-      <div role="tabpanel">
-        <div class="hstack" style="margin-bottom:1.25rem">
-          <div class="hstack gap-2" style="align-items:center">
-            <button
-              onClick=${goPrev}
-              disabled=${!hasPrev}
-              style="padding:0.25rem 0.5rem"
-              aria-label="Previous month"
-            >\u2039</button>
-            <div style="text-align:center">
-              <strong>${guessMonthName(activeMonth)}</strong>
-              <div class="text-light text-body">${formatMonthRange(activeMonth)}</div>
-              ${
-                isCurrentMonth
-                  ? html`<div class="text-light mono text-body">${monthlyTimeLabel}</div>`
-                  : html`<div class="text-light text-body">Closed</div>`
-              }
-            </div>
-            <button
-              onClick=${goNext}
-              disabled=${!hasNext}
-              style="padding:0.25rem 0.5rem"
-              aria-label="Next month"
-            >\u203A</button>
-          </div>
-        </div>
-        <${NetSummary} ledger=${monthlyLedger} />
-        ${
-          monthlyLedger
-            ? html`<${Ledger}
-              items=${monthly}
-              ledger=${monthlyLedger}
-              selectedCategoryId=${selectedCategoryId}
-              onCategoryClick=${handleCategoryClick}
-              onBurndownClick=${(id) => {
-                location.hash = "#/insights/" + id;
-              }}
-              catMap=${catMap}
-              salaryStatus=${isCurrentMonth ? statusResp.salary_status : null}
-            />`
-            : html`<p class="text-light">No monthly budgets.</p>`
-        }
-      </div>
-      <div role="tabpanel">
-        <div class="hstack" style="margin-bottom:1.25rem">
-          <div class="hstack gap-2" style="align-items:center">
-            <button
-              onClick=${goPrevYear}
-              disabled=${!hasPrevYear}
-              style="padding:0.25rem 0.5rem"
-              aria-label="Previous year"
-            >\u2039</button>
-            <div style="text-align:center">
-              <strong>${budgetYear}</strong>
-              ${annualTimeLabel && html`<div class="text-light mono text-body">${annualTimeLabel}</div>`}
-            </div>
-            <button
-              onClick=${goNextYear}
-              disabled=${!hasNextYear}
-              style="padding:0.25rem 0.5rem"
-              aria-label="Next year"
-            >\u203A</button>
-          </div>
-        </div>
-        <${NetSummary} ledger=${annualLedger} />
-        ${
-          annualLedger
-            ? html`<${Ledger}
-              items=${annual}
-              ledger=${annualLedger}
-              selectedCategoryId=${selectedCategoryId}
-              onCategoryClick=${handleCategoryClick}
-              onMonthlyClick=${() => setActiveTab(0)}
-              onProjectsClick=${() => setActiveTab(2)}
-              catMap=${catMap}
-            />`
-            : html`<p class="text-light">No annual budgets.</p>`
-        }
-      </div>
+    <${DashboardHeader} tabsCallbackRef=${tabsCallbackRef} hasProjects=${hasProjects} periodNav=${periodNav}>
+      <${MonthlyTabPanel}
+        ledger=${monthlyLedger}
+        items=${monthly}
+        selectedCategoryId=${selectedCategoryId}
+        onCategoryClick=${handleCategoryClick}
+        onBurndownClick=${(id) => {
+          location.hash = "#/insights/" + id;
+        }}
+        catMap=${catMap}
+        salaryStatus=${isCurrentMonth ? statusResp.salary_status : null}
+      />
+      <${AnnualTabPanel}
+        ledger=${annualLedger}
+        items=${annual}
+        selectedCategoryId=${selectedCategoryId}
+        onCategoryClick=${handleCategoryClick}
+        onMonthlyClick=${() => setActiveTab(0)}
+        onProjectsClick=${() => setActiveTab(2)}
+        catMap=${catMap}
+      />
       ${
         hasProjects &&
-        html`
-        <div role="tabpanel">
-          ${
-            drilledProject
-              ? html`<${ProjectDrillDown}
-                project=${drilledProject}
-                childBreakdown=${childBreakdown}
-                totalSpent=${drilledTotalSpent}
-                selectedCategoryId=${selectedCategoryId}
-                onCategoryClick=${handleCategoryClick}
-                onBack=${() => {
-                  setDrilledProjectId(null);
-                  setSelectedCategoryId(null);
-                }}
-              />`
-              : html`<${BudgetSection}
-                items=${activeProjects}
-                summary=${statusResp.project_summary}
-                barMax=${Number(statusResp.project_summary.bar_max)}
-                selectedCategoryId=${selectedCategoryId}
-                onCategoryClick=${handleProjectClick}
-                showDateSubtitle
-              />
-              ${
-                finishedProjects.length > 0 &&
-                html`
-                <details class="mt-4">
-                  <summary class="text-light" style="cursor:pointer;padding:0.5rem 0">Finished (${finishedProjects.length})</summary>
-                  <div class="vstack" style="gap:0;margin-top:0.5rem;opacity:0.5">
-                    ${finishedProjects.map(
-                      (s) => html`
-                        <div
-                          class="hstack clickable-row clickable-item${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
-                          key=${s.category_id}
-                          title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
-                          onClick=${() => handleProjectClick?.(s.category_id)}
-                        >
-                          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)};flex-shrink:0"></span>
-                          <div style="flex:1;min-width:0">
-                            <div class="proj-item-name">
-                              ${s.parentName && html`<span class="cat-parent">${s.parentName}</span>`}${s.shortName}
-                            </div>
-                            ${
-                              s.project_start_date &&
-                              html`
-                              <div class="text-light text-caption">${formatDateRange(s.project_start_date, s.project_end_date)}</div>
-                            `
-                            }
-                            <div class="text-caption">
-                              <span>${formatAmount(s.spent, { decimals: 0 })}</span>
-                              <span class="text-light">
-                                ${" "}/ ${Number(s.budget_amount) > 0 ? formatAmount(s.budget_amount, { decimals: 0 }) : "no budget"}</span>
-                            </div>
-                          </div>
-                          <div class="vstack" style="align-items:flex-end;gap:0.15rem;white-space:nowrap">
-                            <span class="badge small ${paceBadge(s.pace)}">${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}</span>
-                            <span class="text-body" style="${Number(s.remaining) < 0 ? "color:var(--danger)" : ""}">
-                              ${formatAmount(s.remaining, { decimals: 0, sign: true })}
-                            </span>
-                          </div>
-                        </div>
-                      `,
-                    )}
-                  </div>
-                </details>
-              `
-              }`
-          }
-        </div>
-      `
-      }
-    </ot-tabs>
-
-    <article class="card" style="padding:var(--space-4);margin-top:1rem">
-      <div
-        class="hstack"
-        style="align-items:baseline;margin-bottom:0.75rem"
-      >
-        <h3 style="margin:0">Transactions</h3>
-        ${
-          drilledProject &&
-          html`
-          <span
-            class="chip outline small cat-project"
-            style="margin-left:0.5rem"
-          >
-            ${drilledProject.shortName}
-          </span>
-        `
-        }
-        ${
-          selectedCategoryId &&
-          html`
-          <button
-            class="chip outline small${selectedCategoryId !== "__none" ? ` ${budgetModeColor(categoryBudgetMode(catMap, selectedCategoryId))}` : ""}"
-            style="margin-left:0.5rem"
-            onClick=${() => setSelectedCategoryId(null)}
-          >
-            ${selectedCategoryId === "__none" ? "Uncategorized" : categoryName(catMap, selectedCategoryId)} \u00d7
-          </button>
-        `
-        }
-        <span class="text-light text-body" style="margin-left:auto">
-          ${displayTxns.length} transaction${displayTxns.length !== 1 ? "s" : ""}
-        </span>
-      </div>
-      <${TransactionTable}
-        transactions=${displayTxns}
-        categories=${categories}
-        catMap=${catMap}
-        onTransactionUpdate=${(txnId, patch) => {
-          const updateList = (txns) =>
-            txns.map((t) => (t.id === txnId ? { ...t, ...patch } : t));
-          setStatusResp((prev) => ({
-            ...prev,
-            monthly_transactions: updateList(prev.monthly_transactions),
-            annual_transactions: updateList(prev.annual_transactions),
-            project_transactions: updateList(prev.project_transactions),
-          }));
+        html`<${ProjectsTabPanel}
+        drilledProject=${drilledProject}
+        childBreakdown=${childBreakdown}
+        drilledTotalSpent=${drilledTotalSpent}
+        selectedCategoryId=${selectedCategoryId}
+        onCategoryClick=${handleCategoryClick}
+        onProjectClick=${handleProjectClick}
+        onDrillBack=${() => {
+          setDrilledProjectId(null);
+          setSelectedCategoryId(null);
         }}
-        onRuleCreated=${() => waitForJobsDrained().then(load)}
-        compact=${true}
-      />
-    </article>
+        activeProjects=${activeProjects}
+        finishedProjects=${finishedProjects}
+        projectSummary=${statusResp.project_summary}
+      />`
+      }
+    </${DashboardHeader}>
+
+    <${DashboardTransactions}
+      displayTxns=${displayTxns}
+      categories=${categories}
+      catMap=${catMap}
+      drilledProject=${drilledProject}
+      selectedCategoryId=${selectedCategoryId}
+      onClearCategory=${() => setSelectedCategoryId(null)}
+      onTransactionUpdate=${(txnId, patch) => {
+        const updateList = (txns) =>
+          txns.map((t) => (t.id === txnId ? { ...t, ...patch } : t));
+        setStatusResp((prev) => ({
+          ...prev,
+          monthly_transactions: updateList(prev.monthly_transactions),
+          annual_transactions: updateList(prev.annual_transactions),
+          project_transactions: updateList(prev.project_transactions),
+        }));
+      }}
+      onRuleCreated=${() => waitForJobsDrained().then(load)}
+    />
   `;
 }
 
