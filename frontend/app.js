@@ -1307,15 +1307,13 @@ function DashboardHeader({
   children,
 }) {
   return html`
-    <ot-tabs ref=${tabsCallbackRef}>
-      <div class="dashboard-header-row">
-        <div role="tablist">
-          <button role="tab">Monthly</button>
-          <button role="tab">Annual</button>
-          ${hasProjects && html`<button role="tab">Projects</button>`}
-        </div>
-        ${periodNav && html`<div class="dashboard-period-nav">${periodNav}</div>`}
+    <ot-tabs ref=${tabsCallbackRef} class="dashboard-tabs">
+      <div role="tablist">
+        <button role="tab">Monthly</button>
+        <button role="tab">Annual</button>
+        ${hasProjects && html`<button role="tab">Projects</button>`}
       </div>
+      ${periodNav && html`<div class="dashboard-period-nav">${periodNav}</div>`}
       ${children}
     </ot-tabs>
   `;
