@@ -8,6 +8,9 @@
 
 ### Frontend
 - [ ] **Skip correlation button**: Add "Skip Correlation" button to transaction detail panel when a correlation is present, using `POST /transactions/{id}/skip-correlation`. Lets users fix mistaken auto-correlations
+- [ ] Be able to edit the auto-labels of transactions for manual correction
+- [ ] Annual Budget page has weird custom section for "Monthly Budgets". Why not just instead show monthly budgets broken up by monthly category with normal monthly budget bars? So it looks the same as the annual categories. But obviously under a separate header.
+- [ ] Visual hierarchy on Budget page is not great. Need to think high level on best approach. How many levels do we have? Are we using semantic h1 etc?
 
 
 ## E2E Tests
@@ -78,6 +81,3 @@ Current coverage: 3 smoke tests (dashboard loads, insights loads, no burndown on
 - [ ] **Trigger correlate**: Click the Correlate trigger button, verify response
 - [ ] **Job counts update**: Trigger a job, verify active/waiting badges update via polling
 
-## Blocked Upstream
-
-- [ ] **Gradle in Claude Code sandbox**: `dl.google.com` / `maven.google.com` are blocked by the sandbox egress proxy (403 `host_not_allowed`), so Gradle can't resolve AGP or Google Maven deps. The pre-commit hook gracefully skips Kotlin compilation when this happens. Once [anthropics/claude-code#16222](https://github.com/anthropics/claude-code/issues/16222) is fixed, remove the skip logic from `.github/hooks/pre-commit` and verify `./gradlew compileDebugKotlin` works in sandbox sessions

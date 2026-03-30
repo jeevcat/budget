@@ -1077,10 +1077,12 @@ function Overview() {
       isCurrentMonth,
       monthLabel,
       daysLeft,
+      daysTotal,
       totalSpent,
       totalBudget,
       aggregatePace,
       overAmount,
+      burndownPoints: agg.burndown_points,
       variableTxns,
       uncategorizedCount,
       overBudgetCount,
@@ -1222,7 +1224,7 @@ function Overview() {
             </span>
           </div>
           <${AggregateBurndownSparkline}
-            burndownPoints=${agg.burndown_points}
+            burndownPoints=${budgetData.burndownPoints}
             daysTotal=${budgetData.daysTotal}
             totalBudget=${budgetData.totalBudget}
           />
