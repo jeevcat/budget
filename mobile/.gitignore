@@ -1,9 +1,0 @@
-.gradle/
-build/
-!gradle/wrapper/gradle-wrapper.jar
-local.properties
-*.iml
-.idea/
-captures/
-.externalNativeBuild/
-.cxx/

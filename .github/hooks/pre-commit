@@ -74,7 +74,10 @@ output=$(run bun run build 2>&1) || {
 }
 echo -e "${GREEN}OK${NC}"
 
-if git diff --cached --name-only | grep -q '^mobile/'; then
+echo -e "${GREEN}All pre-commit checks passed!${NC}"
+
+# Mobile checks removed - no longer using Kotlin/Gradle
+if false; then
     # Detect the specific reason a Gradle task can't run
     gradle_skip_reason() {
         local output="$1"
