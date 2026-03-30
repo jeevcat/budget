@@ -492,12 +492,101 @@ function AnomalyBadge({ changepoint_shift_pct, residual_outlier }) {
   return null;
 }
 
+function VariableRows({
+  items,
+  barMax,
+  selectedCategoryId,
+  onCategoryClick,
+  onBurndownClick,
+}) {
+  const withSpend = items.filter((s) => Number(s.spent) !== 0);
+  const zeroSpend = items.filter((s) => Number(s.spent) === 0);
+  return html`
+    ${
+      withSpend.length > 0 &&
+      html`
+      <div class="ledger-col-headers">
+        <span>Name</span>
+        <span></span>
+        <span>Budget</span>
+        <span>Spent</span>
+        <span style="text-align:right">\u0394</span>
+      </div>
+    `
+    }
+    ${withSpend.map(
+      (s) => html`
+      <div
+        class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+        key=${s.category_id}
+        title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
+        onClick=${() => onCategoryClick?.(s.category_id)}
+      >
+        <span class="ledger-row-name">
+          <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
+          ${s.shortName}
+          ${
+            onBurndownClick &&
+            html`
+            <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
+            <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
+          `
+          }
+          ${
+            onBurndownClick &&
+            s.budgetMode === "monthly" &&
+            html`
+            <span
+              class="burndown-icon"
+              onClick=${(e) => {
+                e.stopPropagation();
+                onBurndownClick(s.category_id);
+              }}
+              title="View burndown"
+            >\u25A4</span>
+          `
+          }
+        </span>
+        <${BudgetBar}
+          pace=${s.pace}
+          fillPct=${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}
+          markPct=${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}
+        />
+        <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+        <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
+        <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
+      </div>
+    `,
+    )}
+    ${
+      zeroSpend.length > 0 &&
+      html`
+      <div class="ledger-zero-spend">
+        ${zeroSpend.map(
+          (s) => html`
+          <span
+            class="ledger-zero-chip${selectedCategoryId === s.category_id ? " ledger-zero-chip-selected" : ""}"
+            key=${s.category_id}
+            title="${s.shortName}: ${formatAmount(s.budget_amount, { decimals: 0 })} budgeted, no spend"
+            onClick=${() => onCategoryClick?.(s.category_id)}
+          >
+            <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>${s.shortName}
+            <span class="text-light">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
+          </span>
+        `,
+        )}
+      </div>
+    `
+    }
+  `;
+}
+
 function Ledger({
   items,
+  monthlyItems,
   ledger,
   selectedCategoryId,
   onCategoryClick,
-  onMonthlyClick,
   onProjectsClick,
   onBurndownClick,
   catMap,
@@ -566,113 +655,40 @@ function Ledger({
       <!-- OUT -->
       <div class="ledger-section">
         <div class="ledger-section-label text-light">Out</div>
+        <${VariableRows}
+          items=${items.filter((s) => s.budgetType !== "fixed")}
+          barMax=${barMax}
+          selectedCategoryId=${selectedCategoryId}
+          onCategoryClick=${onCategoryClick}
+          onBurndownClick=${onBurndownClick}
+        />
         ${(() => {
-          const variableItems = items.filter((s) => s.budgetType !== "fixed");
           const fixedItems = items.filter((s) => s.budgetType === "fixed");
-          const variableWithSpend = variableItems.filter(
-            (s) => Number(s.spent) !== 0,
-          );
-          const variableZeroSpend = variableItems.filter(
-            (s) => Number(s.spent) === 0,
-          );
-          return html`
-          ${
-            variableWithSpend.length > 0 &&
-            html`
-            <div class="ledger-col-headers">
-              <span>Name</span>
-              <span></span>
-              <span>Budget</span>
-              <span>Spent</span>
-              <span style="text-align:right">\u0394</span>
-            </div>
-          `
-          }
-          ${variableWithSpend.map(
-            (s) => html`
-            <div
-              class="ledger-row${s.pace === "over_budget" ? " ledger-row-over" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
-              key=${s.category_id}
-              title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
-              onClick=${() => onCategoryClick?.(s.category_id)}
-            >
-              <span class="ledger-row-name">
-                <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>
-                ${s.shortName}
-                <${TrendArrow} trend_monthly=${s.trend_monthly} budget_amount=${s.budget_amount} />
-                <${AnomalyBadge} changepoint_shift_pct=${s.changepoint_shift_pct} residual_outlier=${s.residual_outlier} />
-                ${
-                  onBurndownClick &&
-                  s.budgetMode === "monthly" &&
-                  html`
-                  <span
-                    class="burndown-icon"
-                    onClick=${(e) => {
-                      e.stopPropagation();
-                      onBurndownClick(s.category_id);
-                    }}
-                    title="View burndown"
-                  >\u25A4</span>
-                `
-                }
-              </span>
-              <${BudgetBar}
-                pace=${s.pace}
-                fillPct=${barMax > 0 ? (Math.abs(Number(s.spent)) / barMax) * 100 : 0}
-                markPct=${barMax > 0 ? (Number(s.budget_amount) / barMax) * 100 : 0}
-              />
-              <span class="ledger-amount">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
-              <span class="ledger-amount">${formatAmount(s.spent, { decimals: 0 })}</span>
-              <span class="ledger-amount" style="color:${Number(s.remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(s.remaining, { decimals: 0, sign: true })}</span>
-            </div>
-          `,
-          )}
-          ${
-            variableZeroSpend.length > 0 &&
-            html`
-            <div class="ledger-zero-spend">
-              ${variableZeroSpend.map(
-                (s) => html`
-                <span
-                  class="ledger-zero-chip${selectedCategoryId === s.category_id ? " ledger-zero-chip-selected" : ""}"
-                  key=${s.category_id}
-                  title="${s.shortName}: ${formatAmount(s.budget_amount, { decimals: 0 })} budgeted, no spend"
-                  onClick=${() => onCategoryClick?.(s.category_id)}
-                >
-                  <span class="ledger-pace-dot" style="background:${paceColor(s.pace)}"></span>${s.shortName}
-                  <span class="text-light">${formatAmount(s.budget_amount, { decimals: 0 })}</span>
-                </span>
-              `,
-              )}
-            </div>
-          `
-          }
-          ${
+          return (
             fixedItems.length > 0 &&
             html`
-            <div class="ledger-fixed-label text-light">Fixed</div>
-            <div class="ledger-fixed-grid">
-              ${fixedItems.map(
-                (s) => html`
-                <div
-                  class="ledger-fixed-item${s.pace === "over_budget" ? " ledger-fixed-over" : ""}${s.pace === "pending" ? " ledger-fixed-pending" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
-                  key=${s.category_id}
-                  title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
-                  onClick=${() => onCategoryClick?.(s.category_id)}
-                >
-                  <${FixedStatusIcon} pace=${s.pace} />
-                  <span class="ledger-fixed-name">${s.shortName}</span>
-                  <span class="ledger-fixed-amount">${formatAmount(
-                    Number(s.spent) !== 0 ? s.spent : s.budget_amount,
-                    { decimals: 0 },
-                  )}</span>
-                </div>
-              `,
-              )}
-            </div>
-          `
-          }
-          `;
+          <div class="ledger-fixed-label text-light">Fixed</div>
+          <div class="ledger-fixed-grid">
+            ${fixedItems.map(
+              (s) => html`
+              <div
+                class="ledger-fixed-item${s.pace === "over_budget" ? " ledger-fixed-over" : ""}${s.pace === "pending" ? " ledger-fixed-pending" : ""}${selectedCategoryId === s.category_id ? " ledger-row-selected" : ""}"
+                key=${s.category_id}
+                title="${paceLabel(s.pace, s.pace_delta, s.seasonal_factor)}"
+                onClick=${() => onCategoryClick?.(s.category_id)}
+              >
+                <${FixedStatusIcon} pace=${s.pace} />
+                <span class="ledger-fixed-name">${s.shortName}</span>
+                <span class="ledger-fixed-amount">${formatAmount(
+                  Number(s.spent) !== 0 ? s.spent : s.budget_amount,
+                  { decimals: 0 },
+                )}</span>
+              </div>
+            `,
+            )}
+          </div>
+        `
+          );
         })()}
 
         ${
@@ -681,33 +697,47 @@ function Ledger({
           <div class="ledger-divider"></div>
           ${ledger.unbudgeted.map(
             (item) => html`
-              <div
-                class="ledger-unbudgeted-row${selectedCategoryId === (item.category_id || "__none") ? " ledger-row-selected" : ""}"
-                key=${item.category_id || item.label}
-                onClick=${() => onCategoryClick?.(item.category_id || "__none")}
-              >
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.category_id && item.label !== "Uncategorized" ? html`<span title="No budget mode set — consider setting one" style="color:var(--warning);cursor:help">⚠ </span>` : ""}${item.label}</span>
-                <span></span>
-                <span></span>
-                <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
-                <span></span>
-              </div>
-            `,
+            <div
+              class="ledger-unbudgeted-row${selectedCategoryId === (item.category_id || "__none") ? " ledger-row-selected" : ""}"
+              key=${item.category_id || item.label}
+              onClick=${() => onCategoryClick?.(item.category_id || "__none")}
+            >
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.category_id && item.label !== "Uncategorized" ? html`<span title="No budget mode set — consider setting one" style="color:var(--warning);cursor:help">⚠ </span>` : ""}${item.label}</span>
+              <span></span>
+              <span></span>
+              <span class="ledger-amount">${formatAmount(item.amount, { decimals: 0 })}</span>
+              <span></span>
+            </div>
+          `,
           )}
         `
         }
         ${
-          Number(ledger.monthly_spent) > 0 &&
-          html`
-          <div class="ledger-divider"></div>
-          <div class="ledger-row clickable-row" onClick=${onMonthlyClick} style="color:var(--muted-foreground)">
-            <span class="ledger-row-name">Monthly budgets</span>
-            <span></span>
-            <span class="ledger-amount">${formatAmount(ledger.monthly_budget, { decimals: 0 })}</span>
-            <span class="ledger-amount">${formatAmount(ledger.monthly_spent, { decimals: 0 })}</span>
-            <span class="ledger-amount" style="color:${Number(ledger.monthly_remaining) < 0 ? "var(--danger)" : ""}">${formatAmount(ledger.monthly_remaining, { decimals: 0, sign: true })}</span>
-          </div>
-        `
+          monthlyItems?.length > 0 &&
+          (
+            () => {
+              const monthlyBarMax =
+                monthlyItems.reduce(
+                  (m, s) =>
+                    Math.max(
+                      m,
+                      Math.abs(Number(s.spent)),
+                      Number(s.budget_amount),
+                    ),
+                  0,
+                ) || 1;
+              return html`
+            <div class="ledger-divider"></div>
+            <div class="ledger-section-label text-light">Monthly</div>
+            <${VariableRows}
+              items=${monthlyItems}
+              barMax=${monthlyBarMax}
+              selectedCategoryId=${selectedCategoryId}
+              onCategoryClick=${onCategoryClick}
+            />
+          `;
+            }
+          )()
         }
         ${
           Number(ledger.project_spent) > 0 &&
@@ -1375,9 +1405,9 @@ function AnnualTabPanel({
   onNextYear,
   ledger,
   items,
+  monthlyItems,
   selectedCategoryId,
   onCategoryClick,
-  onMonthlyClick,
   onProjectsClick,
   catMap,
 }) {
@@ -1399,10 +1429,10 @@ function AnnualTabPanel({
           ledger
             ? html`<${Ledger}
               items=${items}
+              monthlyItems=${monthlyItems}
               ledger=${ledger}
               selectedCategoryId=${selectedCategoryId}
               onCategoryClick=${onCategoryClick}
-              onMonthlyClick=${onMonthlyClick}
               onProjectsClick=${onProjectsClick}
               catMap=${catMap}
             />`
@@ -1669,6 +1699,18 @@ function Dashboard({ tab = "monthly", monthId = null }) {
     (s) => s.budgetMode === "monthly" || !s.budgetMode,
   );
   const annual = enriched.filter((s) => s.budgetMode === "annual");
+
+  // Monthly categories with YTD data for the annual ledger view, sorted by spent desc
+  const monthlyAnnual = (statusResp.monthly_annual_statuses || [])
+    .map((s) => {
+      const label = categoryLabel(catMap, s.category_id);
+      return {
+        ...s,
+        shortName: label?.short ?? s.category_name,
+        pace: Number(s.remaining) < 0 ? "over_budget" : "on_track",
+      };
+    })
+    .sort((a, b) => Number(b.spent) - Number(a.spent));
   const allProjects = (statusResp.projects || [])
     .map(enrichStatus)
     .sort(byUrgency);
@@ -1887,9 +1929,9 @@ function Dashboard({ tab = "monthly", monthId = null }) {
         onNextYear=${goNextYear}
         ledger=${annualLedger}
         items=${annual}
+        monthlyItems=${monthlyAnnual}
         selectedCategoryId=${selectedCategoryId}
         onCategoryClick=${handleCategoryClick}
-        onMonthlyClick=${() => setActiveTab(0)}
         onProjectsClick=${() => setActiveTab(2)}
         catMap=${catMap}
       />

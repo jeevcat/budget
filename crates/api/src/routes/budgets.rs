@@ -103,6 +103,22 @@ struct CashFlowItem {
     transactions: Vec<Transaction>,
 }
 
+/// Year-to-date status for a single monthly-budgeted category, shown in the annual ledger.
+#[derive(Serialize, utoipa::ToSchema)]
+struct MonthlyAnnualStatus {
+    category_id: CategoryId,
+    category_name: String,
+    /// YTD budget: monthly budget amount × number of elapsed months.
+    #[schema(value_type = String)]
+    budget_amount: Decimal,
+    /// YTD spending across the budget year.
+    #[schema(value_type = String)]
+    spent: Decimal,
+    /// `budget_amount - spent`
+    #[schema(value_type = String)]
+    remaining: Decimal,
+}
+
 /// Unified cash-flow ledger for a budget period (month or year).
 ///
 /// Replaces the old `BudgetGroupSummary` (for monthly/annual) + `CashFlowSummary` pair.
@@ -167,6 +183,8 @@ struct StatusResponse {
     budget_year: i32,
     /// Salary arrival prediction (only present for the current open month).
     salary_status: Option<SalaryStatus>,
+    /// YTD status per monthly-budgeted category, for display in the annual ledger.
+    monthly_annual_statuses: Vec<MonthlyAnnualStatus>,
 }
 
 /// Build the budgets sub-router.
@@ -795,13 +813,13 @@ fn compute_projects(
         .collect()
 }
 
-/// Build monthly and annual ledger summaries from classified transactions.
+/// Build monthly and annual ledger summaries and per-category YTD statuses from classified transactions.
 fn build_ledgers(
     statuses: &[StatusEntry],
     classified: &DashboardContext,
     categories: &[Category],
     num_months: usize,
-) -> (LedgerSummary, LedgerSummary) {
+) -> (LedgerSummary, LedgerSummary, Vec<MonthlyAnnualStatus>) {
     let monthly_entries: Vec<&StatusEntry> = statuses
         .iter()
         .filter(|e| e.status.budget_mode == BudgetMode::Monthly)
@@ -823,7 +841,35 @@ fn build_ledgers(
     );
 
     let annual_budgeted_spent = negate_sum(&classified.annual);
-    let monthly_annual_spent = negate_sum(&classified.monthly_annual);
+
+    // Accumulate YTD spending per monthly category in a single pass.
+    let mut ytd_spent_by_cat: std::collections::HashMap<CategoryId, Decimal> =
+        std::collections::HashMap::new();
+    for t in &classified.monthly_annual {
+        if let Some(cid) = t.categorization.category_id() {
+            *ytd_spent_by_cat.entry(cid).or_default() += t.amount;
+        }
+    }
+    let monthly_annual_statuses: Vec<MonthlyAnnualStatus> = monthly_entries
+        .iter()
+        .map(|e| {
+            let ytd_budget = e.status.budget_amount * Decimal::from(num_months);
+            let ytd_spent = ytd_spent_by_cat
+                .get(&e.status.category_id)
+                .copied()
+                .unwrap_or(Decimal::ZERO)
+                .abs();
+            MonthlyAnnualStatus {
+                category_id: e.status.category_id,
+                category_name: e.status.category_name.clone(),
+                budget_amount: ytd_budget,
+                spent: ytd_spent,
+                remaining: ytd_budget - ytd_spent,
+            }
+        })
+        .collect();
+
+    let monthly_annual_spent: Decimal = ytd_spent_by_cat.values().copied().sum::<Decimal>().abs();
     let monthly_annual_budget = monthly_entries
         .iter()
         .fold(Decimal::ZERO, |acc, e| acc + e.status.budget_amount)
@@ -872,7 +918,7 @@ fn build_ledgers(
         categories,
     );
 
-    (monthly_ledger, annual_ledger)
+    (monthly_ledger, annual_ledger, monthly_annual_statuses)
 }
 
 /// Compute budget status for every budgeted category in a given month.
@@ -990,7 +1036,7 @@ async fn status(
         reference_date,
     );
 
-    let (monthly_ledger, annual_ledger) =
+    let (monthly_ledger, annual_ledger, monthly_annual_statuses) =
         build_ledgers(&statuses, &classified, &categories, year_months.len());
     let project_summary = compute_project_group_summary(&projects);
 
@@ -1021,6 +1067,7 @@ async fn status(
         project_transactions: classified.project,
         budget_year: classified.budget_year,
         salary_status,
+        monthly_annual_statuses,
     }))
 }
 
