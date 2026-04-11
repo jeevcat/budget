@@ -5,7 +5,7 @@
     "": {
       "name": "budget-frontend",
       "dependencies": {
-        "@knadh/oat": "^0.5.0",
+        "@knadh/oat": "^0.6.0",
         "@someshkar/oat-chips": "^1.0.1",
         "htm": "^3.1.1",
         "preact": "^10.25.4",
@@ -17,7 +17,7 @@
     },
   },
   "packages": {
-    "@knadh/oat": ["@knadh/oat@0.5.0", "", {}, "sha512-SnT9VhmFgK3K3rGSXLSK4q3R41LSsuEZB7Q6iFcnCb1VhKqOEpG4uzT67AvjqzR955GKq1gQOQ4m0u3hxJSmZw=="],
+    "@knadh/oat": ["@knadh/oat@0.6.0", "", {}, "sha512-ma38wYqBXheS6M8nkwxRIMs0YMi+Yclx14IttIOFFA6xddvx7PSgdLPLpUlIc2Phl4iavQAf7gXuUrnpdpQ6cA=="],
 
     "@playwright/test": ["@playwright/test@1.58.2", "", { "dependencies": { "playwright": "1.58.2" }, "bin": { "playwright": "cli.js" } }, "sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA=="],
 
