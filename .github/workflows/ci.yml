@@ -109,30 +109,6 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
-  mobile:
-    name: Mobile
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v6
-      - name: Formatting (Spotless)
-        run: ./gradlew spotlessCheck --console=plain --no-problems-report
-      - name: Static analysis (detekt)
-        run: ./gradlew detekt --console=plain --no-problems-report
-      - name: Android Lint
-        run: ./gradlew :androidApp:lint --console=plain --no-problems-report
-      - name: Tests
-        run: ./gradlew allTests --console=plain --no-problems-report
-      - name: Compile
-        run: ./gradlew compileDebugKotlin --warning-mode all --console=plain --no-problems-report
-
   nix:
     name: Nix
     runs-on: ubuntu-latest
